@@ -1,0 +1,401 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { AppError } from '../middleware/errorHandler';
+import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
+import { createAuditLog } from '../utils/audit';
+import { getPaginationParams, createPaginationResult } from '../utils/pagination';
+import { db, now, toDate, snapshotToArray } from '../utils/firestore';
+
+export const roomRouter = Router({ mergeParams: true });
+
+const createRoomSchema = z.object({
+  roomNumber: z.string().min(1),
+  roomType: z.string().min(1),
+  floor: z.number().int().optional(),
+  maxOccupancy: z.number().int().min(1),
+  amenities: z.any().optional(),
+  ratePlanId: z.string().uuid().optional(),
+});
+
+// GET /api/tenants/:tenantId/rooms
+roomRouter.get(
+  '/',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { status, roomType } = req.query;
+
+      const { page, limit } = getPaginationParams(req);
+
+      // Build Firestore query
+      let query: FirebaseFirestore.Query = db.collection('rooms')
+        .where('tenantId', '==', tenantId);
+
+      if (status) {
+        query = query.where('status', '==', status);
+      }
+      if (roomType) {
+        query = query.where('roomType', '==', roomType);
+      }
+
+      // Get total count
+      let totalSnapshot;
+      let roomsSnapshot;
+      
+      try {
+        totalSnapshot = await query.get();
+        const total = totalSnapshot.size;
+
+        // Apply pagination - try with orderBy first
+        const skip = (page - 1) * limit;
+        try {
+          roomsSnapshot = await query
+            .orderBy('roomNumber', 'asc')
+            .offset(skip)
+            .limit(limit)
+            .get();
+        } catch (orderByError: any) {
+          // If orderBy fails (missing index), fetch all and sort in memory
+          console.warn('orderBy failed, sorting in memory:', orderByError.message);
+          const allRoomsSnapshot = await query.get();
+          const sortedDocs = allRoomsSnapshot.docs.sort((a, b) => {
+            const aRoomNumber = a.data().roomNumber || '';
+            const bRoomNumber = b.data().roomNumber || '';
+            return aRoomNumber.localeCompare(bRoomNumber);
+          });
+          roomsSnapshot = {
+            docs: sortedDocs.slice(skip, skip + limit),
+            size: totalSnapshot.size,
+          } as any;
+        }
+      } catch (error: any) {
+        // If collection doesn't exist or query fails completely
+        console.warn('Error fetching rooms, returning empty data:', error.message);
+        res.json({
+          success: true,
+          data: [],
+          pagination: {
+            page: 1,
+            limit: 10,
+            total: 0,
+            totalPages: 0,
+          },
+        });
+        return;
+      }
+
+      const total = totalSnapshot.size;
+
+      // Convert to array and enrich with ratePlan and reservation count
+      const rooms = await Promise.all(
+        roomsSnapshot.docs.map(async (doc) => {
+          const roomData = doc.data();
+          const roomId = doc.id;
+
+          // Get rate plan if exists (don't fail if lookup fails)
+          let ratePlan: { id: string; name: any; baseRate: any } | null = null;
+          try {
+            if (roomData.ratePlanId) {
+              const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
+              if (ratePlanDoc.exists) {
+                const ratePlanData = ratePlanDoc.data();
+                ratePlan = {
+                  id: ratePlanDoc.id,
+                  name: ratePlanData?.name || null,
+                  baseRate: ratePlanData?.baseRate || null,
+                };
+              }
+            }
+          } catch (error) {
+            // Silently continue if rate plan lookup fails
+            console.warn(`Error fetching rate plan for room ${roomId}:`, error);
+          }
+
+          // Get reservation count (don't fail if lookup fails)
+          let reservationCount = 0;
+          try {
+            const reservationsSnapshot = await db.collection('reservations')
+              .where('roomId', '==', roomId)
+              .get();
+            reservationCount = reservationsSnapshot.size;
+          } catch (error) {
+            // Silently continue if reservation lookup fails
+            console.warn(`Error fetching reservations for room ${roomId}:`, error);
+          }
+
+          return {
+            id: roomId,
+            ...roomData,
+            ratePlan,
+            _count: {
+              reservations: reservationCount,
+            },
+            createdAt: toDate(roomData.createdAt),
+            updatedAt: toDate(roomData.updatedAt),
+          };
+        })
+      );
+
+      const result = createPaginationResult(rooms, total, page, limit);
+
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error('Error fetching rooms:', error);
+      throw new AppError(
+        `Failed to fetch rooms: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/rooms/:id
+roomRouter.get(
+  '/:id',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const roomId = req.params.id;
+
+      const roomDoc = await db.collection('rooms').doc(roomId).get();
+
+      if (!roomDoc.exists) {
+        throw new AppError('Room not found', 404);
+      }
+
+      const roomData = roomDoc.data();
+      if (roomData?.tenantId !== tenantId) {
+        throw new AppError('Room not found', 404);
+      }
+
+      // Get rate plan if exists
+      let ratePlan: any = null;
+      if (roomData?.ratePlanId) {
+        const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
+        if (ratePlanDoc.exists) {
+          ratePlan = {
+            id: ratePlanDoc.id,
+            ...ratePlanDoc.data(),
+          };
+        }
+      }
+
+      // Get active reservations
+      const reservationsSnapshot = await db.collection('reservations')
+        .where('roomId', '==', roomId)
+        .where('status', 'in', ['confirmed', 'checked_in'])
+        .orderBy('checkInDate', 'asc')
+        .get();
+
+      const reservations = reservationsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        checkInDate: toDate(doc.data().checkInDate),
+        checkOutDate: toDate(doc.data().checkOutDate),
+        createdAt: toDate(doc.data().createdAt),
+        updatedAt: toDate(doc.data().updatedAt),
+      }));
+
+      const room = {
+        id: roomDoc.id,
+        ...roomData,
+        ratePlan,
+        reservations,
+        createdAt: toDate(roomData?.createdAt),
+        updatedAt: toDate(roomData?.updatedAt),
+      };
+
+      res.json({
+        success: true,
+        data: room,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error fetching room:', error);
+      throw new AppError(
+        `Failed to fetch room: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/rooms
+roomRouter.post(
+  '/',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const data = createRoomSchema.parse(req.body);
+
+      // Check if room number exists
+      const existingSnapshot = await db.collection('rooms')
+        .where('tenantId', '==', tenantId)
+        .where('roomNumber', '==', data.roomNumber)
+        .limit(1)
+        .get();
+
+      if (!existingSnapshot.empty) {
+        throw new AppError('Room number already exists', 400);
+      }
+
+      // Create room
+      const roomRef = db.collection('rooms').doc();
+      const roomData = {
+        tenantId,
+        roomNumber: data.roomNumber,
+        roomType: data.roomType,
+        floor: data.floor || null,
+        maxOccupancy: data.maxOccupancy,
+        amenities: data.amenities || null,
+        ratePlanId: data.ratePlanId || null,
+        status: 'available',
+        createdAt: now(),
+        updatedAt: now(),
+      };
+
+      await roomRef.set(roomData);
+
+      // Get rate plan if exists
+      let ratePlan: any = null;
+      if (data.ratePlanId) {
+        const ratePlanDoc = await db.collection('ratePlans').doc(data.ratePlanId).get();
+        if (ratePlanDoc.exists) {
+          ratePlan = {
+            id: ratePlanDoc.id,
+            ...ratePlanDoc.data(),
+          };
+        }
+      }
+
+      const room = {
+        id: roomRef.id,
+        ...roomData,
+        ratePlan,
+        createdAt: toDate(roomData.createdAt),
+        updatedAt: toDate(roomData.updatedAt),
+      };
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'create_room',
+        entityType: 'room',
+        entityId: roomRef.id,
+        afterState: room,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: room,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error creating room:', error);
+      throw new AppError(
+        `Failed to create room: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// PATCH /api/tenants/:tenantId/rooms/:id
+roomRouter.patch(
+  '/:id',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const roomId = req.params.id;
+
+      const roomDoc = await db.collection('rooms').doc(roomId).get();
+
+      if (!roomDoc.exists) {
+        throw new AppError('Room not found', 404);
+      }
+
+      const roomData = roomDoc.data();
+      if (roomData?.tenantId !== tenantId) {
+        throw new AppError('Room not found', 404);
+      }
+
+      const beforeState = {
+        id: roomDoc.id,
+        ...roomData,
+        createdAt: toDate(roomData?.createdAt),
+        updatedAt: toDate(roomData?.updatedAt),
+      };
+
+      // Update room
+      const updateData = {
+        ...req.body,
+        updatedAt: now(),
+      };
+
+      await roomDoc.ref.update(updateData);
+
+      // Get updated room
+      const updatedDoc = await db.collection('rooms').doc(roomId).get();
+      const updatedData = updatedDoc.data();
+
+      // Get rate plan if exists
+      let ratePlan: any = null;
+      if (updatedData?.ratePlanId) {
+        const ratePlanDoc = await db.collection('ratePlans').doc(updatedData.ratePlanId).get();
+        if (ratePlanDoc.exists) {
+          ratePlan = {
+            id: ratePlanDoc.id,
+            ...ratePlanDoc.data(),
+          };
+        }
+      }
+
+      const updated = {
+        id: updatedDoc.id,
+        ...updatedData,
+        ratePlan,
+        createdAt: toDate(updatedData?.createdAt),
+        updatedAt: toDate(updatedData?.updatedAt),
+      };
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'update_room',
+        entityType: 'room',
+        entityId: roomId,
+        beforeState,
+        afterState: updated,
+      });
+
+      res.json({
+        success: true,
+        data: updated,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error updating room:', error);
+      throw new AppError(
+        `Failed to update room: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);

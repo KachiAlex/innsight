@@ -1,0 +1,229 @@
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
+import { 
+  LayoutDashboard, 
+  Calendar, 
+  DoorOpen, 
+  Receipt, 
+  CreditCard,
+  Sparkles,
+  Wrench,
+  BarChart3,
+  AlertCircle,
+  LogOut,
+  Menu,
+  X,
+  DollarSign,
+  Users,
+  CalendarDays
+} from 'lucide-react';
+import { useState } from 'react';
+
+interface LayoutProps {
+  children: React.ReactNode;
+}
+
+import { Building2 } from 'lucide-react';
+
+const menuItems = [
+  { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/reservations', icon: Calendar, label: 'Reservations' },
+  { path: '/calendar', icon: CalendarDays, label: 'Calendar' },
+  { path: '/rooms', icon: DoorOpen, label: 'Rooms' },
+  { path: '/rate-plans', icon: DollarSign, label: 'Rate Plans' },
+  { path: '/guests', icon: Users, label: 'Guests' },
+  { path: '/folios', icon: Receipt, label: 'Folios' },
+  { path: '/payments', icon: CreditCard, label: 'Payments' },
+  { path: '/housekeeping', icon: Sparkles, label: 'Housekeeping' },
+  { path: '/maintenance', icon: Wrench, label: 'Maintenance' },
+  { path: '/reports', icon: BarChart3, label: 'Reports' },
+  { path: '/alerts', icon: AlertCircle, label: 'Alerts' },
+];
+
+// Admin-only menu items
+const adminMenuItems = [
+  { path: '/tenants', icon: Building2, label: 'Tenants' },
+];
+
+export default function Layout({ children }: LayoutProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuthStore();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#f5f5f5' }}>
+      {/* Sidebar */}
+      <aside
+        style={{
+          width: sidebarOpen ? '250px' : '0',
+          background: '#1e293b',
+          color: 'white',
+          transition: 'width 0.3s',
+          overflow: 'hidden',
+          position: 'fixed',
+          height: '100vh',
+          zIndex: 1000,
+        }}
+      >
+        <div style={{ padding: '1.5rem', borderBottom: '1px solid #334155' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold' }}>InnSight PMS</h2>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'white',
+                cursor: 'pointer',
+                display: sidebarOpen ? 'block' : 'none',
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
+          {user && (
+            <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#94a3b8' }}>
+              <div>{user.tenant.name}</div>
+              <div style={{ marginTop: '0.25rem' }}>
+                {user.firstName} {user.lastName}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <nav style={{ padding: '1rem 0' }}>
+          {menuItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = location.pathname === item.path;
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '0.75rem 1.5rem',
+                  color: isActive ? '#fff' : '#cbd5e1',
+                  background: isActive ? '#334155' : 'transparent',
+                  textDecoration: 'none',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) e.currentTarget.style.background = '#334155';
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <Icon size={20} style={{ marginRight: '0.75rem' }} />
+                {item.label}
+              </Link>
+            );
+          })}
+          {user?.role === 'iitech_admin' && (
+            <>
+              <div style={{ padding: '0.5rem 1.5rem', marginTop: '0.5rem', borderTop: '1px solid #334155' }} />
+              {adminMenuItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setSidebarOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0.75rem 1.5rem',
+                      color: isActive ? '#fff' : '#cbd5e1',
+                      background: isActive ? '#334155' : 'transparent',
+                      textDecoration: 'none',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isActive) e.currentTarget.style.background = '#334155';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <Icon size={20} style={{ marginRight: '0.75rem' }} />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </>
+          )}
+        </nav>
+
+        <div style={{ padding: '1.5rem', borderTop: '1px solid #334155', marginTop: 'auto' }}>
+          <button
+            onClick={handleLogout}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              width: '100%',
+              padding: '0.75rem',
+              background: 'transparent',
+              border: 'none',
+              color: '#cbd5e1',
+              cursor: 'pointer',
+              borderRadius: '4px',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#334155';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <LogOut size={20} style={{ marginRight: '0.75rem' }} />
+            Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div style={{ flex: 1, marginLeft: sidebarOpen ? '250px' : '0', transition: 'margin-left 0.3s' }}>
+        {/* Top Bar */}
+        <header
+          style={{
+            background: 'white',
+            padding: '1rem 1.5rem',
+            borderBottom: '1px solid #e2e8f0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '0.5rem',
+            }}
+          >
+            <Menu size={24} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
+              {user?.role.replace('_', ' ').toUpperCase()}
+            </span>
+          </div>
+        </header>
+
+        {/* Page Content */}
+        <main style={{ padding: '1.5rem' }}>{children}</main>
+      </div>
+    </div>
+  );
+}

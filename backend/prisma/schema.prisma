@@ -1,0 +1,423 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Multi-tenant model - all tables include tenant_id for isolation
+model Tenant {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  email       String
+  phone       String?
+  address     String?
+  branding    Json?    // Logo, colors, etc.
+  taxSettings Json?    // Tax rates, VAT settings
+  subscriptionStatus String @default("active") // active, suspended, cancelled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users            User[]
+  rooms            Room[]
+  reservations     Reservation[]
+  folios           Folio[]
+  payments         Payment[]
+  housekeepingTasks HousekeepingTask[]
+  maintenanceTickets MaintenanceTicket[]
+  shifts           Shift[]
+  audits           Audit[]
+  alerts           Alert[]
+  iotGateways      IoTGateway[]
+  iotEvents        IoTEvent[]
+
+  @@map("tenants")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  tenantId    String
+  email       String
+  passwordHash String
+  firstName   String
+  lastName    String
+  phone       String?
+  role        String   // owner, general_manager, front_desk, housekeeping_supervisor, housekeeping_staff, maintenance, accountant, iitech_admin
+  permissions Json?    // Fine-grained permissions
+  isActive    Boolean  @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Activity tracking
+  createdReservations Reservation[] @relation("ReservationCreator")
+  checkedInReservations Reservation[] @relation("CheckInStaff")
+  checkedOutReservations Reservation[] @relation("CheckOutStaff")
+  createdFolios Folio[] @relation("FolioCreator")
+  payments     Payment[]
+  assignedHousekeepingTasks HousekeepingTask[] @relation("AssignedHousekeepingTasks")
+  completedHousekeepingTasks HousekeepingTask[] @relation("CompletedHousekeepingTasks")
+  reportedMaintenanceTickets MaintenanceTicket[] @relation("ReportedMaintenanceTickets")
+  assignedMaintenanceTickets MaintenanceTicket[] @relation("AssignedMaintenanceTickets")
+  resolvedMaintenanceTickets MaintenanceTicket[] @relation("ResolvedMaintenanceTickets")
+  shifts       Shift[]
+  audits       Audit[]
+  resolvedAlerts Alert[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role])
+  @@map("users")
+}
+
+model Room {
+  id          String   @id @default(uuid())
+  tenantId    String
+  roomNumber  String
+  roomType    String   // single, double, suite, etc.
+  floor       Int?
+  status      String   @default("available") // available, occupied, dirty, clean, inspected, out_of_order, maintenance
+  maxOccupancy Int
+  amenities   Json?    // Array of amenities
+  ratePlanId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ratePlan RatePlan? @relation(fields: [ratePlanId], references: [id])
+  reservations Reservation[]
+  folios       Folio[]
+  housekeepingTasks HousekeepingTask[]
+  maintenanceTickets MaintenanceTicket[]
+  iotEvents    IoTEvent[]
+  iotSensors   IoTSensor[]
+
+  @@unique([tenantId, roomNumber])
+  @@index([tenantId, status])
+  @@map("rooms")
+}
+
+model RatePlan {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  baseRate    Decimal  @db.Decimal(10, 2)
+  currency    String   @default("NGN")
+  seasonalRules Json?  // Array of seasonal rate adjustments
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rooms Room[]
+
+  @@unique([tenantId, name])
+  @@map("rate_plans")
+}
+
+model Reservation {
+  id              String   @id @default(uuid())
+  tenantId        String
+  roomId          String
+  reservationNumber String @unique
+  guestName       String
+  guestEmail      String?
+  guestPhone      String?
+  guestIdNumber   String?
+  checkInDate     DateTime
+  checkOutDate    DateTime
+  adults          Int      @default(1)
+  children        Int      @default(0)
+  status          String   @default("confirmed") // confirmed, checked_in, checked_out, cancelled, no_show
+  source          String   @default("manual") // manual, web, ota, channel_manager
+  rate            Decimal  @db.Decimal(10, 2)
+  depositAmount   Decimal? @db.Decimal(10, 2)
+  depositStatus   String?  // pending, paid, refunded
+  specialRequests String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  checkedInAt     DateTime?
+  checkedOutAt    DateTime?
+  checkedInBy     String?
+  checkedOutBy    String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room   @relation(fields: [roomId], references: [id])
+  creator User  @relation("ReservationCreator", fields: [createdBy], references: [id])
+  checkInStaff User? @relation("CheckInStaff", fields: [checkedInBy], references: [id])
+  checkOutStaff User? @relation("CheckOutStaff", fields: [checkedOutBy], references: [id])
+  createdBy     String
+  folios        Folio[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkInDate, checkOutDate])
+  @@index([reservationNumber])
+  @@map("reservations")
+}
+
+model Folio {
+  id              String   @id @default(uuid())
+  tenantId        String
+  reservationId   String?
+  roomId          String
+  guestName       String
+  status          String   @default("open") // open, closed, voided
+  totalCharges    Decimal  @default(0) @db.Decimal(10, 2)
+  totalPayments   Decimal  @default(0) @db.Decimal(10, 2)
+  balance         Decimal  @default(0) @db.Decimal(10, 2)
+  currency        String   @default("NGN")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  closedAt        DateTime?
+  closedBy        String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room   @relation(fields: [roomId], references: [id])
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+  creator User  @relation("FolioCreator", fields: [createdBy], references: [id])
+  createdBy     String
+  charges       FolioCharge[]
+  payments      Payment[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@map("folios")
+}
+
+model FolioCharge {
+  id          String   @id @default(uuid())
+  folioId     String
+  description String
+  category    String   // room_rate, extra, tax, discount, other
+  amount      Decimal  @db.Decimal(10, 2)
+  quantity    Int      @default(1)
+  total       Decimal  @db.Decimal(10, 2)
+  taxRate     Decimal? @db.Decimal(5, 2)
+  taxAmount   Decimal? @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+
+  folio Folio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+
+  @@index([folioId])
+  @@map("folio_charges")
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  tenantId    String
+  folioId     String
+  amount      Decimal  @db.Decimal(10, 2)
+  method      String   // card, bank_transfer, cash, other
+  reference   String?  @unique
+  status      String   @default("pending") // pending, completed, failed, refunded
+  currency    String   @default("NGN")
+  paymentGateway String? // paystack, flutterwave, stripe, manual
+  gatewayTransactionId String?
+  reconciled  Boolean  @default(false)
+  reconciledAt DateTime?
+  reconciledBy String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folio  Folio  @relation(fields: [folioId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  @@index([tenantId, status])
+  @@index([tenantId, reconciled])
+  @@index([folioId])
+  @@index([reference])
+  @@map("payments")
+}
+
+model HousekeepingTask {
+  id          String   @id @default(uuid())
+  tenantId    String
+  roomId      String
+  taskType    String   // cleaning, inspection, maintenance_prep
+  status      String   @default("pending") // pending, in_progress, completed, skipped
+  assignedTo  String?
+  completedBy String?
+  completedAt DateTime?
+  photos      Json?    // Array of photo URLs/paths
+  checklist   Json?    // Array of checklist items with completion status
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room   @relation(fields: [roomId], references: [id])
+  assignedStaff User? @relation("AssignedHousekeepingTasks", fields: [assignedTo], references: [id])
+  completedStaff User? @relation("CompletedHousekeepingTasks", fields: [completedBy], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@map("housekeeping_tasks")
+}
+
+model MaintenanceTicket {
+  id          String   @id @default(uuid())
+  tenantId    String
+  roomId      String?
+  title       String
+  description String
+  priority    String   @default("medium") // low, medium, high, urgent
+  status      String   @default("open") // open, assigned, in_progress, resolved, closed
+  assignedTo  String?
+  reportedBy  String
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  photos      Json?    // Array of photo URLs
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room?  @relation(fields: [roomId], references: [id])
+  reporter User @relation("ReportedMaintenanceTickets", fields: [reportedBy], references: [id])
+  assignedStaff User? @relation("AssignedMaintenanceTickets", fields: [assignedTo], references: [id])
+  resolver User? @relation("ResolvedMaintenanceTickets", fields: [resolvedBy], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, priority])
+  @@map("maintenance_tickets")
+}
+
+model Shift {
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String
+  startTime   DateTime
+  endTime     DateTime?
+  shiftType   String   // morning, afternoon, night
+  cashFloat   Decimal? @db.Decimal(10, 2)
+  cashReceived Decimal? @db.Decimal(10, 2)
+  cashCounted Decimal? @db.Decimal(10, 2)
+  variance    Decimal? @db.Decimal(10, 2)
+  status      String   @default("open") // open, closed
+  notes       String?
+  closedAt    DateTime?
+  closedBy    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId])
+  @@index([tenantId, status])
+  @@map("shifts")
+}
+
+// Immutable audit trail
+model Audit {
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String?
+  action      String   // create_reservation, checkin, checkout, create_payment, void_folio, etc.
+  entityType  String   // reservation, folio, payment, room, etc.
+  entityId    String
+  beforeState Json?    // State before action
+  afterState  Json?    // State after action
+  metadata    Json?    // Additional context (IP, user agent, etc.)
+  timestamp   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, action])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, timestamp])
+  @@map("audits")
+}
+
+model Alert {
+  id          String   @id @default(uuid())
+  tenantId    String
+  alertType   String   // payment_mismatch, room_status_mismatch, suspicious_activity, etc.
+  severity    String   @default("medium") // low, medium, high, critical
+  title       String
+  message     String
+  metadata    Json?    // Additional alert context
+  status      String   @default("open") // open, acknowledged, resolved
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  resolver User? @relation(fields: [resolvedBy], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, alertType])
+  @@index([tenantId, severity])
+  @@map("alerts")
+}
+
+// IoT Module (optional, for future)
+model IoTGateway {
+  id          String   @id @default(uuid())
+  tenantId    String
+  gatewayId   String   @unique
+  name        String
+  location    String?
+  status      String   @default("active") // active, inactive, error
+  lastSeen    DateTime?
+  config      Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sensors IoTSensor[]
+
+  @@unique([tenantId, gatewayId])
+  @@map("iot_gateways")
+}
+
+model IoTSensor {
+  id          String   @id @default(uuid())
+  gatewayId   String
+  sensorId    String
+  roomId      String?
+  sensorType  String   // pir, thermal, door, lock
+  status      String   @default("active")
+  lastEventAt DateTime?
+  config      Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  gateway IoTGateway @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  room Room? @relation(fields: [roomId], references: [id])
+
+  @@unique([gatewayId, sensorId])
+  @@index([roomId])
+  @@map("iot_sensors")
+}
+
+model IoTEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  gatewayId   String
+  sensorId    String
+  roomId      String?
+  eventType   String   // occupied, vacant, door_open, door_close
+  timestamp   DateTime
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  room   Room?  @relation(fields: [roomId], references: [id])
+
+  @@index([tenantId, roomId])
+  @@index([tenantId, timestamp])
+  @@index([sensorId])
+  @@map("iot_events")
+}
