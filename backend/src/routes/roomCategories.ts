@@ -28,10 +28,48 @@ roomCategoryRouter.get(
     try {
       const tenantId = req.params.tenantId;
 
-      const categoriesSnapshot = await db.collection('roomCategories')
-        .where('tenantId', '==', tenantId)
-        .orderBy('name', 'asc')
-        .get();
+      // Try to fetch with orderBy first, fall back to in-memory sort if index missing
+      let categoriesSnapshot;
+      try {
+        categoriesSnapshot = await db.collection('roomCategories')
+          .where('tenantId', '==', tenantId)
+          .orderBy('name', 'asc')
+          .get();
+      } catch (orderByError: any) {
+        // If orderBy fails (missing index), fetch all and sort in memory
+        console.warn('orderBy failed for roomCategories, sorting in memory:', orderByError.message);
+        try {
+          const allCategoriesSnapshot = await db.collection('roomCategories')
+            .where('tenantId', '==', tenantId)
+            .get();
+          const sortedDocs = allCategoriesSnapshot.docs.sort((a, b) => {
+            const aName = a.data().name || '';
+            const bName = b.data().name || '';
+            return aName.localeCompare(bName);
+          });
+          categoriesSnapshot = {
+            docs: sortedDocs,
+            size: sortedDocs.length,
+          } as any;
+        } catch (queryError: any) {
+          // If collection doesn't exist or query fails completely, return empty array
+          console.warn('Error fetching roomCategories, returning empty data:', queryError.message);
+          res.json({
+            success: true,
+            data: [],
+          });
+          return;
+        }
+      }
+
+      // If collection is empty, return empty array
+      if (!categoriesSnapshot || categoriesSnapshot.docs.length === 0) {
+        res.json({
+          success: true,
+          data: [],
+        });
+        return;
+      }
 
       const categories = categoriesSnapshot.docs.map(doc => {
         const data = doc.data();
