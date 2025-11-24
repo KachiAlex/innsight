@@ -1,22 +1,9 @@
 // Firebase Functions entry point for Express app
-// Set environment variable to prevent Express server from starting
 process.env.FIREBASE_FUNCTIONS = 'true';
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
-const admin = require('firebase-admin');
-
-// Define secrets
-const jwtSecret = defineSecret('JWT_SECRET');
-const jwtRefreshSecret = defineSecret('JWT_REFRESH_SECRET');
-
-// Initialize Firebase Admin (if needed)
-try {
-  admin.initializeApp();
-} catch (e) {
-  // Already initialized
-}
 
 // Set global options for all functions
 setGlobalOptions({
@@ -24,6 +11,20 @@ setGlobalOptions({
   timeoutSeconds: 540,
   memory: '512MB',
 });
+
+// Define secrets with error handling for discovery phase
+let jwtSecret, jwtRefreshSecret;
+try {
+  jwtSecret = defineSecret('JWT_SECRET');
+  jwtRefreshSecret = defineSecret('JWT_REFRESH_SECRET');
+} catch (e) {
+  // During discovery, create placeholder secrets
+  jwtSecret = { value: () => process.env.JWT_SECRET || '' };
+  jwtRefreshSecret = { value: () => process.env.JWT_REFRESH_SECRET || '' };
+}
+
+// Cache the Express app instance
+let cachedApp = null;
 
 // Export as Firebase Function v2 with secrets
 exports.api = onRequest(
@@ -34,14 +35,26 @@ exports.api = onRequest(
     secrets: [jwtSecret, jwtRefreshSecret],
   },
   (req, res) => {
-    // Set secrets as environment variables for the Express app
-    // This must be done before importing the app
-    process.env.JWT_SECRET = jwtSecret.value();
-    process.env.JWT_REFRESH_SECRET = jwtRefreshSecret.value();
+    // Lazy load Express app only on first request
+    if (!cachedApp) {
+      try {
+        // Set secrets as environment variables
+        process.env.JWT_SECRET = jwtSecret.value();
+        process.env.JWT_REFRESH_SECRET = jwtRefreshSecret.value();
+        
+        // Load the Express app
+        const appModule = require('./dist/index.js');
+        cachedApp = appModule.app;
+      } catch (error) {
+        console.error('Error loading Express app:', error);
+        return res.status(500).json({ 
+          error: 'Failed to initialize application',
+          message: error.message 
+        });
+      }
+    }
     
-    // Import the compiled Express app dynamically to ensure secrets are set first
-    // Note: This requires the backend to be built first (npm run build)
-    const { app } = require('./dist/index.js');
-    return app(req, res);
+    // Delegate to Express app
+    return cachedApp(req, res);
   }
 );

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { format, addDays, subDays, startOfDay, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
@@ -459,7 +459,6 @@ export default function CalendarPage() {
                     position: 'sticky',
                     left: 0,
                     zIndex: 5,
-                    background: 'white',
                   }}
                 >
                   <div style={{ fontWeight: '600', color: '#1e293b', marginBottom: '0.25rem' }}>
@@ -482,7 +481,7 @@ export default function CalendarPage() {
                 </div>
 
                 {/* Date Cells */}
-                {roomData.availability.map((day, idx) => {
+                {roomData.availability.map((day) => {
                   const isToday = isSameDay(parseISO(day.date), new Date());
                   const date = parseISO(day.date);
                   const canDrop = draggedReservation && 
@@ -493,7 +492,7 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={day.date}
-                      draggable={day.reservation && (day.reservation.status === 'confirmed' || day.reservation.status === 'checked_in')}
+                      draggable={!!(day.reservation && (day.reservation.status === 'confirmed' || day.reservation.status === 'checked_in'))}
                       onDragStart={(e) => day.reservation && handleDragStart(e, day.reservation, roomData.room.id)}
                       onDragOver={handleDragOver}
                       onDrop={(e) => handleDrop(e, roomData.room.id, date)}
@@ -507,13 +506,12 @@ export default function CalendarPage() {
                       style={{
                         padding: '0.5rem',
                         borderBottom: '1px solid #e2e8f0',
-                        borderLeft: '1px solid #e2e8f0',
+                        borderLeft: isToday ? '3px solid #3b82f6' : '1px solid #e2e8f0',
                         minHeight: '80px',
                         background: canDrop ? '#dbeafe' : getStatusColor(day.status),
-                        borderLeft: isToday ? '3px solid #3b82f6' : '1px solid #e2e8f0',
                         cursor: day.reservation || day.status === 'available' ? 'pointer' : 'default',
                         position: 'relative',
-                        opacity: draggedReservation && draggedReservation.reservationId === day.reservation?.id ? 0.5 : 1,
+                        opacity: draggedReservation && draggedReservation.reservationId === day.reservation?.id ? '0.5' : '1',
                       }}
                       onMouseEnter={(e) => {
                         if (day.reservation || day.status === 'available') {
@@ -521,7 +519,7 @@ export default function CalendarPage() {
                         }
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = draggedReservation && draggedReservation.reservationId === day.reservation?.id ? 0.5 : 1;
+                        e.currentTarget.style.opacity = draggedReservation && draggedReservation.reservationId === day.reservation?.id ? '0.5' : '1';
                       }}
                     >
                       {day.reservation && (

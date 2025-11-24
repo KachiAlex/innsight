@@ -24,6 +24,7 @@ import { uploadRouter } from './routes/upload';
 import { ratePlanRouter } from './routes/ratePlans';
 import { guestRouter } from './routes/guests';
 import { calendarRouter } from './routes/calendar';
+import { roomCategoryRouter } from './routes/roomCategories';
 
 dotenv.config();
 
@@ -73,6 +74,7 @@ app.use('/api/tenants/:tenantId/upload', uploadRouter);
 app.use('/api/tenants/:tenantId/rate-plans', ratePlanRouter);
 app.use('/api/tenants/:tenantId/guests', guestRouter);
 app.use('/api/tenants/:tenantId/calendar', calendarRouter);
+app.use('/api/tenants/:tenantId/room-categories', roomCategoryRouter);
 app.use('/api/iot', iotRouter);
 app.use('/api/tenants/:tenantId/iot', iotRouter);
 app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);

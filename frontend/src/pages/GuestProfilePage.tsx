@@ -3,11 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { ArrowLeft, Mail, Phone, User, Calendar, DollarSign, Moon, TrendingUp, Search } from 'lucide-react';
+import { ArrowLeft, Mail, Phone, User, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { format } from 'date-fns';
-import SearchInput from '../components/SearchInput';
 
 interface GuestProfile {
   name: string;
@@ -56,7 +55,6 @@ export default function GuestProfilePage() {
   const { user } = useAuthStore();
   const [profile, setProfile] = useState<GuestProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!user?.tenantId || !identifier) return;
@@ -77,11 +75,6 @@ export default function GuestProfilePage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim() || !user?.tenantId) return;
-    navigate(`/guests/${encodeURIComponent(searchQuery.trim())}`);
   };
 
   const getStatusColor = (status: string) => {

@@ -13,10 +13,19 @@ export const api = axios.create({
 
 // Request interceptor to add auth token
 api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().token;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  // Don't send auth token for public endpoints
+  const publicEndpoints = ['/auth/login', '/auth/register', '/auth/refresh'];
+  const isPublicEndpoint = publicEndpoints.some(endpoint => 
+    config.url?.includes(endpoint)
+  );
+  
+  if (!isPublicEndpoint) {
+    const token = useAuthStore.getState().token;
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
+  
   return config;
 });
 
@@ -30,14 +39,19 @@ api.interceptors.response.use(
       const publicRoutes = ['/', '/login'];
       const isPublicRoute = publicRoutes.includes(currentPath);
       
-      console.log('API 401 error - current path:', currentPath, 'isPublicRoute:', isPublicRoute);
+      // Check if this is a public auth endpoint (login, register, etc.)
+      const isPublicAuthEndpoint = error.config?.url?.includes('/auth/login') || 
+                                   error.config?.url?.includes('/auth/register');
       
-      // Always logout on 401 to clear stale tokens
-      useAuthStore.getState().logout();
+      // Always logout on 401 to clear stale tokens (unless it's a public auth endpoint)
+      if (!isPublicAuthEndpoint) {
+        useAuthStore.getState().logout();
+      }
       
-      // NEVER redirect if on public routes
-      if (isPublicRoute) {
-        console.log('On public route, not redirecting');
+      // Suppress 401 errors on public routes - they're expected
+      if (isPublicRoute || isPublicAuthEndpoint) {
+        // Don't log or show errors for expected 401s on public routes
+        // Just silently reject the promise
         return Promise.reject(error);
       }
       
@@ -58,14 +72,12 @@ api.interceptors.response.use(
           error.config.headers.Authorization = `Bearer ${token}`;
           return axios.request(error.config);
         } catch (refreshError) {
-          // Refresh failed, redirect to login (only if not on public route)
-          console.log('Token refresh failed, redirecting to login');
+          // Refresh failed, redirect to login
           toast.error('Session expired. Please login again.');
           window.location.href = '/login';
         }
       } else {
-        // No refresh token - redirect to login (only if not on public route)
-        console.log('No refresh token, redirecting to login');
+        // No refresh token - redirect to login
         toast.error('Session expired. Please login again.');
         window.location.href = '/login';
       }

@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { useIsAuthenticated } from './store/authStore';
+import { useIsAuthenticated, useAuthStore } from './store/authStore';
 import ProtectedRoute from './components/ProtectedRoute';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DashboardSkeleton } from './components/LoadingSkeleton';
@@ -8,17 +8,47 @@ import { DashboardSkeleton } from './components/LoadingSkeleton';
 // Component to guard login route - redirects to dashboard if already authenticated
 function LoginRouteGuard({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useIsAuthenticated();
+  const { user } = useAuthStore();
   
   if (isAuthenticated) {
+    // IITECH admins go to tenants page, others go to dashboard
+    if (user?.role === 'iitech_admin') {
+      return <Navigate to="/tenants" replace />;
+    }
     return <Navigate to="/dashboard" replace />;
   }
   
   return <>{children}</>;
 }
 
+// Component to guard tenant login - redirects to tenants page if already authenticated as IITECH admin
+function TenantLoginRouteGuard({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useIsAuthenticated();
+  const { user } = useAuthStore();
+  
+  if (isAuthenticated && user?.role === 'iitech_admin') {
+    return <Navigate to="/tenants" replace />;
+  }
+  
+  return <>{children}</>;
+}
+
+// Component to handle /tenant route - redirects to login or tenants based on auth
+function TenantRouteHandler() {
+  const isAuthenticated = useIsAuthenticated();
+  const { user } = useAuthStore();
+  
+  if (isAuthenticated && user?.role === 'iitech_admin') {
+    return <Navigate to="/tenants" replace />;
+  }
+  
+  return <Navigate to="/tenant/login" replace />;
+}
+
 // Lazy load pages for code splitting
 const HomePage = lazy(() => import('./pages/HomePage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const TenantLoginPage = lazy(() => import('./pages/TenantLoginPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const ReservationsPage = lazy(() => import('./pages/ReservationsPage'));
 const RoomsPage = lazy(() => import('./pages/RoomsPage'));
@@ -44,9 +74,6 @@ function App() {
       <DashboardSkeleton />
     </div>
   );
-
-  // Debug logging
-  console.log('App component rendering, current path:', window.location.pathname);
 
   return (
     <ErrorBoundary>
@@ -173,12 +200,16 @@ function App() {
             />
             <Route
               path="/tenant"
+              element={<TenantRouteHandler />}
+            />
+            <Route
+              path="/tenant/login"
               element={
-                <ProtectedRoute>
+                <TenantLoginRouteGuard>
                   <Suspense fallback={<PageLoader />}>
-                    <TenantsPage />
+                    <TenantLoginPage />
                   </Suspense>
-                </ProtectedRoute>
+                </TenantLoginRouteGuard>
               }
             />
             <Route

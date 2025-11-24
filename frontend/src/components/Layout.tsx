@@ -218,6 +218,33 @@ export default function Layout({ children }: LayoutProps) {
             <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
               {user?.role.replace('_', ' ').toUpperCase()}
             </span>
+            <button
+              onClick={handleLogout}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 1rem',
+                background: 'transparent',
+                border: '1px solid #e2e8f0',
+                color: '#64748b',
+                cursor: 'pointer',
+                borderRadius: '4px',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#f1f5f9';
+                e.currentTarget.style.borderColor = '#cbd5e1';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderColor = '#e2e8f0';
+              }}
+            >
+              <LogOut size={16} />
+              Sign Out
+            </button>
           </div>
         </header>
 

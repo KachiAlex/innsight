@@ -15,6 +15,8 @@ const createRoomSchema = z.object({
   maxOccupancy: z.number().int().min(1),
   amenities: z.any().optional(),
   ratePlanId: z.string().uuid().optional(),
+  categoryId: z.string().optional(),
+  description: z.string().optional(),
 });
 
 // GET /api/tenants/:tenantId/rooms
@@ -91,50 +93,82 @@ roomRouter.get(
       // Convert to array and enrich with ratePlan and reservation count
       const rooms = await Promise.all(
         roomsSnapshot.docs.map(async (doc) => {
-          const roomData = doc.data();
-          const roomId = doc.id;
-
-          // Get rate plan if exists (don't fail if lookup fails)
-          let ratePlan: { id: string; name: any; baseRate: any } | null = null;
           try {
-            if (roomData.ratePlanId) {
-              const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
-              if (ratePlanDoc.exists) {
-                const ratePlanData = ratePlanDoc.data();
-                ratePlan = {
-                  id: ratePlanDoc.id,
-                  name: ratePlanData?.name || null,
-                  baseRate: ratePlanData?.baseRate || null,
-                };
+            const roomData = doc.data();
+            const roomId = doc.id;
+
+            // Get rate plan if exists (don't fail if lookup fails)
+            let ratePlan: { id: string; name: any; baseRate: any } | null = null;
+            try {
+              if (roomData.ratePlanId) {
+                const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
+                if (ratePlanDoc.exists) {
+                  const ratePlanData = ratePlanDoc.data();
+                  ratePlan = {
+                    id: ratePlanDoc.id,
+                    name: ratePlanData?.name || null,
+                    baseRate: ratePlanData?.baseRate || null,
+                  };
+                }
               }
+            } catch (error) {
+              // Silently continue if rate plan lookup fails
+              console.warn(`Error fetching rate plan for room ${roomId}:`, error);
             }
-          } catch (error) {
-            // Silently continue if rate plan lookup fails
-            console.warn(`Error fetching rate plan for room ${roomId}:`, error);
-          }
 
-          // Get reservation count (don't fail if lookup fails)
-          let reservationCount = 0;
-          try {
-            const reservationsSnapshot = await db.collection('reservations')
-              .where('roomId', '==', roomId)
-              .get();
-            reservationCount = reservationsSnapshot.size;
-          } catch (error) {
-            // Silently continue if reservation lookup fails
-            console.warn(`Error fetching reservations for room ${roomId}:`, error);
-          }
+            // Get category if exists (don't fail if lookup fails)
+            let category: { id: string; name: string } | null = null;
+            try {
+              if (roomData.categoryId) {
+                const categoryDoc = await db.collection('roomCategories').doc(roomData.categoryId).get();
+                if (categoryDoc.exists) {
+                  const categoryData = categoryDoc.data();
+                  category = {
+                    id: categoryDoc.id,
+                    name: categoryData?.name || null,
+                  };
+                }
+              }
+            } catch (error) {
+              // Silently continue if category lookup fails
+              console.warn(`Error fetching category for room ${roomId}:`, error);
+            }
 
-          return {
-            id: roomId,
-            ...roomData,
-            ratePlan,
-            _count: {
-              reservations: reservationCount,
-            },
-            createdAt: toDate(roomData.createdAt),
-            updatedAt: toDate(roomData.updatedAt),
-          };
+            // Get reservation count (don't fail if lookup fails)
+            let reservationCount = 0;
+            try {
+              const reservationsSnapshot = await db.collection('reservations')
+                .where('roomId', '==', roomId)
+                .get();
+              reservationCount = reservationsSnapshot.size;
+            } catch (error) {
+              // Silently continue if reservation lookup fails
+              console.warn(`Error fetching reservations for room ${roomId}:`, error);
+            }
+
+            return {
+              id: roomId,
+              ...roomData,
+              ratePlan,
+              category,
+              _count: {
+                reservations: reservationCount,
+              },
+              createdAt: toDate(roomData.createdAt) || null,
+              updatedAt: toDate(roomData.updatedAt) || null,
+            };
+          } catch (error: any) {
+            console.error(`Error processing room ${doc.id}:`, error);
+            // Return a minimal room object to prevent complete failure
+            return {
+              id: doc.id,
+              ...doc.data(),
+              ratePlan: null,
+              _count: { reservations: 0 },
+              createdAt: null,
+              updatedAt: null,
+            };
+          }
         })
       );
 
@@ -187,6 +221,19 @@ roomRouter.get(
         }
       }
 
+      // Get category if exists
+      let category: { id: string; name: string } | null = null;
+      if (roomData?.categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(roomData.categoryId).get();
+        if (categoryDoc.exists) {
+          const categoryData = categoryDoc.data();
+          category = {
+            id: categoryDoc.id,
+            name: categoryData?.name || null,
+          };
+        }
+      }
+
       // Get active reservations
       const reservationsSnapshot = await db.collection('reservations')
         .where('roomId', '==', roomId)
@@ -207,6 +254,7 @@ roomRouter.get(
         id: roomDoc.id,
         ...roomData,
         ratePlan,
+        category,
         reservations,
         createdAt: toDate(roomData?.createdAt),
         updatedAt: toDate(roomData?.updatedAt),
@@ -250,6 +298,14 @@ roomRouter.post(
         throw new AppError('Room number already exists', 400);
       }
 
+      // Validate categoryId if provided
+      if (data.categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
+        if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+          throw new AppError('Invalid room category', 400);
+        }
+      }
+
       // Create room
       const roomRef = db.collection('rooms').doc();
       const roomData = {
@@ -260,6 +316,8 @@ roomRouter.post(
         maxOccupancy: data.maxOccupancy,
         amenities: data.amenities || null,
         ratePlanId: data.ratePlanId || null,
+        categoryId: data.categoryId || null,
+        description: data.description || null,
         status: 'available',
         createdAt: now(),
         updatedAt: now(),
@@ -279,10 +337,24 @@ roomRouter.post(
         }
       }
 
+      // Get category if exists
+      let category: { id: string; name: string } | null = null;
+      if (data.categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
+        if (categoryDoc.exists) {
+          const categoryData = categoryDoc.data();
+          category = {
+            id: categoryDoc.id,
+            name: categoryData?.name || null,
+          };
+        }
+      }
+
       const room = {
         id: roomRef.id,
         ...roomData,
         ratePlan,
+        category,
         createdAt: toDate(roomData.createdAt),
         updatedAt: toDate(roomData.updatedAt),
       };
@@ -341,11 +413,25 @@ roomRouter.patch(
         updatedAt: toDate(roomData?.updatedAt),
       };
 
+      // Validate categoryId if provided
+      if (req.body.categoryId !== undefined) {
+        if (req.body.categoryId) {
+          const categoryDoc = await db.collection('roomCategories').doc(req.body.categoryId).get();
+          if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+            throw new AppError('Invalid room category', 400);
+          }
+        }
+      }
+
       // Update room
-      const updateData = {
+      const updateData: any = {
         ...req.body,
         updatedAt: now(),
       };
+
+      // Handle null values properly
+      if (updateData.categoryId === '') updateData.categoryId = null;
+      if (updateData.description === '') updateData.description = null;
 
       await roomDoc.ref.update(updateData);
 
@@ -365,10 +451,24 @@ roomRouter.patch(
         }
       }
 
+      // Get category if exists
+      let category: { id: string; name: string } | null = null;
+      if (updatedData?.categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(updatedData.categoryId).get();
+        if (categoryDoc.exists) {
+          const categoryData = categoryDoc.data();
+          category = {
+            id: categoryDoc.id,
+            name: categoryData?.name || null,
+          };
+        }
+      }
+
       const updated = {
         id: updatedDoc.id,
         ...updatedData,
         ratePlan,
+        category,
         createdAt: toDate(updatedData?.createdAt),
         updatedAt: toDate(updatedData?.updatedAt),
       };

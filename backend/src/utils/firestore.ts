@@ -8,9 +8,19 @@ if (!admin.apps.length) {
 export const db = admin.firestore();
 
 // Helper to convert Firestore timestamp to Date
-export const toDate = (timestamp: admin.firestore.Timestamp | null | undefined): Date | null => {
+export const toDate = (timestamp: admin.firestore.Timestamp | Date | string | null | undefined): Date | null => {
   if (!timestamp) return null;
-  return timestamp.toDate();
+  if (timestamp instanceof Date) return timestamp;
+  if (typeof timestamp === 'string') return new Date(timestamp);
+  if (timestamp instanceof admin.firestore.Timestamp) {
+    try {
+      return timestamp.toDate();
+    } catch (error) {
+      console.warn('Error converting timestamp to date:', error);
+      return null;
+    }
+  }
+  return null;
 };
 
 // Helper to convert Date to Firestore timestamp
