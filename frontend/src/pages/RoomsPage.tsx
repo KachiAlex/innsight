@@ -60,6 +60,8 @@ export default function RoomsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('');
   const [selectedFloorFilter, setSelectedFloorFilter] = useState<string>('');
+  const [selectedRoomTypeFilter, setSelectedRoomTypeFilter] = useState<string>('');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('');
   const [selectedRooms, setSelectedRooms] = useState<Set<string>>(new Set());
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   const [showActivityModal, setShowActivityModal] = useState(false);
@@ -269,6 +271,16 @@ export default function RoomsPage() {
       }
     }
 
+    // Filter by room type
+    if (selectedRoomTypeFilter) {
+      if (room.roomType !== selectedRoomTypeFilter) return false;
+    }
+
+    // Filter by status
+    if (selectedStatusFilter) {
+      if (room.status !== selectedStatusFilter) return false;
+    }
+
     // Filter by floor
     if (selectedFloorFilter) {
         const floorNumber = parseInt(selectedFloorFilter, 10);
@@ -279,6 +291,23 @@ export default function RoomsPage() {
 
     return true;
   });
+
+  const roomTypeOptions = useMemo(() => {
+    return Array.from(new Set(rooms.map((room) => room.roomType).filter(Boolean)));
+  }, [rooms]);
+
+  const statusLabels: Record<string, string> = {
+    available: 'Available',
+    reserved: 'Reserved',
+    occupied: 'Occupied',
+    dirty: 'Dirty',
+    clean: 'Clean',
+    inspected: 'Inspected',
+    out_of_order: 'Out of Order',
+    maintenance: 'Maintenance',
+  };
+
+  const statusOptions = Object.keys(statusLabels);
 
   const activeFilters = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
@@ -295,8 +324,21 @@ export default function RoomsPage() {
     if (selectedFloorFilter) {
       chips.push({ key: 'floor', label: `Floor: ${selectedFloorFilter}` });
     }
+    if (selectedRoomTypeFilter) {
+      chips.push({ key: 'roomType', label: `Room type: ${selectedRoomTypeFilter}` });
+    }
+    if (selectedStatusFilter) {
+      chips.push({ key: 'status', label: `Status: ${statusLabels[selectedStatusFilter] || selectedStatusFilter}` });
+    }
     return chips;
-  }, [searchTerm, selectedCategoryFilter, selectedFloorFilter, categories]);
+  }, [
+    searchTerm,
+    selectedCategoryFilter,
+    selectedFloorFilter,
+    selectedRoomTypeFilter,
+    selectedStatusFilter,
+    categories,
+  ]);
 
   const clearFilter = (key: string) => {
     if (key === 'search') {
@@ -305,6 +347,10 @@ export default function RoomsPage() {
       setSelectedCategoryFilter('');
     } else if (key === 'floor') {
       setSelectedFloorFilter('');
+    } else if (key === 'roomType') {
+      setSelectedRoomTypeFilter('');
+    } else if (key === 'status') {
+      setSelectedStatusFilter('');
     }
   };
 
@@ -485,6 +531,44 @@ export default function RoomsPage() {
               </option>
             ))}
           </select>
+          <select
+            value={selectedRoomTypeFilter}
+            onChange={(e) => setSelectedRoomTypeFilter(e.target.value)}
+            style={{
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              cursor: 'pointer',
+              minWidth: '150px',
+            }}
+          >
+            <option value="">All Room Types</option>
+            {roomTypeOptions.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+          <select
+            value={selectedStatusFilter}
+            onChange={(e) => setSelectedStatusFilter(e.target.value)}
+            style={{
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              cursor: 'pointer',
+              minWidth: '150px',
+            }}
+          >
+            <option value="">All Statuses</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>
+                {statusLabels[status]}
+              </option>
+            ))}
+          </select>
           <input
             type="number"
             value={selectedFloorFilter}
@@ -498,13 +582,15 @@ export default function RoomsPage() {
               minWidth: '120px',
             }}
           />
-          {(searchTerm || selectedCategoryFilter || selectedFloorFilter) && (
+          {(searchTerm || selectedCategoryFilter || selectedFloorFilter || selectedRoomTypeFilter || selectedStatusFilter) && (
             <button
               type="button"
               onClick={() => {
                 setSearchTerm('');
                 setSelectedCategoryFilter('');
                 setSelectedFloorFilter('');
+                setSelectedRoomTypeFilter('');
+                setSelectedStatusFilter('');
               }}
               style={{
                 padding: '0.75rem 1rem',
