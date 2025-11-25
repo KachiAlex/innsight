@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -271,7 +271,7 @@ export default function RoomsPage() {
 
     // Filter by floor
     if (selectedFloorFilter) {
-      const floorNumber = parseInt(selectedFloorFilter, 10);
+        const floorNumber = parseInt(selectedFloorFilter, 10);
       if (!isNaN(floorNumber)) {
         if (room.floor !== floorNumber) return false;
       }
@@ -279,6 +279,34 @@ export default function RoomsPage() {
 
     return true;
   });
+
+  const activeFilters = useMemo(() => {
+    const chips: { key: string; label: string }[] = [];
+    if (searchTerm) {
+      chips.push({ key: 'search', label: `Search: ${searchTerm}` });
+    }
+    if (selectedCategoryFilter) {
+      const categoryLabel =
+        selectedCategoryFilter === 'none'
+          ? 'No Category'
+          : categories.find((cat) => cat.id === selectedCategoryFilter)?.name || 'Category';
+      chips.push({ key: 'category', label: `Category: ${categoryLabel}` });
+    }
+    if (selectedFloorFilter) {
+      chips.push({ key: 'floor', label: `Floor: ${selectedFloorFilter}` });
+    }
+    return chips;
+  }, [searchTerm, selectedCategoryFilter, selectedFloorFilter, categories]);
+
+  const clearFilter = (key: string) => {
+    if (key === 'search') {
+      setSearchTerm('');
+    } else if (key === 'category') {
+      setSelectedCategoryFilter('');
+    } else if (key === 'floor') {
+      setSelectedFloorFilter('');
+    }
+  };
 
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
@@ -492,6 +520,42 @@ export default function RoomsPage() {
             </button>
           )}
         </div>
+        {activeFilters.length > 0 && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {activeFilters.map((filter) => (
+              <span
+                key={filter.key}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '0.35rem 0.75rem',
+                  borderRadius: '999px',
+                  background: '#eef2ff',
+                  color: '#312e81',
+                  fontSize: '0.75rem',
+                  fontWeight: 500,
+                }}
+              >
+                {filter.label}
+                <button
+                  onClick={() => clearFilter(filter.key)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    color: '#312e81',
+                    padding: 0,
+                  }}
+                  aria-label={`Clear ${filter.label} filter`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
 
         <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <input
