@@ -4,9 +4,20 @@ import { prisma } from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
+import { createRoomLog } from '../utils/roomLogs';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 
 export const maintenanceRouter = Router({ mergeParams: true });
+
+const getUserDisplayName = (user?: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}) => {
+  if (!user) return null;
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return name || user.email || null;
+};
 
 const createTicketSchema = z.object({
   roomId: z.string().uuid().optional(),
@@ -157,6 +168,27 @@ maintenanceRouter.patch(
       beforeState,
       afterState: updated,
     });
+
+  if (
+    ticket.roomId &&
+    beforeState.status !== updated.status &&
+    ['resolved', 'closed'].includes(updated.status)
+  ) {
+    await createRoomLog({
+      tenantId,
+      roomId: ticket.roomId,
+      type: 'maintenance_completed',
+      summary: `Maintenance ticket "${ticket.title}" marked ${updated.status}`,
+      metadata: {
+        ticketId,
+        status: updated.status,
+      },
+      user: {
+        id: req.user?.id || null,
+        name: getUserDisplayName(req.user),
+      },
+    });
+  }
 
     res.json({
       success: true,

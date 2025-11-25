@@ -5,8 +5,15 @@ import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/au
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, snapshotToArray } from '../utils/firestore';
+import { createRoomLog } from '../utils/roomLogs';
 
 export const roomRouter = Router({ mergeParams: true });
+
+const getRequestUserName = (user?: any) => {
+  if (!user) return null;
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return name || user.email || null;
+};
 
 const createRoomSchema = z.object({
   roomNumber: z.string().min(1),
@@ -27,7 +34,7 @@ roomRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const { status, roomType } = req.query;
+      const { status, roomType, categoryId, floor } = req.query;
 
       const { page, limit } = getPaginationParams(req);
 
@@ -40,6 +47,19 @@ roomRouter.get(
       }
       if (roomType) {
         query = query.where('roomType', '==', roomType);
+      }
+      if (categoryId) {
+        if (categoryId === 'none') {
+          query = query.where('categoryId', '==', null);
+        } else {
+          query = query.where('categoryId', '==', categoryId);
+        }
+      }
+      if (floor) {
+        const floorNumber = parseInt(floor as string, 10);
+        if (!isNaN(floorNumber)) {
+          query = query.where('floor', '==', floorNumber);
+        }
       }
 
       // Get total count
@@ -277,6 +297,105 @@ roomRouter.get(
   }
 );
 
+// GET /api/tenants/:tenantId/rooms/:id/logs
+roomRouter.get(
+  '/:id/logs',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const roomId = req.params.id;
+
+      const roomDoc = await db.collection('rooms').doc(roomId).get();
+      if (!roomDoc.exists || roomDoc.data()?.tenantId !== tenantId) {
+        throw new AppError('Room not found', 404);
+      }
+
+      const { skip, take, page, limit } = getPaginationParams(req);
+
+      const baseQuery = db.collection('roomLogs')
+        .where('tenantId', '==', tenantId)
+        .where('roomId', '==', roomId);
+
+      let totalSnapshot;
+      let logsSnapshot;
+
+      try {
+        totalSnapshot = await baseQuery.get();
+
+        try {
+          logsSnapshot = await baseQuery
+            .orderBy('createdAt', 'desc')
+            .offset(skip)
+            .limit(take)
+            .get();
+        } catch (orderByError: any) {
+          console.warn('orderBy failed for roomLogs, sorting in memory:', orderByError.message);
+          const allLogsSnapshot = await baseQuery.get();
+          const sortedDocs = allLogsSnapshot.docs.sort((a, b) => {
+            const aCreated = a.data().createdAt;
+            const bCreated = b.data().createdAt;
+            if (!aCreated || !bCreated) return 0;
+            const aDate = toDate(aCreated)?.getTime() || 0;
+            const bDate = toDate(bCreated)?.getTime() || 0;
+            return bDate - aDate;
+          });
+          logsSnapshot = {
+            docs: sortedDocs.slice(skip, skip + take),
+            size: sortedDocs.length,
+          } as any;
+        }
+      } catch (error: any) {
+        console.warn('Error fetching room logs, returning empty data:', error.message);
+        res.json({
+          success: true,
+          data: [],
+          pagination: {
+            page: 1,
+            limit: 10,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        });
+        return;
+      }
+
+      const total = totalSnapshot.size;
+      const logs = logsSnapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          type: data.type,
+          summary: data.summary,
+          details: data.details || null,
+          metadata: data.metadata || null,
+          user: data.user || null,
+          createdAt: toDate(data.createdAt),
+        };
+      });
+
+      const result = createPaginationResult(logs, total, page, limit);
+
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error fetching room logs:', error);
+      throw new AppError(
+        `Failed to fetch room logs: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
 // POST /api/tenants/:tenantId/rooms
 roomRouter.post(
   '/',
@@ -385,6 +504,124 @@ roomRouter.post(
   }
 );
 
+// POST /api/tenants/:tenantId/rooms/bulk
+roomRouter.post(
+  '/bulk',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { roomNumbers, roomType, floor, maxOccupancy, amenities, ratePlanId, categoryId, description } = req.body;
+
+      // Validate required fields
+      if (!roomNumbers || !Array.isArray(roomNumbers) || roomNumbers.length === 0) {
+        throw new AppError('roomNumbers array is required', 400);
+      }
+      if (!roomType) {
+        throw new AppError('roomType is required', 400);
+      }
+      if (!maxOccupancy) {
+        throw new AppError('maxOccupancy is required', 400);
+      }
+
+      // Validate categoryId if provided
+      let categoryDescription = description || null;
+      if (categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(categoryId).get();
+        if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+          throw new AppError('Invalid room category', 400);
+        }
+        // Use category description if no description provided
+        if (!description && categoryDoc.data()?.description) {
+          categoryDescription = categoryDoc.data()?.description;
+        }
+      }
+
+      // Check for existing room numbers
+      const existingRoomsSnapshot = await db.collection('rooms')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const existingRoomNumbers = new Set(
+        existingRoomsSnapshot.docs.map(doc => doc.data().roomNumber)
+      );
+
+      const duplicateRoomNumbers = roomNumbers.filter((num: string) => existingRoomNumbers.has(num));
+      if (duplicateRoomNumbers.length > 0) {
+        throw new AppError(
+          `Room numbers already exist: ${duplicateRoomNumbers.join(', ')}`,
+          400
+        );
+      }
+
+      // Create all rooms in batch
+      const batch = db.batch();
+      const createdRooms: any[] = [];
+      const timestamp = now();
+
+      for (const roomNumber of roomNumbers) {
+        const roomRef = db.collection('rooms').doc();
+        const roomData = {
+          tenantId,
+          roomNumber: String(roomNumber),
+          roomType,
+          floor: floor || null,
+          maxOccupancy: parseInt(String(maxOccupancy), 10),
+          amenities: amenities || null,
+          ratePlanId: ratePlanId || null,
+          categoryId: categoryId || null,
+          description: categoryDescription,
+          status: 'available',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+
+        batch.set(roomRef, roomData);
+        createdRooms.push({
+          id: roomRef.id,
+          roomNumber: String(roomNumber),
+        });
+      }
+
+      // Commit batch
+      await batch.commit();
+
+      // Create audit log for bulk creation
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'bulk_create_rooms',
+        entityType: 'room',
+        entityId: createdRooms[0]?.id || 'bulk',
+        afterState: {
+          count: createdRooms.length,
+          roomNumbers: createdRooms.map(r => r.roomNumber),
+          roomType,
+          categoryId,
+        },
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          created: createdRooms.length,
+          rooms: createdRooms,
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error creating rooms in bulk:', error);
+      throw new AppError(
+        `Failed to create rooms: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
 // PATCH /api/tenants/:tenantId/rooms/:id
 roomRouter.patch(
   '/:id',
@@ -472,6 +709,24 @@ roomRouter.patch(
         createdAt: toDate(updatedData?.createdAt),
         updatedAt: toDate(updatedData?.updatedAt),
       };
+
+      if (req.body.status !== undefined && req.body.status !== roomData?.status) {
+        const userName = getRequestUserName(req.user);
+        await createRoomLog({
+          tenantId,
+          roomId,
+          type: 'status_change',
+          summary: `Room status changed from ${(roomData?.status || 'unknown').replace('_', ' ')} to ${String(req.body.status).replace('_', ' ')}`,
+          metadata: {
+            from: roomData?.status || null,
+            to: req.body.status,
+          },
+          user: {
+            id: req.user?.id || null,
+            name: userName,
+          },
+        });
+      }
 
       await createAuditLog({
         tenantId,

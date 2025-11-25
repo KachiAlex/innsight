@@ -1,4 +1,4 @@
-// Firebase Functions entry point for Express app
+// Firebase Functions entry point for Express app (updated for room activity logs)
 process.env.FIREBASE_FUNCTIONS = 'true';
 
 const { onRequest } = require('firebase-functions/v2/https');

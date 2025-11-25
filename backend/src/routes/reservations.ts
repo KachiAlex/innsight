@@ -6,9 +6,33 @@ import { createAuditLog } from '../utils/audit';
 import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
+import { createRoomLog } from '../utils/roomLogs';
 import { v4 as uuidv4 } from 'uuid';
 
 export const reservationRouter = Router({ mergeParams: true });
+
+const getUserDisplayName = (user?: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}) => {
+  if (!user) return null;
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return name || user.email || null;
+};
+
+const availabilityQuerySchema = z.object({
+  startDate: z.string().datetime(),
+  endDate: z.string().datetime(),
+  roomType: z.string().optional(),
+  categoryId: z.string().optional(),
+  ratePlanId: z.string().optional(),
+  minOccupancy: z.coerce.number().int().min(1).optional(),
+  floor: z.coerce.number().int().optional(),
+  minRate: z.coerce.number().nonnegative().optional(),
+  maxRate: z.coerce.number().nonnegative().optional(),
+  includeOutOfOrder: z.coerce.boolean().optional(),
+});
 
 const createReservationSchema = z.object({
   roomId: z.string().uuid(),
@@ -27,6 +51,263 @@ const createReservationSchema = z.object({
 });
 
 // POST /api/tenants/:tenantId/reservations
+// GET /api/tenants/:tenantId/reservations/availability
+reservationRouter.get(
+  '/availability',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const parsed = availabilityQuerySchema.safeParse(req.query);
+
+      if (!parsed.success) {
+        throw new AppError('Invalid availability query parameters', 400);
+      }
+
+      const {
+        startDate,
+        endDate,
+        roomType,
+        categoryId,
+        ratePlanId,
+        minOccupancy,
+        floor,
+        minRate,
+        maxRate,
+        includeOutOfOrder,
+      } = parsed.data;
+
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (end <= start) {
+        throw new AppError('End date must be after start date', 400);
+      }
+      if (minRate !== undefined && maxRate !== undefined && Number(minRate) > Number(maxRate)) {
+        throw new AppError('Minimum rate cannot be greater than maximum rate', 400);
+      }
+
+      // Fetch rooms for tenant (optionally filtered by type/floor)
+      let roomsQuery: FirebaseFirestore.Query = db.collection('rooms')
+        .where('tenantId', '==', tenantId);
+
+      if (roomType) {
+        roomsQuery = roomsQuery.where('roomType', '==', roomType);
+      }
+      if (typeof floor === 'number') {
+        roomsQuery = roomsQuery.where('floor', '==', floor);
+      }
+
+      const roomsSnapshot = await roomsQuery.get();
+      if (roomsSnapshot.empty) {
+        res.json({
+          success: true,
+          data: {
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            totalRooms: 0,
+            availableCount: 0,
+            availableRooms: [],
+            unavailableRooms: [],
+          },
+        });
+        return;
+      }
+
+      const blockedStatuses = includeOutOfOrder ? [] : ['out_of_order', 'maintenance'];
+
+      const rooms = roomsSnapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        .filter((room: any) => {
+          if (!room) return false;
+          if (!includeOutOfOrder && blockedStatuses.includes(room.status)) {
+            return false;
+          }
+          if (minOccupancy && (room.maxOccupancy || 0) < minOccupancy) {
+            return false;
+          }
+          if (categoryId) {
+            if (categoryId === 'none') {
+              if (room.categoryId) return false;
+            } else if (room.categoryId !== categoryId) {
+              return false;
+            }
+          }
+          if (ratePlanId && room.ratePlanId !== ratePlanId) {
+            return false;
+          }
+          return true;
+        });
+
+      if (rooms.length === 0) {
+        res.json({
+          success: true,
+          data: {
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            totalRooms: 0,
+            availableCount: 0,
+            availableRooms: [],
+            unavailableRooms: [],
+          },
+        });
+        return;
+      }
+
+      const allowedRoomIds = new Set(rooms.map((room: any) => room.id));
+
+      // Fetch overlapping reservations
+      const reservationsSnapshot = await db.collection('reservations')
+        .where('tenantId', '==', tenantId)
+        .where('status', 'in', ['confirmed', 'checked_in'])
+        .get();
+
+      const unavailableRoomReservations = new Map<string, any[]>();
+
+      reservationsSnapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        const checkIn = toDate(data.checkInDate);
+        const checkOut = toDate(data.checkOutDate);
+
+        if (!checkIn || !checkOut) return;
+
+        const overlaps = checkIn < end && checkOut > start;
+        if (!overlaps) return;
+
+        const roomId = data.roomId;
+        if (!roomId || !allowedRoomIds.has(roomId)) return;
+
+        if (!unavailableRoomReservations.has(roomId)) {
+          unavailableRoomReservations.set(roomId, []);
+        }
+
+        unavailableRoomReservations.get(roomId)!.push({
+          reservationId: doc.id,
+          reservationNumber: data.reservationNumber || null,
+          status: data.status || 'confirmed',
+          checkInDate: checkIn,
+          checkOutDate: checkOut,
+          guestName: data.guestName || null,
+        });
+      });
+
+      const availableRoomsRaw = rooms.filter((room: any) => {
+        if (!room?.id) return false;
+        if (unavailableRoomReservations.has(room.id)) {
+          return false;
+        }
+        return true;
+      });
+
+      const availableRoomsWithRates = await Promise.all(
+        availableRoomsRaw.map(async (room: any) => {
+          let ratePlan: { id: string; name: string | null; baseRate: number | null } | null = null;
+          try {
+            if (room.ratePlanId) {
+              const ratePlanDoc = await db.collection('ratePlans').doc(room.ratePlanId).get();
+              if (ratePlanDoc.exists) {
+                const data = ratePlanDoc.data();
+                ratePlan = {
+                  id: ratePlanDoc.id,
+                  name: data?.name || null,
+                  baseRate: data?.baseRate || null,
+                };
+              }
+            }
+          } catch (error) {
+            console.warn(`Error fetching rate plan for room ${room.id}:`, error);
+          }
+
+          let category: { id: string; name: string | null } | null = null;
+          try {
+            if (room.categoryId) {
+              const categoryDoc = await db.collection('roomCategories').doc(room.categoryId).get();
+              if (categoryDoc.exists) {
+                const data = categoryDoc.data();
+                category = {
+                  id: categoryDoc.id,
+                  name: data?.name || null,
+                };
+              }
+            }
+          } catch (error) {
+            console.warn(`Error fetching category for room ${room.id}:`, error);
+          }
+
+          return {
+            id: room.id,
+            roomNumber: room.roomNumber || '',
+            roomType: room.roomType || '',
+            floor: room.floor || null,
+            status: room.status || 'available',
+            maxOccupancy: room.maxOccupancy || 0,
+            amenities: room.amenities || null,
+            categoryId: room.categoryId || null,
+            ratePlanId: room.ratePlanId || null,
+            ratePlan,
+            category,
+          };
+        })
+      );
+
+      const availableRooms = availableRoomsWithRates.filter((room) => {
+        const baseRate =
+          room.ratePlan?.baseRate !== undefined && room.ratePlan?.baseRate !== null
+            ? Number(room.ratePlan?.baseRate)
+            : null;
+
+        if (minRate !== undefined) {
+          if (baseRate === null || baseRate < Number(minRate)) {
+            return false;
+          }
+        }
+        if (maxRate !== undefined) {
+          if (baseRate === null || baseRate > Number(maxRate)) {
+            return false;
+          }
+        }
+        return true;
+      });
+
+      const unavailableRooms = Array.from(unavailableRoomReservations.entries()).map(
+        ([roomId, reservations]) => ({
+          roomId,
+          reservations: reservations.map((reservation) => ({
+            ...reservation,
+            checkInDate: reservation.checkInDate?.toISOString?.() || null,
+            checkOutDate: reservation.checkOutDate?.toISOString?.() || null,
+          })),
+        })
+      );
+
+      res.json({
+        success: true,
+        data: {
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          totalRooms: rooms.length,
+          availableCount: availableRooms.length,
+          availableRooms,
+          unavailableRooms,
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error checking availability:', error);
+      throw new AppError(
+        `Failed to fetch availability: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
 reservationRouter.post(
   '/',
   authenticate,
@@ -142,6 +423,24 @@ reservationRouter.post(
         },
       });
 
+      await createRoomLog({
+        tenantId,
+        roomId: data.roomId,
+        type: 'reservation_created',
+        summary: `Reservation ${reservationNumber} created for ${data.guestName}`,
+        metadata: {
+          reservationId: reservationRef.id,
+          reservationNumber,
+          checkInDate: checkIn.toISOString(),
+          checkOutDate: checkOut.toISOString(),
+          guestName: data.guestName,
+        },
+        user: {
+          id: req.user?.id || null,
+          name: getUserDisplayName(req.user),
+        },
+      });
+
       res.status(201).json({
         success: true,
         data: reservation,
@@ -149,6 +448,10 @@ reservationRouter.post(
     } catch (error: any) {
       if (error instanceof AppError) {
         throw error;
+      }
+      if (error instanceof z.ZodError) {
+        const message = error.errors?.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ') || 'Invalid reservation data';
+        throw new AppError(message, 400);
       }
       console.error('Error creating reservation:', error);
       throw new AppError(
@@ -482,6 +785,22 @@ reservationRouter.post(
         },
       });
 
+      await createRoomLog({
+        tenantId,
+        roomId: reservationData.roomId,
+        type: 'check_in',
+        summary: `Guest checked in (Reservation ${reservationData.reservationNumber || reservationId})`,
+        metadata: {
+          reservationId,
+          reservationNumber: reservationData.reservationNumber || null,
+          guestName: reservationData.guestName || null,
+        },
+        user: {
+          id: req.user?.id || null,
+          name: getUserDisplayName(req.user),
+        },
+      });
+
       res.json({
         success: true,
         data: updated,
@@ -596,6 +915,22 @@ reservationRouter.post(
         metadata: {
           finalCharges,
           paymentInfo,
+        },
+      });
+
+      await createRoomLog({
+        tenantId,
+        roomId: reservationData.roomId,
+        type: 'check_out',
+        summary: `Guest checked out (Reservation ${reservationData.reservationNumber || reservationId})`,
+        metadata: {
+          reservationId,
+          reservationNumber: reservationData.reservationNumber || null,
+          finalCharges: finalCharges || null,
+        },
+        user: {
+          id: req.user?.id || null,
+          name: getUserDisplayName(req.user),
         },
       });
 

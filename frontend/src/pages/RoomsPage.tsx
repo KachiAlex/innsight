@@ -6,6 +6,7 @@ import { Plus, DoorOpen, Tag, X, Edit, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
+import Pagination from '../components/Pagination';
 
 interface RoomCategory {
   id: string;
@@ -34,6 +35,19 @@ interface Room {
   };
 }
 
+interface RoomLog {
+  id: string;
+  type: string;
+  summary: string;
+  details?: string | null;
+  metadata?: Record<string, any> | null;
+  user?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+  createdAt: string;
+}
+
 export default function RoomsPage() {
   const { user } = useAuthStore();
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -44,19 +58,71 @@ export default function RoomsPage() {
   const [editingCategory, setEditingCategory] = useState<RoomCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('');
+  const [selectedFloorFilter, setSelectedFloorFilter] = useState<string>('');
   const [selectedRooms, setSelectedRooms] = useState<Set<string>>(new Set());
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [showActivityModal, setShowActivityModal] = useState(false);
+  const [activityRoom, setActivityRoom] = useState<Room | null>(null);
+  const [roomLogs, setRoomLogs] = useState<RoomLog[]>([]);
+  const [roomLogsLoading, setRoomLogsLoading] = useState(false);
+  const [roomLogsPagination, setRoomLogsPagination] = useState({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+    hasNext: false,
+    hasPrev: false,
+  });
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 1,
+    hasNext: false,
+    hasPrev: false,
+  });
 
   useEffect(() => {
     if (!user?.tenantId) return;
-    fetchRooms();
+    fetchRooms(1, pagination.limit);
+  }, [user, selectedCategoryFilter, selectedFloorFilter]);
+
+  useEffect(() => {
+    if (!user?.tenantId) return;
     fetchCategories();
   }, [user]);
 
-  const fetchRooms = async () => {
+  const fetchRooms = async (page = 1, limit = pagination.limit) => {
+    setLoading(true);
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/rooms`);
+      const response = await api.get(`/tenants/${user?.tenantId}/rooms`, {
+        params: {
+          page,
+          limit,
+          categoryId:
+            selectedCategoryFilter && selectedCategoryFilter !== ''
+              ? selectedCategoryFilter === 'none'
+                ? 'none'
+                : selectedCategoryFilter
+              : undefined,
+          floor: selectedFloorFilter || undefined,
+        },
+      });
       setRooms(response.data.data || []);
+      if (response.data.pagination) {
+        setPagination(response.data.pagination);
+      } else {
+        setPagination((prev) => ({
+          ...prev,
+          page,
+          limit,
+          total: response.data.data?.length || 0,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        }));
+      }
+      setSelectedRooms(new Set());
     } catch (error) {
       console.error('Failed to fetch rooms:', error);
     } finally {
@@ -67,9 +133,45 @@ export default function RoomsPage() {
   const fetchCategories = async () => {
     try {
       const response = await api.get(`/tenants/${user?.tenantId}/room-categories`);
-      setCategories(response.data.data || []);
+      const newCategories = response.data.data || [];
+      setCategories(newCategories);
+      
+      // If we're editing a category, update it with fresh data from the refetch
+      if (editingCategory) {
+        const updatedCategory = newCategories.find((cat: RoomCategory) => cat.id === editingCategory.id);
+        if (updatedCategory) {
+          setEditingCategory(updatedCategory);
+        }
+      }
     } catch (error) {
       console.error('Failed to fetch categories:', error);
+    }
+  };
+
+  const fetchRoomLogs = async (roomId: string, page = 1, limit = roomLogsPagination.limit) => {
+    setRoomLogsLoading(true);
+    try {
+      const response = await api.get(`/tenants/${user?.tenantId}/rooms/${roomId}/logs`, {
+        params: { page, limit },
+      });
+      setRoomLogs(response.data.data || []);
+      if (response.data.pagination) {
+        setRoomLogsPagination(response.data.pagination);
+      } else {
+        setRoomLogsPagination((prev) => ({
+          ...prev,
+          page,
+          limit,
+          total: response.data.data?.length || 0,
+          totalPages: 1,
+          hasNext: false,
+          hasPrev: false,
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to fetch room logs:', error);
+    } finally {
+      setRoomLogsLoading(false);
     }
   };
 
@@ -98,7 +200,7 @@ export default function RoomsPage() {
 
     setIsBulkProcessing(false);
     setSelectedRooms(new Set());
-    fetchRooms();
+    fetchRooms(pagination.page);
 
     if (failCount === 0) {
       toast.success(`Successfully updated ${successCount} room(s)`);
@@ -125,6 +227,24 @@ export default function RoomsPage() {
     }
   };
 
+  const handleViewActivity = (room: Room) => {
+    setActivityRoom(room);
+    setShowActivityModal(true);
+    fetchRoomLogs(room.id, 1);
+  };
+
+  const handleActivityPageChange = (newPage: number) => {
+    if (!activityRoom) return;
+    if (newPage < 1 || newPage > roomLogsPagination.totalPages) return;
+    fetchRoomLogs(activityRoom.id, newPage);
+  };
+
+  const closeActivityModal = () => {
+    setShowActivityModal(false);
+    setActivityRoom(null);
+    setRoomLogs([]);
+  };
+
   const filteredRooms = rooms.filter((room) => {
     // Filter by search term
     if (searchTerm) {
@@ -138,12 +258,21 @@ export default function RoomsPage() {
       if (!matchesSearch) return false;
     }
 
-    // Filter by category
+    // Filter by category (support both legacy categoryId and populated category object)
     if (selectedCategoryFilter) {
+      const roomCategoryId = room.categoryId || room.category?.id || null;
       if (selectedCategoryFilter === 'none') {
-        if (room.categoryId) return false;
-      } else {
-        if (room.categoryId !== selectedCategoryFilter) return false;
+        if (roomCategoryId) return false;
+      } else if (!roomCategoryId || roomCategoryId !== selectedCategoryFilter) {
+        return false;
+      }
+    }
+
+    // Filter by floor
+    if (selectedFloorFilter) {
+      const floorNumber = parseInt(selectedFloorFilter, 10);
+      if (!isNaN(floorNumber)) {
+        if (room.floor !== floorNumber) return false;
       }
     }
 
@@ -298,7 +427,7 @@ export default function RoomsPage() {
           </div>
         )}
 
-        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ flex: 1 }}>
             <SearchInput
               value={searchTerm}
@@ -326,6 +455,40 @@ export default function RoomsPage() {
               </option>
             ))}
           </select>
+          <input
+            type="number"
+            value={selectedFloorFilter}
+            onChange={(e) => setSelectedFloorFilter(e.target.value)}
+            placeholder="Floor"
+            style={{
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '0.875rem',
+              minWidth: '120px',
+            }}
+          />
+          {(searchTerm || selectedCategoryFilter || selectedFloorFilter) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setSelectedCategoryFilter('');
+                setSelectedFloorFilter('');
+              }}
+              style={{
+                padding: '0.75rem 1rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+                background: '#f8fafc',
+                color: '#475569',
+                cursor: 'pointer',
+                fontSize: '0.875rem',
+              }}
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
 
         <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -410,6 +573,22 @@ export default function RoomsPage() {
                   </div>
                 )}
               </div>
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => handleViewActivity(room)}
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    background: 'white',
+                    color: '#3b82f6',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  View Activity
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -429,13 +608,29 @@ export default function RoomsPage() {
           </div>
         )}
 
+        {rooms.length > 0 && (
+          <div style={{ marginTop: '1.5rem' }}>
+            <Pagination
+              page={pagination.page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={pagination.limit}
+              onPageChange={(newPage) => {
+                if (newPage === pagination.page) return;
+                if (newPage < 1 || newPage > pagination.totalPages) return;
+                fetchRooms(newPage, pagination.limit);
+              }}
+            />
+          </div>
+        )}
+
         {showCreateModal && (
           <CreateRoomModal
             categories={categories}
             onClose={() => setShowCreateModal(false)}
             onSuccess={() => {
               setShowCreateModal(false);
-              fetchRooms();
+              fetchRooms(pagination.page);
             }}
           />
         )}
@@ -455,6 +650,17 @@ export default function RoomsPage() {
             onDelete={handleDeleteCategory}
           />
         )}
+
+        {showActivityModal && activityRoom && (
+          <RoomActivityModal
+            room={activityRoom}
+            logs={roomLogs}
+            pagination={roomLogsPagination}
+            loading={roomLogsLoading}
+            onClose={closeActivityModal}
+            onPageChange={handleActivityPageChange}
+          />
+        )}
       </div>
     </Layout>
   );
@@ -470,31 +676,145 @@ function CreateRoomModal({
   onSuccess: () => void;
 }) {
   const { user } = useAuthStore();
+  const [mode, setMode] = useState<'single' | 'bulk'>('single');
   const [formData, setFormData] = useState({
     roomNumber: '',
+    roomNumberRange: '',
     roomType: 'single',
     floor: '',
     maxOccupancy: 1,
     ratePlanId: '',
     categoryId: '',
     description: '',
+    overrideDescription: false,
   });
   const [loading, setLoading] = useState(false);
+  const [parsedRoomNumbers, setParsedRoomNumbers] = useState<string[]>([]);
+  const [creationProgress, setCreationProgress] = useState<{
+    total: number;
+    created: number;
+    failed: number;
+  } | null>(null);
+
+  // Parse room number range (e.g., "100-150" or "101, 102, 105-110")
+  const parseRoomNumbers = (input: string): string[] => {
+    const numbers: string[] = [];
+    const parts = input.split(',').map(p => p.trim());
+    
+    for (const part of parts) {
+      if (part.includes('-')) {
+        const [start, end] = part.split('-').map(s => s.trim());
+        const startNum = parseInt(start, 10);
+        const endNum = parseInt(end, 10);
+        if (!isNaN(startNum) && !isNaN(endNum) && startNum <= endNum) {
+          for (let i = startNum; i <= endNum; i++) {
+            numbers.push(String(i));
+          }
+        }
+      } else {
+        const num = part.trim();
+        if (num) {
+          numbers.push(num);
+        }
+      }
+    }
+    
+    return [...new Set(numbers)]; // Remove duplicates
+  };
+
+  // Auto-fill description from category
+  useEffect(() => {
+    if (!!formData.categoryId && !formData.overrideDescription) {
+      const category = categories.find(cat => cat.id === formData.categoryId);
+      if (category?.description) {
+        setFormData(prev => ({ ...prev, description: category.description || '' }));
+      }
+    }
+  }, [formData.categoryId, categories, formData.overrideDescription]);
+
+  // Parse room numbers when range input changes (bulk mode)
+  useEffect(() => {
+    if (mode === 'bulk' && formData.roomNumberRange) {
+      const parsed = parseRoomNumbers(formData.roomNumberRange);
+      setParsedRoomNumbers(parsed);
+    } else {
+      setParsedRoomNumbers([]);
+    }
+  }, [mode, formData.roomNumberRange]);
+
+  // Auto-detect floor from room number
+  const autoDetectFloor = (roomNumber: string): number | null => {
+    const num = parseInt(roomNumber, 10);
+    if (isNaN(num)) return null;
+    // If room number is 3+ digits, first digit(s) might be floor
+    if (num >= 100) {
+      const firstDigit = Math.floor(num / 100);
+      return firstDigit;
+    }
+    return null;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setCreationProgress(null);
 
     try {
-      await api.post(`/tenants/${user?.tenantId}/rooms`, {
-        ...formData,
-        floor: formData.floor ? parseInt(formData.floor) : null,
-        ratePlanId: formData.ratePlanId || null,
-        categoryId: formData.categoryId || null,
-        description: formData.description || null,
-      });
-      onSuccess();
-      toast.success('Room created successfully');
+      if (mode === 'single') {
+        // Single room creation
+        const floorValue = formData.floor 
+          ? parseInt(formData.floor, 10) 
+          : autoDetectFloor(formData.roomNumber);
+        
+        await api.post(`/tenants/${user?.tenantId}/rooms`, {
+          roomNumber: formData.roomNumber,
+          roomType: formData.roomType,
+          floor: floorValue,
+          maxOccupancy: formData.maxOccupancy,
+          ratePlanId: formData.ratePlanId || null,
+          categoryId: formData.categoryId || null,
+          description: formData.description || null,
+        });
+        onSuccess();
+        toast.success('Room created successfully');
+      } else {
+        // Bulk room creation
+        if (parsedRoomNumbers.length === 0) {
+          toast.error('Please enter valid room numbers');
+          setLoading(false);
+          return;
+        }
+
+        const floorValue = formData.floor ? parseInt(formData.floor, 10) : null;
+        
+        setCreationProgress({ total: parsedRoomNumbers.length, created: 0, failed: 0 });
+        
+        try {
+          const response = await api.post(`/tenants/${user?.tenantId}/rooms/bulk`, {
+            roomNumbers: parsedRoomNumbers,
+            roomType: formData.roomType,
+            floor: floorValue,
+            maxOccupancy: formData.maxOccupancy,
+            ratePlanId: formData.ratePlanId || null,
+            categoryId: formData.categoryId || null,
+            description: formData.overrideDescription ? formData.description : null,
+          });
+
+          const created = response.data.data?.created || 0;
+          setCreationProgress({ total: parsedRoomNumbers.length, created, failed: 0 });
+          
+          onSuccess();
+          toast.success(`Successfully created ${created} room(s)`);
+          
+          // Close modal after a brief delay
+          setTimeout(() => {
+            onClose();
+          }, 1500);
+        } catch (error: any) {
+          setCreationProgress(null);
+          // Error handled by API interceptor
+        }
+      }
     } catch (error: any) {
       // Error handled by API interceptor
     } finally {
@@ -528,26 +848,116 @@ function CreateRoomModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>Add New Room</h2>
+        <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>
+          {mode === 'single' ? 'Add New Room' : 'Bulk Create Rooms'}
+        </h2>
+
+        {/* Mode Toggle */}
+        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.5rem', background: '#f1f5f9', padding: '0.25rem', borderRadius: '6px' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('single');
+              setFormData(prev => ({ ...prev, roomNumberRange: '', overrideDescription: false }));
+            }}
+            style={{
+              flex: 1,
+              padding: '0.5rem 1rem',
+              background: mode === 'single' ? '#3b82f6' : 'transparent',
+              color: mode === 'single' ? 'white' : '#64748b',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '0.875rem',
+            }}
+          >
+            Single Room
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('bulk');
+              setFormData(prev => ({ ...prev, roomNumber: '', overrideDescription: false }));
+            }}
+            style={{
+              flex: 1,
+              padding: '0.5rem 1rem',
+              background: mode === 'bulk' ? '#3b82f6' : 'transparent',
+              color: mode === 'bulk' ? 'white' : '#64748b',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '0.875rem',
+            }}
+          >
+            Bulk Create
+          </button>
+        </div>
+
         <form onSubmit={handleSubmit}>
           <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Room Number *
-              </label>
-              <input
-                type="text"
-                value={formData.roomNumber}
-                onChange={(e) => setFormData({ ...formData, roomNumber: e.target.value })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-              />
-            </div>
+            {/* Room Number Input - Different for each mode */}
+            {mode === 'single' ? (
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                  Room Number *
+                </label>
+                <input
+                  type="text"
+                  value={formData.roomNumber}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFormData({ ...formData, roomNumber: value });
+                    // Auto-detect floor if not set
+                    if (!formData.floor && value) {
+                      const detectedFloor = autoDetectFloor(value);
+                      if (detectedFloor !== null) {
+                        setFormData(prev => ({ ...prev, roomNumber: value, floor: String(detectedFloor) }));
+                      }
+                    }
+                  }}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                  }}
+                  placeholder="e.g., 101"
+                />
+              </div>
+            ) : (
+              <div>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                  Room Numbers *
+                </label>
+                <input
+                  type="text"
+                  value={formData.roomNumberRange}
+                  onChange={(e) => setFormData({ ...formData, roomNumberRange: e.target.value })}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                  }}
+                  placeholder="e.g., 100-150 or 101, 102, 105-110"
+                />
+                {parsedRoomNumbers.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#f0f9ff', borderRadius: '6px', fontSize: '0.875rem', color: '#0369a1' }}>
+                    <strong>{parsedRoomNumbers.length}</strong> room{parsedRoomNumbers.length !== 1 ? 's' : ''} will be created
+                    {parsedRoomNumbers.length <= 10 && (
+                      <div style={{ marginTop: '0.25rem', color: '#64748b' }}>
+                        {parsedRoomNumbers.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
@@ -642,12 +1052,26 @@ function CreateRoomModal({
             </div>
 
             <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Description
-              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label style={{ color: '#475569', fontWeight: '500' }}>
+                  Description
+                </label>
+                {!!formData.categoryId && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#64748b', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.overrideDescription}
+                      onChange={(e) => setFormData({ ...formData, overrideDescription: e.target.checked })}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    Override category description
+                  </label>
+                )}
+              </div>
               <textarea
                 value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value, overrideDescription: true })}
+                disabled={!!formData.categoryId && !formData.overrideDescription}
                 rows={3}
                 style={{
                   width: '100%',
@@ -656,10 +1080,43 @@ function CreateRoomModal({
                   borderRadius: '6px',
                   fontFamily: 'inherit',
                   resize: 'vertical',
+                  background: !!formData.categoryId && !formData.overrideDescription ? '#f8fafc' : 'white',
+                  color: !!formData.categoryId && !formData.overrideDescription ? '#94a3b8' : '#1e293b',
                 }}
-                placeholder="Room description, features, or notes..."
+                  placeholder={
+                  !!formData.categoryId && !formData.overrideDescription
+                    ? 'Description will be inherited from category'
+                    : 'Room description, features, or notes...'
+                }
               />
+              {!!formData.categoryId && !formData.overrideDescription && (
+                <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
+                  Using description from category
+                </div>
+              )}
             </div>
+
+            {/* Progress indicator for bulk creation */}
+            {creationProgress && (
+              <div style={{ padding: '1rem', background: '#f0f9ff', borderRadius: '6px', border: '1px solid #bae6fd' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+                  <span style={{ color: '#0369a1', fontWeight: '500' }}>Creating rooms...</span>
+                  <span style={{ color: '#64748b' }}>
+                    {creationProgress.created} / {creationProgress.total}
+                  </span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#e0f2fe', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${(creationProgress.created / creationProgress.total) * 100}%`,
+                      height: '100%',
+                      background: '#3b82f6',
+                      transition: 'width 0.3s',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button
@@ -678,18 +1135,22 @@ function CreateRoomModal({
               </button>
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || (mode === 'bulk' && parsedRoomNumbers.length === 0)}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.6 : 1,
+                  cursor: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) ? 'not-allowed' : 'pointer',
+                  opacity: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) ? 0.6 : 1,
                 }}
               >
-                {loading ? 'Creating...' : 'Create Room'}
+                {loading
+                  ? 'Creating...'
+                  : mode === 'single'
+                  ? 'Create Room'
+                  : `Create ${parsedRoomNumbers.length || 0} Room${parsedRoomNumbers.length !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>
@@ -724,19 +1185,33 @@ function CategoryManagementModal({
 
   useEffect(() => {
     if (editingCategory) {
-      setFormData({
-        name: editingCategory.name,
-        description: editingCategory.description || '',
-        totalRooms: editingCategory.totalRooms?.toString() || '',
+      // Only update form data if we're switching to a different category or starting fresh
+      // Don't reset if we're already editing this category (to prevent losing user input while typing)
+      setFormData((prev) => {
+        // Only update if the category ID changed or if form is empty
+        if (prev.name === '' || prev.name !== editingCategory.name) {
+          return {
+            name: editingCategory.name,
+            description: editingCategory.description || '',
+            totalRooms: editingCategory.totalRooms?.toString() || '',
+          };
+        }
+        return prev;
       });
     } else {
-      setFormData({
-        name: '',
-        description: '',
-        totalRooms: '',
+      // Only clear if we're not currently editing
+      setFormData((prev) => {
+        if (prev.name !== '') {
+          return prev; // Keep current form data
+        }
+        return {
+          name: '',
+          description: '',
+          totalRooms: '',
+        };
       });
     }
-  }, [editingCategory]);
+  }, [editingCategory?.id]); // Only depend on the ID, not the whole object
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -752,14 +1227,22 @@ function CategoryManagementModal({
       }
 
       if (editingCategory) {
-        await api.patch(`/tenants/${user?.tenantId}/room-categories/${editingCategory.id}`, payload);
+        const response = await api.patch(`/tenants/${user?.tenantId}/room-categories/${editingCategory.id}`, payload);
         toast.success('Category updated successfully');
+        // Update editingCategory with fresh data from response
+        if (response.data?.data) {
+          setEditingCategory(response.data.data);
+        }
+        // Refetch categories to update the list
+        onSuccess();
       } else {
         await api.post(`/tenants/${user?.tenantId}/room-categories`, payload);
         toast.success('Category created successfully');
+        // Clear form and refetch categories
+        setFormData({ name: '', description: '', totalRooms: '' });
+        setEditingCategory(null);
+        onSuccess();
       }
-      onSuccess();
-      setFormData({ name: '', description: '', totalRooms: '' });
     } catch (error: any) {
       // Error handled by API interceptor
     } finally {
@@ -1011,6 +1494,158 @@ function CategoryManagementModal({
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RoomActivityModal({
+  room,
+  logs,
+  pagination,
+  loading,
+  onClose,
+  onPageChange,
+}: {
+  room: Room;
+  logs: RoomLog[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+  loading: boolean;
+  onClose: () => void;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          width: '90%',
+          maxWidth: '700px',
+          maxHeight: '85vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0, color: '#1e293b' }}>Room {room.roomNumber} Activity</h2>
+            <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
+              Latest actions and updates logged for this room.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '0.25rem',
+              color: '#475569',
+            }}
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem' }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', color: '#94a3b8' }}>Loading activity...</div>
+          ) : logs.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#94a3b8' }}>No activity logs yet for this room.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {logs.map((log) => (
+                <div
+                  key={log.id}
+                  style={{
+                    borderLeft: '3px solid #3b82f6',
+                    paddingLeft: '1rem',
+                    paddingRight: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        textTransform: 'uppercase',
+                        fontWeight: '600',
+                        color: '#3b82f6',
+                      }}
+                    >
+                      {log.type.replace('_', ' ')}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                      {new Date(log.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <p style={{ margin: '0.25rem 0', color: '#1e293b', fontWeight: '500' }}>{log.summary}</p>
+                  {log.details && (
+                    <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>{log.details}</p>
+                  )}
+                  {log.metadata && (
+                    <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {Object.entries(log.metadata).map(([key, value]) => (
+                        <span
+                          key={key}
+                          style={{
+                            background: '#f1f5f9',
+                            borderRadius: '999px',
+                            padding: '0.25rem 0.75rem',
+                            fontSize: '0.75rem',
+                            color: '#475569',
+                          }}
+                        >
+                          {key}: {String(value)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {log.user?.name && (
+                    <p style={{ margin: '0.5rem 0 0 0', color: '#94a3b8', fontSize: '0.75rem' }}>
+                      Logged by {log.user.name}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {logs.length > 0 && pagination.totalPages > 1 && (
+          <div style={{ marginTop: '1rem' }}>
+            <Pagination
+              page={pagination.page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={pagination.limit}
+              onPageChange={onPageChange}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -23,6 +23,26 @@ interface Reservation {
   };
 }
 
+type RoomFilterState = {
+  roomType: string;
+  categoryId: string;
+  ratePlanId: string;
+  floor: string;
+  includeOutOfOrder: boolean;
+  minRate: string;
+  maxRate: string;
+};
+
+const DEFAULT_ROOM_FILTERS: RoomFilterState = {
+  roomType: '',
+  categoryId: '',
+  ratePlanId: '',
+  floor: '',
+  includeOutOfOrder: false,
+  minRate: '',
+  maxRate: '',
+};
+
 export default function ReservationsPage() {
   const { user } = useAuthStore();
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -688,7 +708,12 @@ export default function ReservationsPage() {
 
 function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const { user } = useAuthStore();
-  const [rooms, setRooms] = useState<any[]>([]);
+  const [allRooms, setAllRooms] = useState<any[]>([]);
+  const [availableRooms, setAvailableRooms] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [ratePlans, setRatePlans] = useState<any[]>([]);
+  const [roomFilters, setRoomFilters] = useState<RoomFilterState>({ ...DEFAULT_ROOM_FILTERS });
+  const [hasAvailabilityRun, setHasAvailabilityRun] = useState(false);
   const [formData, setFormData] = useState({
     roomId: '',
     guestName: '',
@@ -701,18 +726,202 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
     rate: '',
   });
   const [loading, setLoading] = useState(false);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilitySummary, setAvailabilitySummary] = useState<{ total: number; available: number } | null>(null);
 
   useEffect(() => {
+    if (!user?.tenantId) return;
     fetchRooms();
-  }, []);
+    fetchCategories();
+    fetchRatePlans();
+  }, [user?.tenantId]);
 
   const fetchRooms = async () => {
+    if (!user?.tenantId) return;
     try {
       const response = await api.get(`/tenants/${user?.tenantId}/rooms`);
-      setRooms(response.data.data || []);
+      setAllRooms(response.data.data || []);
     } catch (error) {
       console.error('Failed to fetch rooms:', error);
     }
+  };
+
+  const fetchCategories = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const response = await api.get(`/tenants/${user?.tenantId}/room-categories`);
+      setCategories(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to fetch categories:', error);
+    }
+  };
+
+  const fetchRatePlans = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const response = await api.get(`/tenants/${user?.tenantId}/rate-plans`);
+      setRatePlans(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to fetch rate plans:', error);
+    }
+  };
+
+  const updateRoomFilter = <K extends keyof RoomFilterState>(field: K, value: RoomFilterState[K]) => {
+    setRoomFilters((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const fetchAvailability = async (checkIn: Date, checkOut: Date, minGuests: number) => {
+    if (!user?.tenantId) return;
+
+    if (
+      roomFilters.minRate &&
+      roomFilters.maxRate &&
+      Number(roomFilters.minRate) > Number(roomFilters.maxRate)
+    ) {
+      setAvailabilityError('Minimum rate cannot be greater than maximum rate');
+      setAvailableRooms([]);
+      setAvailabilitySummary(null);
+      return;
+    }
+
+    setCheckingAvailability(true);
+    setAvailabilityError(null);
+
+    const params: Record<string, any> = {
+      startDate: checkIn.toISOString(),
+      endDate: checkOut.toISOString(),
+      minOccupancy: Math.max(1, minGuests),
+    };
+
+    if (roomFilters.roomType) {
+      params.roomType = roomFilters.roomType;
+    }
+    if (roomFilters.categoryId) {
+      params.categoryId = roomFilters.categoryId;
+    }
+    if (roomFilters.ratePlanId) {
+      params.ratePlanId = roomFilters.ratePlanId;
+    }
+    if (roomFilters.includeOutOfOrder) {
+      params.includeOutOfOrder = true;
+    }
+    if (roomFilters.floor) {
+      const floorValue = parseInt(roomFilters.floor, 10);
+      if (!Number.isNaN(floorValue)) {
+        params.floor = floorValue;
+      }
+    }
+    if (roomFilters.minRate) {
+      const minRateValue = Number(roomFilters.minRate);
+      if (!Number.isNaN(minRateValue)) {
+        params.minRate = minRateValue;
+      }
+    }
+    if (roomFilters.maxRate) {
+      const maxRateValue = Number(roomFilters.maxRate);
+      if (!Number.isNaN(maxRateValue)) {
+        params.maxRate = maxRateValue;
+      }
+    }
+
+    try {
+      const response = await api.get(`/tenants/${user?.tenantId}/reservations/availability`, {
+        params,
+      });
+
+      const data = response.data.data || {};
+      const rooms = data.availableRooms || [];
+      setAvailableRooms(rooms);
+      setAvailabilitySummary({
+        total: data.totalRooms ?? rooms.length,
+        available: data.availableCount ?? rooms.length,
+      });
+      setHasAvailabilityRun(true);
+
+      setFormData((prev) => {
+        if (!rooms.find((room: any) => room.id === prev.roomId)) {
+          return { ...prev, roomId: '' };
+        }
+        return prev;
+      });
+    } catch (error) {
+      console.error('Failed to fetch availability:', error);
+      setAvailabilityError('Unable to load availability. Please try again.');
+      setAvailableRooms([]);
+      setAvailabilitySummary(null);
+      setHasAvailabilityRun(true);
+    } finally {
+      setCheckingAvailability(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!formData.checkInDate || !formData.checkOutDate) {
+      setAvailableRooms([]);
+      setAvailabilitySummary(null);
+      setAvailabilityError(null);
+      setHasAvailabilityRun(false);
+      return;
+    }
+
+    const checkIn = new Date(formData.checkInDate);
+    const checkOut = new Date(formData.checkOutDate);
+
+    if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime())) {
+      return;
+    }
+    if (checkOut <= checkIn) {
+      setAvailabilityError('Check-out date must be after check-in date');
+      setAvailableRooms([]);
+      setAvailabilitySummary(null);
+      return;
+    }
+
+    const minGuests = Number(formData.adults || 0) + Number(formData.children || 0);
+    fetchAvailability(checkIn, checkOut, minGuests);
+  }, [formData.checkInDate, formData.checkOutDate, formData.adults, formData.children, roomFilters]);
+
+  const roomTypeOptions = Array.from(
+    new Set(
+      (allRooms || [])
+        .map((room) => room?.roomType)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const hasActiveRoomFilters = Boolean(
+    roomFilters.roomType ||
+      roomFilters.categoryId ||
+      roomFilters.ratePlanId ||
+      roomFilters.floor ||
+      roomFilters.includeOutOfOrder ||
+      roomFilters.minRate ||
+      roomFilters.maxRate
+  );
+
+  const roomOptions = hasAvailabilityRun ? availableRooms : allRooms;
+
+  const hasValidDates = Boolean(formData.checkInDate && formData.checkOutDate && !availabilityError);
+  const hasAvailableRoomSelection = Boolean(formData.roomId && (hasAvailabilityRun ? availableRooms.length > 0 : true));
+  const hasValidRate = Number(formData.rate) > 0;
+  const isSubmitDisabled =
+    loading ||
+    !formData.guestName.trim() ||
+    !hasValidDates ||
+    !hasAvailableRoomSelection ||
+    !hasValidRate;
+
+  const toIsoString = (value: string) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    return date.toISOString();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -720,9 +929,34 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
     setLoading(true);
 
     try {
+      const checkInIso = toIsoString(formData.checkInDate);
+      const checkOutIso = toIsoString(formData.checkOutDate);
+
+      if (!formData.roomId || !checkInIso || !checkOutIso) {
+        toast.error('Please select a valid room and check-in/check-out dates.');
+        setLoading(false);
+        return;
+      }
+
+      if (!hasValidRate) {
+        toast.error('Rate must be greater than 0.');
+        setLoading(false);
+        return;
+      }
+
+      const email = formData.guestEmail.trim();
+      const phone = formData.guestPhone.trim();
+
       await api.post(`/tenants/${user?.tenantId}/reservations`, {
-        ...formData,
-        rate: parseFloat(formData.rate),
+        roomId: formData.roomId,
+        guestName: formData.guestName.trim(),
+        guestEmail: email === '' ? undefined : email,
+        guestPhone: phone === '' ? undefined : phone,
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
+        adults: formData.adults,
+        children: formData.children,
+        rate: Number(formData.rate),
       });
       onSuccess();
       toast.success('Reservation created successfully');
@@ -780,12 +1014,219 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
                 }}
               >
                 <option value="">Select a room</option>
-                {rooms.map((room) => (
+                {roomOptions.map((room) => (
                   <option key={room.id} value={room.id}>
                     {room.roomNumber} - {room.roomType} (₦{Number(room.ratePlan?.baseRate || 0).toLocaleString()})
                   </option>
                 ))}
               </select>
+              {formData.checkInDate && formData.checkOutDate && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
+                  {checkingAvailability ? (
+                    <span style={{ color: '#64748b' }}>Checking availability...</span>
+                  ) : availabilityError ? (
+                    <span style={{ color: '#ef4444' }}>{availabilityError}</span>
+                  ) : availabilitySummary ? (
+                    <span style={{ color: availableRooms.length > 0 ? '#15803d' : '#b91c1c' }}>
+                      {availableRooms.length > 0
+                        ? `${availableRooms.length} room${availableRooms.length !== 1 ? 's' : ''} available`
+                        : 'No rooms available for the selected dates'}
+                    </span>
+                  ) : (
+                    <span style={{ color: '#64748b' }}>
+                      Select dates to see available rooms.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                padding: '1rem',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                background: '#f8fafc',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#0f172a' }}>Room Filters</h3>
+                <button
+                  type="button"
+                  onClick={() => setRoomFilters({ ...DEFAULT_ROOM_FILTERS })}
+                  disabled={!hasActiveRoomFilters}
+                  style={{
+                    padding: '0.35rem 0.75rem',
+                    borderRadius: '4px',
+                    border: '1px solid #cbd5e1',
+                    background: hasActiveRoomFilters ? '#fff' : '#f8fafc',
+                    color: hasActiveRoomFilters ? '#0f172a' : '#94a3b8',
+                    cursor: hasActiveRoomFilters ? 'pointer' : 'not-allowed',
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  Clear Filters
+                </button>
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                  gap: '0.75rem',
+                }}
+              >
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Room Type
+                  </label>
+                  <select
+                    value={roomFilters.roomType}
+                    onChange={(e) => updateRoomFilter('roomType', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="">Any</option>
+                    {roomTypeOptions.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Category
+                  </label>
+                  <select
+                    value={roomFilters.categoryId}
+                    onChange={(e) => updateRoomFilter('categoryId', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="">Any</option>
+                    <option value="none">No Category</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Rate Plan
+                  </label>
+                  <select
+                    value={roomFilters.ratePlanId}
+                    onChange={(e) => updateRoomFilter('ratePlanId', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="">Any</option>
+                    {ratePlans.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Floor
+                  </label>
+                  <input
+                    type="number"
+                    value={roomFilters.floor}
+                    onChange={(e) => updateRoomFilter('floor', e.target.value)}
+                    placeholder="Any"
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Min Rate (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={roomFilters.minRate}
+                    onChange={(e) => updateRoomFilter('minRate', e.target.value)}
+                    placeholder="Any"
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
+                    Max Rate (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={roomFilters.maxRate}
+                    onChange={(e) => updateRoomFilter('maxRate', e.target.value)}
+                    placeholder="Any"
+                    style={{
+                      width: '100%',
+                      padding: '0.6rem',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+              </div>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginTop: '0.75rem',
+                  fontSize: '0.85rem',
+                  color: '#475569',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={roomFilters.includeOutOfOrder}
+                  onChange={(e) => updateRoomFilter('includeOutOfOrder', e.target.checked)}
+                />
+                Include rooms marked as out-of-order / maintenance
+              </label>
             </div>
 
             <div>
@@ -914,15 +1355,15 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
               </button>
               <button
                 type="submit"
-                disabled={loading}
+                disabled={isSubmitDisabled}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  opacity: loading ? 0.6 : 1,
+                  cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
+                  opacity: isSubmitDisabled ? 0.6 : 1,
                 }}
               >
                 {loading ? 'Creating...' : 'Create Reservation'}
