@@ -14,6 +14,7 @@ interface RoomCategory {
   description?: string;
   totalRooms?: number;
   actualRoomCount: number;
+  color?: string;
 }
 
 interface Room {
@@ -282,6 +283,7 @@ export default function RoomsPage() {
   const getStatusColor = (status: string) => {
     const colors: Record<string, string> = {
       available: '#10b981',
+      reserved: '#f59e0b',
       occupied: '#3b82f6',
       dirty: '#f59e0b',
       clean: '#8b5cf6',
@@ -529,11 +531,26 @@ export default function RoomsPage() {
                   </h3>
                   <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
                     {room.roomType} • Floor {room.floor}
-                    {room.category && (
-                      <span style={{ marginLeft: '0.5rem', color: '#8b5cf6', fontWeight: '500' }}>
-                        • {room.category.name}
-                      </span>
-                    )}
+                    {room.category && (() => {
+                      const categoryData = categories.find(cat => cat.id === room.category?.id);
+                      const categoryColor = categoryData?.color || '#8b5cf6';
+                      return (
+                        <span style={{ marginLeft: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              background: categoryColor,
+                            }}
+                          />
+                          <span style={{ color: categoryColor, fontWeight: '500' }}>
+                            {room.category.name}
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </p>
                   {room.description && (
                     <p style={{ margin: '0.5rem 0 0 0', color: '#64748b', fontSize: '0.875rem', fontStyle: 'italic' }}>
@@ -1180,6 +1197,7 @@ function CategoryManagementModal({
     name: '',
     description: '',
     totalRooms: '',
+    color: '#8b5cf6',
   });
   const [loading, setLoading] = useState(false);
 
@@ -1194,6 +1212,7 @@ function CategoryManagementModal({
             name: editingCategory.name,
             description: editingCategory.description || '',
             totalRooms: editingCategory.totalRooms?.toString() || '',
+            color: editingCategory.color || '#8b5cf6',
           };
         }
         return prev;
@@ -1208,6 +1227,7 @@ function CategoryManagementModal({
           name: '',
           description: '',
           totalRooms: '',
+          color: '#8b5cf6',
         };
       });
     }
@@ -1221,6 +1241,7 @@ function CategoryManagementModal({
       const payload: any = {
         name: formData.name,
         description: formData.description || null,
+        color: formData.color || '#8b5cf6',
       };
       if (formData.totalRooms) {
         payload.totalRooms = parseInt(formData.totalRooms, 10);
@@ -1363,6 +1384,40 @@ function CategoryManagementModal({
                   />
                 </div>
 
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                    Category Color
+                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      type="color"
+                      value={formData.color}
+                      onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                      style={{
+                        width: '60px',
+                        height: '40px',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={formData.color}
+                      onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                      pattern="^#[0-9A-Fa-f]{6}$"
+                      style={{
+                        flex: 1,
+                        padding: '0.75rem',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        fontFamily: 'monospace',
+                      }}
+                      placeholder="#8b5cf6"
+                    />
+                  </div>
+                </div>
+
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                   <button
                     type="submit"
@@ -1385,7 +1440,8 @@ function CategoryManagementModal({
                     <button
                       type="button"
                       onClick={() => {
-                        setFormData({ name: '', description: '', totalRooms: '' });
+                        setFormData({ name: '', description: '', totalRooms: '', color: '#8b5cf6' });
+                        setEditingCategory(null);
                         onSuccess();
                       }}
                       style={{
@@ -1429,7 +1485,15 @@ function CategoryManagementModal({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                          <Tag size={16} style={{ color: '#8b5cf6' }} />
+                          <div
+                            style={{
+                              width: '16px',
+                              height: '16px',
+                              borderRadius: '4px',
+                              background: category.color || '#8b5cf6',
+                              border: '1px solid rgba(0,0,0,0.1)',
+                            }}
+                          />
                           <h4 style={{ margin: 0, color: '#1e293b', fontSize: '0.875rem', fontWeight: '600' }}>
                             {category.name}
                           </h4>

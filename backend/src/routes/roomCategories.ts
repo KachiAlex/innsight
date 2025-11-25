@@ -11,12 +11,14 @@ const createRoomCategorySchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().optional(),
   totalRooms: z.number().int().min(0).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 });
 
 const updateRoomCategorySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().optional(),
   totalRooms: z.number().int().min(0).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
 });
 
 // GET /api/tenants/:tenantId/room-categories
@@ -196,6 +198,7 @@ roomCategoryRouter.post(
         name: data.name,
         description: data.description || null,
         totalRooms: data.totalRooms || null,
+        color: data.color || '#8b5cf6', // Default purple color
         createdAt: now(),
         updatedAt: now(),
       };
@@ -286,6 +289,7 @@ roomCategoryRouter.patch(
       if (data.name !== undefined) updateData.name = data.name;
       if (data.description !== undefined) updateData.description = data.description || null;
       if (data.totalRooms !== undefined) updateData.totalRooms = data.totalRooms || null;
+      if (data.color !== undefined) updateData.color = data.color || '#8b5cf6';
 
       await categoryDoc.ref.update(updateData);
 
