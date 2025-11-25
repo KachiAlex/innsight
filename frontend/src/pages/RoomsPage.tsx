@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { CSSProperties, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -308,6 +308,18 @@ export default function RoomsPage() {
   };
 
   const statusOptions = Object.keys(statusLabels);
+
+  const srOnlyStyle: React.CSSProperties = {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0,0,0,0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+  };
 
   const activeFilters = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
@@ -687,6 +699,8 @@ export default function RoomsPage() {
                       return (
                         <span style={{ marginLeft: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                           <span
+                            role="img"
+                            aria-label={`Category color ${room.category?.name}`}
                             style={{
                               display: 'inline-block',
                               width: '8px',
@@ -694,7 +708,9 @@ export default function RoomsPage() {
                               borderRadius: '50%',
                               background: categoryColor,
                             }}
-                          />
+                          >
+                            <span style={srOnlyStyle}>{categoryColor}</span>
+                          </span>
                           <span style={{ color: categoryColor, fontWeight: '500' }}>
                             {room.category.name}
                           </span>
