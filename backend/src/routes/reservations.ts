@@ -37,9 +37,18 @@ const availabilityQuerySchema = z.object({
 const createReservationSchema = z.object({
   roomId: z.string().uuid(),
   guestName: z.string().min(1),
-  guestEmail: z.string().email().optional(),
-  guestPhone: z.string().optional(),
-  guestIdNumber: z.string().optional(),
+  guestEmail: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().email().optional()
+  ),
+  guestPhone: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
+  guestIdNumber: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
   checkInDate: z.string().datetime(),
   checkOutDate: z.string().datetime(),
   adults: z.number().int().min(1).default(1),
@@ -47,7 +56,10 @@ const createReservationSchema = z.object({
   rate: z.number().positive(),
   depositAmount: z.number().nonnegative().optional(),
   source: z.enum(['manual', 'web', 'ota', 'channel_manager']).default('manual'),
-  specialRequests: z.string().optional(),
+  specialRequests: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
 });
 
 // POST /api/tenants/:tenantId/reservations
