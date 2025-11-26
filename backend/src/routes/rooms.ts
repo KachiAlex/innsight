@@ -176,6 +176,10 @@ roomRouter.get(
               },
               createdAt: toDate(roomData.createdAt) || null,
               updatedAt: toDate(roomData.updatedAt) || null,
+              lastLogType: roomData.lastLogType || null,
+              lastLogSummary: roomData.lastLogSummary || null,
+              lastLogUserName: roomData.lastLogUserName || null,
+              lastLogAt: toDate(roomData.lastLogAt) || null,
             };
           } catch (error: any) {
             console.error(`Error processing room ${doc.id}:`, error);

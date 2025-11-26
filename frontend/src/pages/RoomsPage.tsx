@@ -34,6 +34,10 @@ interface Room {
     name: string;
     baseRate: number;
   };
+  lastLogType?: string | null;
+  lastLogSummary?: string | null;
+  lastLogUserName?: string | null;
+  lastLogAt?: string | Date | null;
 }
 
 interface RoomLog {
@@ -321,6 +325,16 @@ export default function RoomsPage() {
     border: 0,
   };
 
+  const formatTimeAgo = (date?: Date | null) => {
+    if (!date) return 'No activity yet';
+    const now = Date.now();
+    const diffMs = now - date.getTime();
+    if (diffMs < 60 * 1000) return 'just now';
+    if (diffMs < 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 1000))}m ago`;
+    if (diffMs < 24 * 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`;
+    return `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
+  };
+
   const activeFilters = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
     if (searchTerm) {
@@ -351,6 +365,38 @@ export default function RoomsPage() {
     selectedStatusFilter,
     categories,
   ]);
+
+  const accountabilityThresholdMs = 6 * 60 * 60 * 1000;
+  const accountabilityMetrics = useMemo(() => {
+    const now = new Date();
+    const staleRoomsRaw = rooms
+      .map((room) => ({
+        ...room,
+        parsedLastLogAt: room.lastLogAt ? new Date(room.lastLogAt) : null,
+      }))
+      .sort((a, b) => {
+        if (!a.parsedLastLogAt) return 1;
+        if (!b.parsedLastLogAt) return -1;
+        return a.parsedLastLogAt.getTime() - b.parsedLastLogAt.getTime();
+      });
+
+    const roomsStale = staleRoomsRaw.filter(
+      (room) => !room.parsedLastLogAt || now.getTime() - (room.parsedLastLogAt?.getTime() || 0) > accountabilityThresholdMs
+    );
+
+    const roomsFlagged = rooms.filter((room) =>
+      ['dirty', 'out_of_order', 'maintenance', 'reserved'].includes(room.status)
+    );
+
+    const staleRoomsList = roomsStale.slice(0, 5);
+
+    return {
+      staleCount: roomsStale.length,
+      flaggedCount: roomsFlagged.length,
+      noLogCount: rooms.filter((room) => !room.lastLogAt).length,
+      staleRoomsList,
+    };
+  }, [rooms]);
 
   const clearFilter = (key: string) => {
     if (key === 'search') {
@@ -653,6 +699,108 @@ export default function RoomsPage() {
               </span>
             ))}
           </div>
+        )}
+
+        {rooms.length > 0 && (
+          <section
+            style={{
+              marginBottom: '1.5rem',
+              background: 'white',
+              borderRadius: '12px',
+              border: '1px solid #e2e8f0',
+              padding: '1.25rem',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.125rem', color: '#0f172a' }}>Room accountability snapshot</h2>
+                <p style={{ margin: '0.25rem 0 0 0', color: '#475569', fontSize: '0.85rem' }}>
+                  Rooms with stale logs, flagged statuses, and missing accountability details.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+              <div style={{ padding: '1rem', borderRadius: '8px', background: '#fdf2f8', border: '1px solid #f5d0fe' }}>
+                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#be185d' }}>{accountabilityMetrics.staleCount}</div>
+                <div style={{ fontSize: '0.85rem', color: '#6b21a8' }}>Rooms with no log in 6h</div>
+              </div>
+              <div style={{ padding: '1rem', borderRadius: '8px', background: '#eef2ff', border: '1px solid #bfdbfe' }}>
+                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1d4ed8' }}>{accountabilityMetrics.flaggedCount}</div>
+                <div style={{ fontSize: '0.85rem', color: '#1e3a8a' }}>Rooms flagged dirty/reserved/maintenance</div>
+              </div>
+              <div style={{ padding: '1rem', borderRadius: '8px', background: '#ecfccb', border: '1px solid #bef264' }}>
+                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#15803d' }}>{accountabilityMetrics.noLogCount}</div>
+                <div style={{ fontSize: '0.85rem', color: '#166534' }}>Rooms never logged</div>
+              </div>
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 0.75rem 0', color: '#0f172a', fontSize: '1rem', fontWeight: '600' }}>Most overdue rooms</h3>
+              {accountabilityMetrics.staleRoomsList.length === 0 ? (
+                <p style={{ margin: 0, color: '#475569', fontSize: '0.85rem' }}>All rooms have fresh logs.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Room</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Status</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Last action</th>
+                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Responsible</th>
+                        <th style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb' }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountabilityMetrics.staleRoomsList.map((room) => (
+                        <tr key={room.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '0.5rem 0' }}>
+                            <strong>Room {room.roomNumber}</strong>
+                            <div style={{ fontSize: '0.75rem', color: '#475569' }}>
+                              Last logged {formatTimeAgo(room.parsedLastLogAt)}
+                            </div>
+                          </td>
+                          <td style={{ padding: '0.5rem 0' }}>
+                            <span
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                borderRadius: '999px',
+                                background: `${getStatusColor(room.status)}20`,
+                                color: getStatusColor(room.status),
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {room.status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.5rem 0', color: '#475569', fontSize: '0.85rem' }}>
+                            {room.lastLogSummary || 'No log yet'}
+                          </td>
+                          <td style={{ padding: '0.5rem 0', color: '#475569', fontSize: '0.85rem' }}>
+                            {room.lastLogUserName || 'Unassigned'}
+                          </td>
+                          <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>
+                            <button
+                              onClick={() => handleViewActivity(room)}
+                              style={{
+                                padding: '0.25rem 0.75rem',
+                                borderRadius: '6px',
+                                border: '1px solid #cbd5e1',
+                                background: '#fff',
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                              }}
+                            >
+                              View history
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
         )}
 
         <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

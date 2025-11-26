@@ -45,6 +45,17 @@ export async function createRoomLog({
 
   await logRef.set(logData);
 
+  try {
+    await db.collection('rooms').doc(roomId).update({
+      lastLogType: type,
+      lastLogSummary: summary,
+      lastLogUserName: user?.name || null,
+      lastLogAt: logData.createdAt,
+    });
+  } catch (error) {
+    console.warn(`Failed to update room ${roomId} last log metadata:`, error);
+  }
+
   return {
     id: logRef.id,
     ...logData,
