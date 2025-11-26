@@ -1,4 +1,4 @@
-import { scheduler } from 'firebase-functions/v2';
+import { scheduler } from 'firebase-functions/v2/scheduler';
 import { db } from '../utils/firestore';
 import { createAccountabilityReportForTenant } from '../routes/rooms';
 
