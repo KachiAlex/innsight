@@ -8,7 +8,7 @@ import { getPaginationParams, createPaginationResult } from '../utils/pagination
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
 import { v4 as uuidv4 } from 'uuid';
-
+import type { firestore } from 'firebase-admin';
 export const reservationRouter = Router({ mergeParams: true });
 
 const getUserDisplayName = (user?: {
@@ -101,7 +101,7 @@ reservationRouter.get(
       }
 
       // Fetch rooms for tenant (optionally filtered by type/floor)
-      let roomsQuery: FirebaseFirestore.Query = db.collection('rooms')
+      let roomsQuery: firestore.Query = db.collection('rooms')
         .where('tenantId', '==', tenantId);
 
       if (roomType) {
@@ -612,7 +612,7 @@ reservationRouter.get(
       const { page, limit } = getPaginationParams(req);
 
       // Build Firestore query
-      let query: FirebaseFirestore.Query = db.collection('reservations')
+      let query: firestore.Query = db.collection('reservations')
         .where('tenantId', '==', tenantId);
 
       if (status) {

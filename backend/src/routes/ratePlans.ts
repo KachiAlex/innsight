@@ -4,7 +4,6 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { db, now, toDate } from '../utils/firestore';
-
 export const ratePlanRouter = Router({ mergeParams: true });
 
 const createRatePlanSchema = z.object({
@@ -28,7 +27,7 @@ ratePlanRouter.get(
       const tenantId = req.params.tenantId;
       const { isActive } = req.query;
 
-      let query: FirebaseFirestore.Query = db.collection('ratePlans')
+      let query: firestore.Query = db.collection('ratePlans')
         .where('tenantId', '==', tenantId);
 
       if (isActive !== undefined) {

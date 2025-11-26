@@ -3,7 +3,6 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { db, toDate, toTimestamp } from '../utils/firestore';
 import { startOfDay, endOfDay, eachDayOfInterval, format, isWithinInterval } from 'date-fns';
-
 export const calendarRouter = Router({ mergeParams: true });
 
 // GET /api/tenants/:tenantId/calendar
@@ -26,7 +25,7 @@ calendarRouter.get(
       }
 
       // Get all rooms for this tenant
-      let roomsQuery: FirebaseFirestore.Query = db.collection('rooms')
+      let roomsQuery: firestore.Query = db.collection('rooms')
         .where('tenantId', '==', tenantId);
 
       if (roomType) {

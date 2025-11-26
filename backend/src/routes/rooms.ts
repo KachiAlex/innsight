@@ -6,6 +6,7 @@ import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, snapshotToArray } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
+import type { firestore } from 'firebase-admin';
 
 export const roomRouter = Router({ mergeParams: true });
 
@@ -18,7 +19,7 @@ const getRequestUserName = (user?: any) => {
 type RoomDocForReport = {
   roomNumber?: string;
   status?: string;
-  lastLogAt?: FirebaseFirestore.Timestamp | Date | null;
+  lastLogAt?: firestore.Timestamp | Date | null;
   lastLogSummary?: string | null;
   lastLogUserName?: string | null;
   [key: string]: any;
@@ -48,7 +49,7 @@ roomRouter.get(
       const { page, limit } = getPaginationParams(req);
 
       // Build Firestore query
-      let query: FirebaseFirestore.Query = db.collection('rooms')
+      let query: firestore.Query = db.collection('rooms')
         .where('tenantId', '==', tenantId);
 
       if (status) {

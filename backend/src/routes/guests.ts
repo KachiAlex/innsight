@@ -3,7 +3,7 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { db, toDate, toTimestamp, now } from '../utils/firestore';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-
+import type { firestore } from 'firebase-admin';
 export const guestRouter = Router({ mergeParams: true });
 
 // GET /api/tenants/:tenantId/guests/search
@@ -22,7 +22,7 @@ guestRouter.get(
       }
 
       // Get all reservations for this tenant
-      let query: FirebaseFirestore.Query = db.collection('reservations')
+      let query: firestore.Query = db.collection('reservations')
         .where('tenantId', '==', tenantId);
 
       const reservationsSnapshot = await query.get();
