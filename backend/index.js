@@ -12,6 +12,9 @@ setGlobalOptions({
   memory: '512MB',
 });
 
+const accountabilityModule = require('./dist/tasks/accountabilityReportScheduler');
+const dailyAccountabilityReport = accountabilityModule.dailyAccountabilityReport;
+
 // Define secrets with error handling for discovery phase
 let jwtSecret, jwtRefreshSecret;
 try {
@@ -58,3 +61,5 @@ exports.api = onRequest(
     return cachedApp(req, res);
   }
 );
+
+exports.dailyAccountabilityReport = dailyAccountabilityReport;

@@ -221,6 +221,54 @@ roomRouter.get(
   }
 );
 
+export const createAccountabilityReportForTenant = async (tenantId: string, generatedBy?: string | null) => {
+  const roomsSnapshot = await db.collection('rooms').where('tenantId', '==', tenantId).get();
+  const rooms = roomsSnapshot.docs.map((doc) => {
+    const data = doc.data() as RoomDocForReport;
+    return {
+      id: doc.id,
+      ...data,
+    };
+  });
+  const thresholdMs = 6 * 60 * 60 * 1000;
+  const nowTimestamp = now();
+  const nowDate = nowTimestamp.toDate();
+  const flaggedStatuses = new Set(['dirty', 'reserved', 'maintenance']);
+
+  const staleRooms = rooms
+    .map((room) => {
+      const lastLogAt = toDate(room.lastLogAt);
+      return {
+        id: room.id,
+        roomNumber: room.roomNumber || '',
+        status: room.status || 'available',
+        lastLogSummary: room.lastLogSummary || null,
+        lastLogUserName: room.lastLogUserName || null,
+        lastLogAt,
+        isStale: !lastLogAt || nowDate.getTime() - lastLogAt.getTime() > thresholdMs,
+      };
+    })
+    .filter((room) => room.isStale)
+    .slice(0, 6)
+    .map(({ isStale, ...rest }) => rest);
+
+  const staleCount = staleRooms.length;
+  const flaggedCount = rooms.filter((room) => flaggedStatuses.has(room.status || 'available')).length;
+  const noLogCount = rooms.filter((room) => !room.lastLogAt).length;
+
+  const reportData = {
+    lastReportAt: nowTimestamp,
+    generatedBy: generatedBy || null,
+    staleCount,
+    flaggedCount,
+    noLogCount,
+    staleRooms,
+  };
+
+  await db.collection('accountabilityReports').doc(tenantId).set(reportData, { merge: true });
+  return reportData;
+};
+
 roomRouter.post(
   '/accountability-report',
   authenticate,
@@ -228,51 +276,7 @@ roomRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const roomsSnapshot = await db.collection('rooms').where('tenantId', '==', tenantId).get();
-      const rooms = roomsSnapshot.docs.map((doc) => {
-        const data = doc.data() as RoomDocForReport;
-        return {
-          id: doc.id,
-          ...data,
-        };
-      });
-      const thresholdMs = 6 * 60 * 60 * 1000;
-      const nowTimestamp = now();
-      const nowDate = nowTimestamp.toDate();
-      const flaggedStatuses = new Set(['dirty', 'reserved', 'maintenance']);
-
-      const staleRooms = rooms
-        .map((room) => {
-          const lastLogAt = toDate(room.lastLogAt);
-          return {
-            id: room.id,
-            roomNumber: room.roomNumber || '',
-            status: room.status || 'available',
-            lastLogSummary: room.lastLogSummary || null,
-            lastLogUserName: room.lastLogUserName || null,
-            lastLogAt,
-            isStale: !lastLogAt || nowDate.getTime() - lastLogAt.getTime() > thresholdMs,
-          };
-        })
-        .filter((room) => room.isStale)
-        .slice(0, 6)
-        .map(({ isStale, ...rest }) => rest);
-
-      const staleCount = staleRooms.length;
-      const flaggedCount = rooms.filter((room) => flaggedStatuses.has(room.status || 'available')).length;
-      const noLogCount = rooms.filter((room) => !room.lastLogAt).length;
-
-      const reportData = {
-        lastReportAt: nowTimestamp,
-        generatedBy: req.user?.id || null,
-        staleCount,
-        flaggedCount,
-        noLogCount,
-        staleRooms,
-      };
-
-      await db.collection('accountabilityReports').doc(tenantId).set(reportData, { merge: true });
-
+      const reportData = await createAccountabilityReportForTenant(tenantId, req.user?.id || null);
       res.json({
         success: true,
         data: reportData,
