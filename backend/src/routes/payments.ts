@@ -7,6 +7,7 @@ import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
 import { v4 as uuidv4 } from 'uuid';
+import admin from 'firebase-admin';
 export const paymentRouter = Router({ mergeParams: true });
 
 const createPaymentSchema = z.object({
@@ -32,7 +33,7 @@ paymentRouter.get(
       const { page, limit } = getPaginationParams(req);
 
       // Build Firestore query
-      let query: firestore.Query = db.collection('payments')
+      let query: admin.firestore.Query = db.collection('payments')
         .where('tenantId', '==', tenantId);
 
       if (status) {

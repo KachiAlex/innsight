@@ -5,7 +5,7 @@ import { authenticate, requireTenantAccess, requireRole, AuthRequest } from '../
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
-import type { firestore } from 'firebase-admin';
+import admin from 'firebase-admin';
 export const folioRouter = Router({ mergeParams: true });
 
 const addChargeSchema = z.object({
@@ -141,7 +141,7 @@ import type { firestore } from 'firebase-admin';
       const { page, limit } = getPaginationParams(req);
 
       // Build Firestore query
-      let query: firestore.Query = db.collection('folios')
+      let query: admin.firestore.Query = db.collection('folios')
         .where('tenantId', '==', tenantId);
 
       if (status) {
