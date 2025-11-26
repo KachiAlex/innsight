@@ -102,7 +102,7 @@ reservationRouter.get(
       }
 
       // Fetch rooms for tenant (optionally filtered by type/floor)
-      let roomsQuery: firestore.Query = db.collection('rooms')
+      let roomsQuery: admin.firestore.Query = db.collection('rooms')
         .where('tenantId', '==', tenantId);
 
       if (roomType) {
