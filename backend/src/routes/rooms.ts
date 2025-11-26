@@ -259,7 +259,7 @@ roomRouter.post(
         .map(({ isStale, ...rest }) => rest);
 
       const staleCount = staleRooms.length;
-      const flaggedCount = rooms.filter((room) => flaggedStatuses.has(room.status)).length;
+      const flaggedCount = rooms.filter((room) => flaggedStatuses.has(room.status || 'available')).length;
       const noLogCount = rooms.filter((room) => !room.lastLogAt).length;
 
       const reportData = {
