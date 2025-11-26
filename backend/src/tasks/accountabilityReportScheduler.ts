@@ -1,8 +1,8 @@
-import { schedule } from 'firebase-functions/v2';
+import { scheduler } from 'firebase-functions/v2';
 import { db } from '../utils/firestore';
 import { createAccountabilityReportForTenant } from '../routes/rooms';
 
-export const dailyAccountabilityReport = schedule('0 6 * * *') // daily at 6 AM server time
+export const dailyAccountabilityReport = scheduler('0 6 * * *') // daily at 6 AM server time
   .timeZone('Africa/Lagos')
   .onRun(async () => {
     const tenantsSnapshot = await db.collection('tenants').get();
