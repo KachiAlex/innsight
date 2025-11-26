@@ -135,9 +135,6 @@ folioRouter.get(
     try {
       const tenantId = req.params.tenantId;
       const { status, roomId, reservationId, startDate, endDate } = req.query;
-
-import type { firestore } from 'firebase-admin';
-
       const { page, limit } = getPaginationParams(req);
 
       // Build Firestore query
