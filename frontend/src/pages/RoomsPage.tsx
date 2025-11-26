@@ -335,6 +335,31 @@ export default function RoomsPage() {
     return `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
   };
 
+  const boardStatuses = [
+    'dirty',
+    'maintenance',
+    'inspected',
+    'clean',
+    'available',
+    'reserved',
+    'occupied',
+    'out_of_order',
+  ];
+
+  const statusLabels: Record<string, string> = {
+    dirty: 'Dirty',
+    maintenance: 'Maintenance',
+    inspected: 'Inspected',
+    clean: 'Clean',
+    available: 'Available',
+    reserved: 'Reserved',
+    occupied: 'Occupied',
+    out_of_order: 'Out of Order',
+  };
+
+  const boardRoles = ['housekeeping', 'housekeeping_manager', 'maintenance', 'front_desk'];
+  const canActOnBoard = boardRoles.includes(user?.role || '');
+
   const activeFilters = useMemo(() => {
     const chips: { key: string; label: string }[] = [];
     if (searchTerm) {
@@ -397,6 +422,43 @@ export default function RoomsPage() {
       staleRoomsList,
     };
   }, [rooms]);
+
+  const roomsByStatus = useMemo(() => {
+    const groups: Record<string, Room[]> = {};
+    boardStatuses.forEach((status) => {
+      groups[status] = [];
+    });
+    rooms.forEach((room) => {
+      const bucket = groups[room.status] || groups.available;
+      bucket.push(room);
+    });
+    return groups;
+  }, [rooms]);
+
+  const quickStatusNext: Record<string, string> = {
+    dirty: 'clean',
+    maintenance: 'available',
+    clean: 'inspected',
+    inspected: 'available',
+    reserved: 'occupied',
+    available: 'occupied',
+    occupied: 'available',
+    out_of_order: 'maintenance',
+  };
+
+  const handleBoardStatusChange = async (room: Room, targetStatus: string) => {
+    if (!user?.tenantId) return;
+    try {
+      await api.patch(`/tenants/${user.tenantId}/rooms/${room.id}`, {
+        status: targetStatus,
+      });
+      toast.success(`Room ${room.roomNumber} marked ${statusLabels[targetStatus] || targetStatus}`);
+      // Refetch via Rooms page’s fetchRooms (triggers RoomsPage state)
+      fetchRooms(pagination.page);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Unable to update status');
+    }
+  };
 
   const clearFilter = (key: string) => {
     if (key === 'search') {
@@ -799,6 +861,103 @@ export default function RoomsPage() {
                   </table>
                 </div>
               )}
+            </div>
+          </section>
+        )}
+
+        {rooms.length > 0 && (
+          <section
+            style={{
+              marginBottom: '1.5rem',
+              background: 'white',
+              borderRadius: '12px',
+              border: '1px solid #e2e8f0',
+              padding: '1.25rem',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.125rem', color: '#0f172a' }}>Status board</h2>
+                <p style={{ margin: '0.25rem 0 0 0', color: '#475569', fontSize: '0.85rem' }}>
+                  Rooms organized by current status. Quick actions let staff move rooms through the workflow.
+                </p>
+              </div>
+              <span style={{ color: '#475569', fontSize: '0.85rem' }}>Role: {user?.role || 'Unknown'}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+              {boardStatuses.map((status) => (
+                <div key={status} style={{ borderRadius: '8px', border: '1px solid #e5e7eb', padding: '0.75rem', background: '#f8fafc' }}>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#0f172a' }}>{statusLabels[status]}</h3>
+                  <p style={{ margin: '0.35rem 0 0 0', color: '#475569', fontSize: '0.75rem' }}>
+                    {roomsByStatus[status]?.length || 0} room{roomsByStatus[status]?.length === 1 ? '' : 's'}
+                  </p>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {(roomsByStatus[status] ?? []).slice(0, 4).map((room) => (
+                      <div
+                        key={room.id}
+                        style={{
+                          padding: '0.5rem',
+                          borderRadius: '6px',
+                          border: '1px solid rgba(126, 145, 191, 0.3)',
+                          background: '#fff',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.25rem',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                          <strong style={{ color: '#1e293b' }}>Room {room.roomNumber}</strong>
+                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>
+                            {formatTimeAgo(room.lastLogAt ? new Date(room.lastLogAt) : undefined)}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: '#475569' }}>
+                          {room.lastLogSummary || 'No log entry yet'}
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>
+                            {room.lastLogUserName || 'Unassigned'}
+                          </span>
+                          <button
+                            onClick={() => handleViewActivity(room)}
+                            style={{
+                              marginLeft: 'auto',
+                              border: 'none',
+                              background: 'transparent',
+                              color: '#1d4ed8',
+                              cursor: 'pointer',
+                              fontSize: '0.75rem',
+                            }}
+                          >
+                            History
+                          </button>
+                        </div>
+                        {canActOnBoard && quickStatusNext[room.status] && (
+                          <button
+                            onClick={() => handleBoardStatusChange(room, quickStatusNext[room.status])}
+                            style={{
+                              marginTop: '0.25rem',
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: '4px',
+                              border: '1px solid #cbd5e1',
+                              background: '#f8fafc',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Mark as {statusLabels[quickStatusNext[room.status]] || quickStatusNext[room.status]}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {(roomsByStatus[status] ?? []).length > 4 && (
+                      <span style={{ fontSize: '0.7rem', color: '#475569' }}>
+                        +{(roomsByStatus[status] ?? []).length - 4} more
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}
