@@ -1,10 +1,8 @@
-import { scheduler } from 'firebase-functions/v2/scheduler';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db } from '../utils/firestore';
 import { createAccountabilityReportForTenant } from '../routes/rooms';
 
-export const dailyAccountabilityReport = scheduler('0 6 * * *') // daily at 6 AM server time
-  .timeZone('Africa/Lagos')
-  .onRun(async () => {
+export const dailyAccountabilityReport = onSchedule('0 6 * * *', async () => {
     const tenantsSnapshot = await db.collection('tenants').get();
     await Promise.all(
       tenantsSnapshot.docs.map(async (tenantDoc) => {
