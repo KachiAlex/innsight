@@ -296,6 +296,26 @@ reservationRouter.get(
         })
       );
 
+      const recommendedRooms = availableRoomsWithRates
+        .filter((room) => room.status !== 'available')
+        .map((room) => {
+          const baseRate =
+            room.ratePlan?.baseRate !== undefined && room.ratePlan?.baseRate !== null
+              ? Number(room.ratePlan?.baseRate)
+              : null;
+
+          return {
+            id: room.id,
+            roomNumber: room.roomNumber,
+            roomType: room.roomType,
+            status: room.status,
+            rate: baseRate,
+            categoryId: room.categoryId,
+            ratePlan: room.ratePlan,
+          };
+        })
+        .slice(0, 3);
+
       res.json({
         success: true,
         data: {
@@ -305,6 +325,7 @@ reservationRouter.get(
           availableCount: availableRooms.length,
           availableRooms,
           unavailableRooms,
+          recommendedRooms,
         },
       });
     } catch (error: any) {

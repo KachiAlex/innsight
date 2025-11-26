@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { CSSProperties, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -714,6 +714,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const [ratePlans, setRatePlans] = useState<any[]>([]);
   const [roomFilters, setRoomFilters] = useState<RoomFilterState>({ ...DEFAULT_ROOM_FILTERS });
   const [hasAvailabilityRun, setHasAvailabilityRun] = useState(false);
+  const [recommendedRooms, setRecommendedRooms] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     roomId: '',
     guestName: '',
@@ -840,6 +841,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         total: data.totalRooms ?? rooms.length,
         available: data.availableCount ?? rooms.length,
       });
+      setRecommendedRooms(data.recommendedRooms || []);
       setHasAvailabilityRun(true);
 
       setFormData((prev) => {
@@ -853,6 +855,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       setAvailabilityError('Unable to load availability. Please try again.');
       setAvailableRooms([]);
       setAvailabilitySummary(null);
+      setRecommendedRooms([]);
       setHasAvailabilityRun(true);
     } finally {
       setCheckingAvailability(false);
@@ -865,6 +868,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       setAvailabilitySummary(null);
       setAvailabilityError(null);
       setHasAvailabilityRun(false);
+      setRecommendedRooms([]);
       return;
     }
 
@@ -1036,6 +1040,57 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
                     <span style={{ color: '#64748b' }}>
                       Select dates to see available rooms.
                     </span>
+                  )}
+                  {availableRooms.length === 0 && recommendedRooms.length > 0 && (
+                    <div
+                      style={{
+                        marginTop: '0.75rem',
+                        borderRadius: '8px',
+                        border: '1px solid #fde68a',
+                        background: '#fffbeb',
+                        padding: '0.75rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      <strong style={{ color: '#92400e', fontSize: '0.9rem' }}>Recommended rooms</strong>
+                      <p style={{ margin: 0, color: '#92400e', fontSize: '0.8rem' }}>
+                        No rooms currently available—offer one of these nearly-ready rooms as an upgrade.
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        {recommendedRooms.map((room) => (
+                          <button
+                            key={room.id}
+                            type="button"
+                            onClick={() => {
+                              setFormData((prev) => ({ ...prev, roomId: room.id }));
+                              toast.success(`Selected Room ${room.roomNumber}`);
+                            }}
+                            style={{
+                              borderRadius: '8px',
+                              border: '1px solid #fde68a',
+                              background: '#fff7ed',
+                              padding: '0.4rem 0.8rem',
+                              cursor: 'pointer',
+                              fontSize: '0.8rem',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '0.2rem',
+                              minWidth: '160px',
+                              alignItems: 'flex-start',
+                            }}
+                          >
+                            <span style={{ fontWeight: 600, color: '#92400e' }}>
+                              Room {room.roomNumber} • {room.roomType}
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: '#92400e' }}>
+                              {room.rate ? `₦${Number(room.rate).toLocaleString()}` : 'Rate TBD'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
