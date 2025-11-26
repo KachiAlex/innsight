@@ -212,6 +212,99 @@ roomRouter.get(
   }
 );
 
+roomRouter.post(
+  '/accountability-report',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const roomsSnapshot = await db.collection('rooms').where('tenantId', '==', tenantId).get();
+      const rooms = roomsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      const thresholdMs = 6 * 60 * 60 * 1000;
+      const nowTimestamp = now();
+      const nowDate = nowTimestamp.toDate();
+      const flaggedStatuses = new Set(['dirty', 'reserved', 'maintenance']);
+
+      const staleRooms = rooms
+        .map((room) => {
+          const lastLogAt = toDate(room.lastLogAt);
+          return {
+            id: room.id,
+            roomNumber: room.roomNumber || '',
+            status: room.status || 'available',
+            lastLogSummary: room.lastLogSummary || null,
+            lastLogUserName: room.lastLogUserName || null,
+            lastLogAt,
+            isStale: !lastLogAt || nowDate.getTime() - lastLogAt.getTime() > thresholdMs,
+          };
+        })
+        .filter((room) => room.isStale)
+        .slice(0, 6)
+        .map(({ isStale, ...rest }) => rest);
+
+      const staleCount = staleRooms.length;
+      const flaggedCount = rooms.filter((room) => flaggedStatuses.has(room.status)).length;
+      const noLogCount = rooms.filter((room) => !room.lastLogAt).length;
+
+      const reportData = {
+        lastReportAt: nowTimestamp,
+        generatedBy: req.user?.id || null,
+        staleCount,
+        flaggedCount,
+        noLogCount,
+        staleRooms,
+      };
+
+      await db.collection('accountabilityReports').doc(tenantId).set(reportData, { merge: true });
+
+      res.json({
+        success: true,
+        data: reportData,
+      });
+    } catch (error: any) {
+      console.error('Error generating accountability report:', error);
+      throw new AppError(
+        `Failed to generate accountability report: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+roomRouter.get(
+  '/accountability-report/latest',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const reportRef = db.collection('accountabilityReports').doc(tenantId);
+      const reportDoc = await reportRef.get();
+      if (!reportDoc.exists) {
+        res.json({
+          success: true,
+          data: null,
+        });
+        return;
+      }
+      res.json({
+        success: true,
+        data: reportDoc.data(),
+      });
+    } catch (error: any) {
+      console.error('Error fetching accountability report:', error);
+      throw new AppError(
+        `Failed to fetch accountability report: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
 // GET /api/tenants/:tenantId/rooms/:id
 roomRouter.get(
   '/:id',
