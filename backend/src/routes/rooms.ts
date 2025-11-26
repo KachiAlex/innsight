@@ -15,6 +15,15 @@ const getRequestUserName = (user?: any) => {
   return name || user.email || null;
 };
 
+type RoomDocForReport = {
+  roomNumber?: string;
+  status?: string;
+  lastLogAt?: FirebaseFirestore.Timestamp | Date | null;
+  lastLogSummary?: string | null;
+  lastLogUserName?: string | null;
+  [key: string]: any;
+};
+
 const createRoomSchema = z.object({
   roomNumber: z.string().min(1),
   roomType: z.string().min(1),
@@ -220,10 +229,13 @@ roomRouter.post(
     try {
       const tenantId = req.params.tenantId;
       const roomsSnapshot = await db.collection('rooms').where('tenantId', '==', tenantId).get();
-      const rooms = roomsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const rooms = roomsSnapshot.docs.map((doc) => {
+        const data = doc.data() as RoomDocForReport;
+        return {
+          id: doc.id,
+          ...data,
+        };
+      });
       const thresholdMs = 6 * 60 * 60 * 1000;
       const nowTimestamp = now();
       const nowDate = nowTimestamp.toDate();
