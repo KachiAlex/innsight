@@ -29,6 +29,7 @@ interface RatePlan {
 interface RoomCategory {
   id: string;
   name: string;
+  description?: string;
   color?: string;
 }
 
@@ -89,18 +90,24 @@ export default function RatePlansPage() {
 
   const handleCreate = async () => {
     try {
-      if (!formData.name || !formData.baseRate) {
-        toast.error('Please fill in all required fields');
+      if (!formData.categoryId || !formData.baseRate) {
+        toast.error('Please select a category and enter a base rate');
+        return;
+      }
+
+      const selectedCategory = categories.find(cat => cat.id === formData.categoryId);
+      if (!selectedCategory) {
+        toast.error('Selected category not found');
         return;
       }
 
       await api.post(`/tenants/${user?.tenantId}/rate-plans`, {
-        name: formData.name,
-        description: formData.description || undefined,
+        name: selectedCategory.name, // Use category name as rate plan name
+        description: formData.description || selectedCategory.description || undefined,
         baseRate: parseFloat(formData.baseRate),
         currency: formData.currency,
         isActive: formData.isActive,
-        categoryId: formData.categoryId || undefined,
+        categoryId: formData.categoryId,
       });
 
       toast.success('Rate plan created successfully');
@@ -117,18 +124,24 @@ export default function RatePlansPage() {
     if (!selectedRatePlan) return;
 
     try {
-      if (!formData.name || !formData.baseRate) {
-        toast.error('Please fill in all required fields');
+      if (!formData.categoryId || !formData.baseRate) {
+        toast.error('Please select a category and enter a base rate');
+        return;
+      }
+
+      const selectedCategory = categories.find(cat => cat.id === formData.categoryId);
+      if (!selectedCategory) {
+        toast.error('Selected category not found');
         return;
       }
 
       await api.patch(`/tenants/${user?.tenantId}/rate-plans/${selectedRatePlan.id}`, {
-        name: formData.name,
-        description: formData.description || undefined,
+        name: selectedCategory.name, // Use category name as rate plan name
+        description: formData.description || selectedCategory.description || undefined,
         baseRate: parseFloat(formData.baseRate),
         currency: formData.currency,
         isActive: formData.isActive,
-        categoryId: formData.categoryId || undefined,
+        categoryId: formData.categoryId,
       });
 
       toast.success('Rate plan updated successfully');
@@ -157,9 +170,10 @@ export default function RatePlansPage() {
 
   const handleEditClick = (ratePlan: RatePlan) => {
     setSelectedRatePlan(ratePlan);
+    const category = categories.find(cat => cat.id === ratePlan.categoryId);
     setFormData({
-      name: ratePlan.name,
-      description: ratePlan.description || '',
+      name: ratePlan.name, // Keep for display but won't be used
+      description: ratePlan.description || category?.description || '',
       baseRate: ratePlan.baseRate.toString(),
       currency: ratePlan.currency,
       isActive: ratePlan.isActive,
@@ -176,6 +190,15 @@ export default function RatePlansPage() {
       currency: 'NGN',
       isActive: true,
       categoryId: '',
+    });
+  };
+
+  const handleCategoryChange = (categoryId: string) => {
+    const selectedCategory = categories.find(cat => cat.id === categoryId);
+    setFormData({
+      ...formData,
+      categoryId,
+      description: selectedCategory?.description || formData.description,
     });
   };
 
@@ -517,12 +540,11 @@ export default function RatePlansPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Name *
+                    Category *
                   </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  <select
+                    value={formData.categoryId}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
                     style={{
                       width: '100%',
                       padding: '0.75rem',
@@ -530,8 +552,19 @@ export default function RatePlansPage() {
                       borderRadius: '6px',
                       fontSize: '1rem',
                     }}
-                    placeholder="Standard Rate"
-                  />
+                  >
+                    <option value="">Select a category...</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  {formData.categoryId && (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#64748b', fontStyle: 'italic' }}>
+                      Rate plan name will be: {categories.find(c => c.id === formData.categoryId)?.name}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -550,8 +583,13 @@ export default function RatePlansPage() {
                       minHeight: '80px',
                       resize: 'vertical',
                     }}
-                    placeholder="Optional description"
+                    placeholder={categories.find(c => c.id === formData.categoryId)?.description || "Optional description (will use category description if available)"}
                   />
+                  {formData.categoryId && categories.find(c => c.id === formData.categoryId)?.description && (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                      Category description: {categories.find(c => c.id === formData.categoryId)?.description}
+                    </p>
+                  )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
@@ -701,12 +739,11 @@ export default function RatePlansPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Name *
+                    Category *
                   </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  <select
+                    value={formData.categoryId}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
                     style={{
                       width: '100%',
                       padding: '0.75rem',
@@ -714,7 +751,19 @@ export default function RatePlansPage() {
                       borderRadius: '6px',
                       fontSize: '1rem',
                     }}
-                  />
+                  >
+                    <option value="">Select a category...</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  {formData.categoryId && (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#64748b', fontStyle: 'italic' }}>
+                      Rate plan name will be: {categories.find(c => c.id === formData.categoryId)?.name}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -733,7 +782,13 @@ export default function RatePlansPage() {
                       minHeight: '80px',
                       resize: 'vertical',
                     }}
+                    placeholder={categories.find(c => c.id === formData.categoryId)?.description || "Optional description (will use category description if available)"}
                   />
+                  {formData.categoryId && categories.find(c => c.id === formData.categoryId)?.description && (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                      Category description: {categories.find(c => c.id === formData.categoryId)?.description}
+                    </p>
+                  )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
@@ -779,29 +834,6 @@ export default function RatePlansPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Category
-                  </label>
-                  <select
-                    value={formData.categoryId}
-                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  >
-                    <option value="">No Category</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
 
                 <div>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
