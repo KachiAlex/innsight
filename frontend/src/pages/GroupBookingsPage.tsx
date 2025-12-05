@@ -683,9 +683,14 @@ function CreateGroupBookingModal({
   tenantId: string;
 }) {
   const [availableRooms, setAvailableRooms] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedRooms, setSelectedRooms] = useState<Set<string>>(new Set());
   const [roomRates, setRoomRates] = useState<Record<string, number>>({});
   const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [bulkSelectionInput, setBulkSelectionInput] = useState('');
+  const [bulkSelectionError, setBulkSelectionError] = useState<string | null>(null);
+  const [unavailableRooms, setUnavailableRooms] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     groupName: '',
     guestName: '',
@@ -701,6 +706,12 @@ function CreateGroupBookingModal({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (tenantId) {
+      fetchCategories();
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
     if (formData.checkInDate && formData.checkOutDate) {
       const checkIn = new Date(formData.checkInDate);
       const checkOut = new Date(formData.checkOutDate);
@@ -708,18 +719,38 @@ function CreateGroupBookingModal({
         fetchAvailability(checkIn, checkOut);
       }
     }
-  }, [formData.checkInDate, formData.checkOutDate, tenantId]);
+  }, [formData.checkInDate, formData.checkOutDate, tenantId, selectedCategory]);
+
+  const fetchCategories = async () => {
+    if (!tenantId) return;
+    try {
+      const response = await api.get(`/tenants/${tenantId}/room-categories`);
+      setCategories(response.data.data || []);
+    } catch (error: any) {
+      console.error('Failed to fetch categories:', error);
+    }
+  };
 
   const fetchAvailability = async (checkIn: Date, checkOut: Date) => {
     if (!tenantId) return;
     setCheckingAvailability(true);
+    setSelectedRooms(new Set());
+    setUnavailableRooms(new Set());
+    setBulkSelectionInput('');
+    setBulkSelectionError(null);
     try {
-      const response = await api.get(`/tenants/${tenantId}/reservations/availability`, {
-        params: {
-          startDate: checkIn.toISOString(),
-          endDate: checkOut.toISOString(),
-        },
-      });
+      const params: any = {
+        startDate: checkIn.toISOString(),
+        endDate: checkOut.toISOString(),
+      };
+      if (selectedCategory && selectedCategory !== 'all') {
+        if (selectedCategory === 'none') {
+          params.categoryId = 'none';
+        } else {
+          params.categoryId = selectedCategory;
+        }
+      }
+      const response = await api.get(`/tenants/${tenantId}/reservations/availability`, { params });
       const rooms = response.data.data?.availableRooms || [];
       setAvailableRooms(rooms);
       
@@ -747,7 +778,88 @@ function CreateGroupBookingModal({
       newSelected.add(roomId);
     }
     setSelectedRooms(newSelected);
+    setUnavailableRooms(new Set());
   };
+
+  const parseBulkSelection = (input: string): string[] => {
+    const roomNumbers: string[] = [];
+    const parts = input.split(',').map(p => p.trim()).filter(Boolean);
+    
+    for (const part of parts) {
+      if (part.includes('-')) {
+        // Range selection (e.g., "101-105")
+        const [start, end] = part.split('-').map(s => s.trim());
+        const startNum = parseInt(start, 10);
+        const endNum = parseInt(end, 10);
+        
+        if (isNaN(startNum) || isNaN(endNum)) {
+          throw new Error(`Invalid range: ${part}`);
+        }
+        
+        if (startNum > endNum) {
+          throw new Error(`Range start (${startNum}) must be less than or equal to end (${endNum})`);
+        }
+        
+        for (let i = startNum; i <= endNum; i++) {
+          roomNumbers.push(i.toString());
+        }
+      } else {
+        // Single room number
+        const num = parseInt(part, 10);
+        if (isNaN(num)) {
+          throw new Error(`Invalid room number: ${part}`);
+        }
+        roomNumbers.push(num.toString());
+      }
+    }
+    
+    return roomNumbers;
+  };
+
+  const handleBulkSelection = () => {
+    if (!bulkSelectionInput.trim()) {
+      setBulkSelectionError('Please enter room numbers');
+      return;
+    }
+
+    try {
+      const roomNumbers = parseBulkSelection(bulkSelectionInput);
+      const newSelected = new Set(selectedRooms);
+      const newUnavailable = new Set<string>();
+      
+      // Find rooms by room number
+      roomNumbers.forEach(roomNum => {
+        const room = availableRooms.find(r => r.roomNumber === roomNum || r.roomNumber === roomNum.toString());
+        if (room) {
+          newSelected.add(room.id);
+        } else {
+          newUnavailable.add(roomNum);
+        }
+      });
+      
+      setSelectedRooms(newSelected);
+      setUnavailableRooms(newUnavailable);
+      
+      if (newUnavailable.size > 0) {
+        setBulkSelectionError(`Rooms not available: ${Array.from(newUnavailable).join(', ')}`);
+      } else {
+        setBulkSelectionError(null);
+        setBulkSelectionInput('');
+        toast.success(`Selected ${roomNumbers.length} room(s)`);
+      }
+    } catch (error: any) {
+      setBulkSelectionError(error.message || 'Invalid room selection format');
+    }
+  };
+
+  const filteredRooms = selectedCategory && selectedCategory !== 'all'
+    ? availableRooms.filter((room: any) => {
+        if (selectedCategory === 'none') {
+          return !room.categoryId;
+        }
+        return room.categoryId === selectedCategory;
+      })
+    : availableRooms;
 
   const handleSubmit = async () => {
     if (!formData.guestName || !formData.checkInDate || !formData.checkOutDate) {
@@ -757,6 +869,42 @@ function CreateGroupBookingModal({
 
     if (selectedRooms.size === 0) {
       toast.error('Please select at least one room');
+      return;
+    }
+
+    // Check if any selected rooms are unavailable
+    if (unavailableRooms.size > 0) {
+      toast.error(`Cannot proceed: Some rooms are not available. Please remove unavailable rooms first.`);
+      return;
+    }
+
+    // Double-check availability before submitting
+    const checkIn = new Date(formData.checkInDate);
+    const checkOut = new Date(formData.checkOutDate);
+    const selectedRoomIds = Array.from(selectedRooms);
+    
+    try {
+      const response = await api.get(`/tenants/${tenantId}/reservations/availability`, {
+        params: {
+          startDate: checkIn.toISOString(),
+          endDate: checkOut.toISOString(),
+        },
+      });
+      
+      const availableRoomIds = (response.data.data?.availableRooms || []).map((r: any) => r.id);
+      const unavailable = selectedRoomIds.filter(id => !availableRoomIds.includes(id));
+      
+      if (unavailable.length > 0) {
+        const unavailableRoomNumbers = unavailable.map(id => {
+          const room = availableRooms.find((r: any) => r.id === id);
+          return room?.roomNumber || id;
+        });
+        toast.error(`Some selected rooms are no longer available: ${unavailableRoomNumbers.join(', ')}. Please select different rooms.`);
+        return;
+      }
+    } catch (error: any) {
+      console.error('Failed to verify availability:', error);
+      toast.error('Failed to verify room availability. Please try again.');
       return;
     }
 
@@ -1005,15 +1153,104 @@ function CreateGroupBookingModal({
             <h3 style={{ margin: '0 0 1rem', fontSize: '1.1rem', fontWeight: '600', color: '#1e293b' }}>
               Select Rooms {checkingAvailability && <span style={{ fontSize: '0.875rem', fontWeight: 'normal', color: '#64748b' }}>(Loading...)</span>}
             </h3>
-            {availableRooms.length === 0 && formData.checkInDate && formData.checkOutDate ? (
+            
+            {/* Category Filter */}
+            {categories.length > 0 && (
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
+                  Filter by Category
+                </label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '6px',
+                    fontSize: '1rem',
+                  }}
+                >
+                  <option value="all">All Categories</option>
+                  <option value="none">No Category</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                      {cat.minPrice !== null && cat.minPrice !== undefined && (
+                        cat.minPrice === cat.maxPrice
+                          ? ` - ₦${cat.minPrice.toLocaleString()}`
+                          : ` - ₦${cat.minPrice.toLocaleString()} - ₦${cat.maxPrice?.toLocaleString()}`
+                      )}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Bulk Selection */}
+            <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f8f9fa', borderRadius: '6px' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
+                Bulk Select Rooms (e.g., "101-105" or "101,102,103")
+              </label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  value={bulkSelectionInput}
+                  onChange={(e) => {
+                    setBulkSelectionInput(e.target.value);
+                    setBulkSelectionError(null);
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleBulkSelection();
+                    }
+                  }}
+                  placeholder="101-105 or 101,102,103"
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    border: `1px solid ${bulkSelectionError ? '#ef4444' : '#e2e8f0'}`,
+                    borderRadius: '6px',
+                    fontSize: '1rem',
+                  }}
+                />
+                <button
+                  onClick={handleBulkSelection}
+                  style={{
+                    padding: '0.75rem 1.5rem',
+                    background: '#3b82f6',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontWeight: '500',
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+              {bulkSelectionError && (
+                <p style={{ margin: '0.5rem 0 0', color: '#ef4444', fontSize: '0.875rem' }}>
+                  {bulkSelectionError}
+                </p>
+              )}
+              {unavailableRooms.size > 0 && (
+                <p style={{ margin: '0.5rem 0 0', color: '#f59e0b', fontSize: '0.875rem' }}>
+                  ⚠️ Rooms not available: {Array.from(unavailableRooms).join(', ')}. Please select different rooms.
+                </p>
+              )}
+            </div>
+
+            {filteredRooms.length === 0 && formData.checkInDate && formData.checkOutDate ? (
               <p style={{ color: '#64748b', padding: '1rem', background: '#f8f9fa', borderRadius: '6px' }}>
-                No available rooms for the selected dates. Please try different dates.
+                No available rooms for the selected dates and category. Please try different dates or category.
               </p>
-            ) : availableRooms.length > 0 ? (
+            ) : filteredRooms.length > 0 ? (
               <div style={{ display: 'grid', gap: '0.75rem', maxHeight: '300px', overflowY: 'auto', padding: '0.5rem' }}>
-                {availableRooms.map((room) => {
+                {filteredRooms.map((room: any) => {
                   const isSelected = selectedRooms.has(room.id);
                   const rate = roomRates[room.id] || 0;
+                  const category = categories.find((c: any) => c.id === room.categoryId);
                   
                   return (
                     <div
@@ -1032,12 +1269,34 @@ function CreateGroupBookingModal({
                       }}
                     >
                       <div>
-                        <p style={{ margin: 0, fontWeight: '500', color: '#1e293b' }}>
-                          {room.roomNumber} - {room.roomType}
-                        </p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                          <p style={{ margin: 0, fontWeight: '500', color: '#1e293b' }}>
+                            {room.roomNumber} - {room.roomType}
+                          </p>
+                          {category && (
+                            <span
+                              style={{
+                                padding: '0.125rem 0.5rem',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                background: category.color || '#8b5cf6',
+                                color: 'white',
+                              }}
+                            >
+                              {category.name}
+                            </span>
+                          )}
+                        </div>
                         {room.ratePlan && (
                           <p style={{ margin: '0.25rem 0 0', fontSize: '0.875rem', color: '#64748b' }}>
                             Rate Plan: {room.ratePlan.name}
+                          </p>
+                        )}
+                        {category && category.minPrice !== null && category.minPrice !== undefined && (
+                          <p style={{ margin: '0.25rem 0 0', fontSize: '0.875rem', color: '#3b82f6', fontWeight: '500' }}>
+                            {category.minPrice === category.maxPrice
+                              ? `₦${category.minPrice.toLocaleString()}`
+                              : `₦${category.minPrice.toLocaleString()} - ₦${category.maxPrice?.toLocaleString()}`}
                           </p>
                         )}
                       </div>
@@ -1071,12 +1330,20 @@ function CreateGroupBookingModal({
           {/* Summary */}
           {selectedRooms.size > 0 && (
             <div style={{ padding: '1rem', background: '#f8f9fa', borderRadius: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: unavailableRooms.size > 0 ? '0.5rem' : '0' }}>
                 <div>
                   <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Selected Rooms</p>
                   <p style={{ margin: '0.25rem 0 0', fontWeight: '600', color: '#1e293b' }}>
                     {selectedRooms.size} room{selectedRooms.size !== 1 ? 's' : ''}
                   </p>
+                  {Array.from(selectedRooms).length > 0 && (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#64748b' }}>
+                      {Array.from(selectedRooms).map(roomId => {
+                        const room = availableRooms.find((r: any) => r.id === roomId);
+                        return room?.roomNumber;
+                      }).filter(Boolean).join(', ')}
+                    </p>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>Total Rate</p>
@@ -1085,6 +1352,32 @@ function CreateGroupBookingModal({
                   </p>
                 </div>
               </div>
+              {unavailableRooms.size > 0 && (
+                <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#fef3c7', borderRadius: '4px', border: '1px solid #f59e0b' }}>
+                  <p style={{ margin: 0, color: '#92400e', fontSize: '0.875rem', fontWeight: '500' }}>
+                    ⚠️ Warning: {unavailableRooms.size} room{unavailableRooms.size !== 1 ? 's' : ''} not available: {Array.from(unavailableRooms).join(', ')}
+                  </p>
+                  <button
+                    onClick={() => {
+                      setUnavailableRooms(new Set());
+                      setBulkSelectionInput('');
+                      setBulkSelectionError(null);
+                    }}
+                    style={{
+                      marginTop: '0.5rem',
+                      padding: '0.5rem 1rem',
+                      background: '#f59e0b',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                    }}
+                  >
+                    Clear Unavailable Rooms
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
