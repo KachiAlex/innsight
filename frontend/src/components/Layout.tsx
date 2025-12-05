@@ -18,7 +18,8 @@ import {
   CalendarDays,
   Moon,
   Settings,
-  UserCheck
+  UserCheck,
+  Wallet
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -41,7 +42,7 @@ const menuItems = [
   { path: '/reports', icon: BarChart3, label: 'Reports' },
   { path: '/night-audit', icon: Moon, label: 'Night Audit' },
   { path: '/staff', icon: Users, label: 'Staff' },
-  { path: '/wage-plans', icon: DollarSign, label: 'Wage Plans' },
+  { path: '/wage-plans', icon: Wallet, label: 'Wage Plans' },
   { path: '/settings', icon: Settings, label: 'Settings' },
   { path: '/alerts', icon: AlertCircle, label: 'Alerts' },
 ];

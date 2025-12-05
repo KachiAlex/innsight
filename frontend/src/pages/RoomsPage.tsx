@@ -15,6 +15,8 @@ interface RoomCategory {
   totalRooms?: number;
   actualRoomCount: number;
   color?: string;
+  minPrice?: number | null;
+  maxPrice?: number | null;
 }
 
 interface Room {
@@ -2020,13 +2022,26 @@ function CategoryManagementModal({
                           </p>
                         )}
                         <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#64748b' }}>
-                          <span style={{ fontWeight: '500' }}>{category.actualRoomCount}</span> room
-                          {category.actualRoomCount !== 1 ? 's' : ''} assigned
-                          {category.totalRooms && (
-                            <span>
-                              {' '}
-                              / {category.totalRooms} total
-                            </span>
+                          <div>
+                            <span style={{ fontWeight: '500' }}>{category.actualRoomCount}</span> room
+                            {category.actualRoomCount !== 1 ? 's' : ''} assigned
+                            {category.totalRooms && (
+                              <span>
+                                {' '}
+                                / {category.totalRooms} total
+                              </span>
+                            )}
+                          </div>
+                          {category.minPrice !== null && category.minPrice !== undefined && (
+                            <div style={{ marginTop: '0.25rem', fontWeight: '600', color: '#3b82f6' }}>
+                              {category.minPrice === category.maxPrice ? (
+                                <>₦{category.minPrice.toLocaleString()}</>
+                              ) : (
+                                <>
+                                  ₦{category.minPrice.toLocaleString()} - ₦{category.maxPrice?.toLocaleString()}
+                                </>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>

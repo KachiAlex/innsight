@@ -83,7 +83,7 @@ roomCategoryRouter.get(
         };
       });
 
-      // Get room count for each category
+      // Get room count and price range for each category
       const categoriesWithCounts = await Promise.all(
         categories.map(async (category) => {
           try {
@@ -91,14 +91,42 @@ roomCategoryRouter.get(
               .where('tenantId', '==', tenantId)
               .where('categoryId', '==', category.id)
               .get();
+            
+            // Get rate plans for this category
+            let minPrice: number | null = null;
+            let maxPrice: number | null = null;
+            try {
+              const ratePlansSnapshot = await db.collection('ratePlans')
+                .where('tenantId', '==', tenantId)
+                .where('categoryId', '==', category.id)
+                .where('isActive', '==', true)
+                .get();
+              
+              const rates = ratePlansSnapshot.docs
+                .map(doc => Number(doc.data().baseRate || 0))
+                .filter(rate => rate > 0);
+              
+              if (rates.length > 0) {
+                minPrice = Math.min(...rates);
+                maxPrice = Math.max(...rates);
+              }
+            } catch (error) {
+              // If rate plans query fails, continue without price info
+              console.warn('Error fetching rate plans for category:', error);
+            }
+            
             return {
               ...category,
               actualRoomCount: roomsSnapshot.size,
+              minPrice,
+              maxPrice,
             };
           } catch (error) {
             return {
               ...category,
               actualRoomCount: 0,
+              minPrice: null,
+              maxPrice: null,
             };
           }
         })

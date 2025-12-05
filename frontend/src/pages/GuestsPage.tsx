@@ -6,7 +6,6 @@ import Layout from '../components/Layout';
 import { User, Mail, Phone, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
-import SearchInput from '../components/SearchInput';
 
 export default function GuestsPage() {
   const navigate = useNavigate();
@@ -50,13 +49,23 @@ export default function GuestsPage() {
   const handleSearch = async () => {
     if (!searchQuery.trim() || !user?.tenantId) return;
     try {
+      setLoading(true);
       const response = await api.get(`/tenants/${user?.tenantId}/guests/search`, {
         params: { q: searchQuery.trim() },
       });
       setGuests(response.data.data || []);
+      setPagination(prev => ({ ...prev, total: response.data.data?.length || 0, totalPages: 1 }));
     } catch (error: any) {
       console.error('Failed to search guests:', error);
       toast.error(error.response?.data?.message || 'Failed to search guests');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
     }
   };
 
@@ -78,23 +87,46 @@ export default function GuestsPage() {
           <h1 style={{ color: '#1e293b' }}>Guests</h1>
         </div>
 
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', alignItems: 'center' }}>
           <div style={{ flex: 1, maxWidth: '400px' }}>
-            <SearchInput
-              placeholder="Search by name, email, or phone..."
-              value={searchQuery}
-              onChange={(value) => setSearchQuery(value)}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Search by name, email, or phone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={handleKeyPress}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem 1rem 0.75rem 2.5rem',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '1rem',
+                }}
+              />
+              <Search
+                size={18}
+                style={{
+                  position: 'absolute',
+                  left: '0.75rem',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#94a3b8',
+                  pointerEvents: 'none',
+                }}
+              />
+            </div>
           </div>
           <button
             onClick={handleSearch}
+            disabled={!searchQuery.trim() || loading}
             style={{
               padding: '0.75rem 1.5rem',
-              background: '#3b82f6',
+              background: (!searchQuery.trim() || loading) ? '#94a3b8' : '#3b82f6',
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-              cursor: 'pointer',
+              cursor: (!searchQuery.trim() || loading) ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
@@ -103,6 +135,24 @@ export default function GuestsPage() {
             <Search size={20} />
             Search
           </button>
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                fetchGuests();
+              }}
+              style={{
+                padding: '0.75rem 1rem',
+                background: '#f1f5f9',
+                color: '#475569',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              Clear
+            </button>
+          )}
         </div>
 
         {guests.length === 0 ? (

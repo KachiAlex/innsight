@@ -1,17 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { prisma } from '../utils/prisma';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
+import { db, now, toDate } from '../utils/firestore';
 
 export const housekeepingRouter = Router({ mergeParams: true });
 
 const createTaskSchema = z.object({
-  roomId: z.string().uuid(),
+  roomId: z.string(),
   taskType: z.enum(['cleaning', 'inspection', 'maintenance_prep']),
-  assignedTo: z.string().uuid().optional(),
+  assignedTo: z.string().optional(),
 });
 
 const completeTaskSchema = z.object({
@@ -26,55 +26,128 @@ housekeepingRouter.get(
   authenticate,
   requireTenantAccess,
   async (req: AuthRequest, res) => {
-    const tenantId = req.params.tenantId;
-    const { status, roomId, assignedTo } = req.query;
+    try {
+      const tenantId = req.params.tenantId;
+      const { status, roomId, assignedTo } = req.query;
+      const { page, limit } = getPaginationParams(req);
 
-    const where: any = { tenantId };
-    if (status) where.status = status;
-    if (roomId) where.roomId = roomId;
-    if (assignedTo) where.assignedTo = assignedTo;
+      // Build Firestore query
+      let query: FirebaseFirestore.Query = db.collection('housekeepingTasks')
+        .where('tenantId', '==', tenantId);
 
-    const { skip, take, page, limit } = getPaginationParams(req);
+      if (status) {
+        query = query.where('status', '==', status);
+      }
+      if (roomId) {
+        query = query.where('roomId', '==', roomId);
+      }
+      if (assignedTo) {
+        query = query.where('assignedTo', '==', assignedTo);
+      }
 
-    const [tasks, total] = await Promise.all([
-      prisma.housekeepingTask.findMany({
-        where,
-        include: {
-          room: {
-            select: {
-              id: true,
-              roomNumber: true,
-              roomType: true,
-            },
-          },
-          assignedStaff: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-          completedStaff: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take,
-      }),
-      prisma.housekeepingTask.count({ where }),
-    ]);
+      // Get all tasks first (for sorting)
+      const allTasksSnapshot = await query.get();
+      const total = allTasksSnapshot.size;
 
-    const result = createPaginationResult(tasks, total, page, limit);
+      // Sort by createdAt (desc)
+      const sortedTasks = allTasksSnapshot.docs.sort((a, b) => {
+        const aCreated = toDate(a.data().createdAt);
+        const bCreated = toDate(b.data().createdAt);
+        if (!aCreated || !bCreated) return 0;
+        return bCreated.getTime() - aCreated.getTime();
+      });
 
-    res.json({
-      success: true,
-      ...result,
-    });
+      // Apply pagination
+      const skip = (page - 1) * limit;
+      const paginatedTasks = sortedTasks.slice(skip, skip + limit);
+
+      // Enrich with related data
+      const tasks = await Promise.all(
+        paginatedTasks.map(async (doc) => {
+          const data = doc.data();
+          const task: any = {
+            id: doc.id,
+            roomId: data.roomId,
+            taskType: data.taskType,
+            status: data.status || 'pending',
+            assignedTo: data.assignedTo || null,
+            completedBy: data.completedBy || null,
+            photos: data.photos || [],
+            checklist: data.checklist || null,
+            notes: data.notes || null,
+            createdAt: toDate(data.createdAt),
+            updatedAt: toDate(data.updatedAt),
+            completedAt: data.completedAt ? toDate(data.completedAt) : null,
+          };
+
+          // Fetch room data
+          if (data.roomId) {
+            try {
+              const roomDoc = await db.collection('rooms').doc(data.roomId).get();
+              if (roomDoc.exists) {
+                const roomData = roomDoc.data();
+                task.room = {
+                  id: roomDoc.id,
+                  roomNumber: roomData?.roomNumber || null,
+                  roomType: roomData?.roomType || null,
+                };
+              }
+            } catch (error) {
+              console.error('Error fetching room:', error);
+            }
+          }
+
+          // Fetch assigned staff data
+          if (data.assignedTo) {
+            try {
+              const staffDoc = await db.collection('users').doc(data.assignedTo).get();
+              if (staffDoc.exists) {
+                const staffData = staffDoc.data();
+                task.assignedStaff = {
+                  id: staffDoc.id,
+                  firstName: staffData?.firstName || null,
+                  lastName: staffData?.lastName || null,
+                };
+              }
+            } catch (error) {
+              console.error('Error fetching assigned staff:', error);
+            }
+          }
+
+          // Fetch completed staff data
+          if (data.completedBy) {
+            try {
+              const staffDoc = await db.collection('users').doc(data.completedBy).get();
+              if (staffDoc.exists) {
+                const staffData = staffDoc.data();
+                task.completedStaff = {
+                  id: staffDoc.id,
+                  firstName: staffData?.firstName || null,
+                  lastName: staffData?.lastName || null,
+                };
+              }
+            } catch (error) {
+              console.error('Error fetching completed staff:', error);
+            }
+          }
+
+          return task;
+        })
+      );
+
+      const result = createPaginationResult(tasks, total, page, limit);
+
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error: any) {
+      console.error('Error fetching housekeeping tasks:', error);
+      throw new AppError(
+        `Failed to fetch housekeeping tasks: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
   }
 );
 
@@ -84,112 +157,159 @@ housekeepingRouter.post(
   authenticate,
   requireTenantAccess,
   async (req: AuthRequest, res) => {
-    const tenantId = req.params.tenantId;
-    const data = createTaskSchema.parse(req.body);
+    try {
+      const tenantId = req.params.tenantId;
+      const data = createTaskSchema.parse(req.body);
 
-    const room = await prisma.room.findFirst({
-      where: {
-        id: data.roomId,
-        tenantId,
-      },
-    });
+      // Verify room exists
+      const roomDoc = await db.collection('rooms').doc(data.roomId).get();
+      if (!roomDoc.exists || roomDoc.data()?.tenantId !== tenantId) {
+        throw new AppError('Room not found', 404);
+      }
 
-    if (!room) {
-      throw new AppError('Room not found', 404);
-    }
-
-    const task = await prisma.housekeepingTask.create({
-      data: {
+      const taskRef = db.collection('housekeepingTasks').doc();
+      const taskData = {
         tenantId,
         roomId: data.roomId,
         taskType: data.taskType,
-        assignedTo: data.assignedTo,
-      },
-      include: {
-        room: true,
-      },
-    });
+        status: 'pending',
+        assignedTo: data.assignedTo || null,
+        completedBy: null,
+        photos: [],
+        checklist: null,
+        notes: null,
+        createdAt: now(),
+        updatedAt: now(),
+        completedAt: null,
+      };
 
-    await createAuditLog({
-      tenantId,
-      userId: req.user!.id,
-      action: 'create_housekeeping_task',
-      entityType: 'housekeeping_task',
-      entityId: task.id,
-      afterState: task,
-    });
+      await taskRef.set(taskData);
 
-    res.status(201).json({
-      success: true,
-      data: task,
-    });
+      const roomData = roomDoc.data();
+      const task = {
+        id: taskRef.id,
+        ...taskData,
+        room: {
+          id: roomDoc.id,
+          roomNumber: roomData?.roomNumber || null,
+          roomType: roomData?.roomType || null,
+        },
+        createdAt: toDate(taskData.createdAt),
+        updatedAt: toDate(taskData.updatedAt),
+      };
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'create_housekeeping_task',
+        entityType: 'housekeeping_task',
+        entityId: taskRef.id,
+        afterState: task,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: task,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error creating housekeeping task:', error);
+      throw new AppError(
+        `Failed to create housekeeping task: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
   }
 );
 
-// POST /api/tenants/:tenantId/rooms/:roomId/housekeeping/complete
+// POST /api/tenants/:tenantId/housekeeping/:id/complete
 housekeepingRouter.post(
   '/:id/complete',
   authenticate,
   requireTenantAccess,
   async (req: AuthRequest, res) => {
-    const tenantId = req.params.tenantId;
-    const taskId = req.params.id;
-    const data = completeTaskSchema.parse(req.body);
+    try {
+      const tenantId = req.params.tenantId;
+      const taskId = req.params.id;
+      const data = completeTaskSchema.parse(req.body);
 
-    const task = await prisma.housekeepingTask.findFirst({
-      where: {
-        id: taskId,
+      const taskDoc = await db.collection('housekeepingTasks').doc(taskId).get();
+
+      if (!taskDoc.exists) {
+        throw new AppError('Task not found', 404);
+      }
+
+      const taskData = taskDoc.data();
+      if (taskData?.tenantId !== tenantId) {
+        throw new AppError('Task not found', 404);
+      }
+
+      const beforeState = {
+        id: taskDoc.id,
+        ...taskData,
+        createdAt: toDate(taskData.createdAt),
+        updatedAt: toDate(taskData.updatedAt),
+      };
+
+      // Update task
+      await taskDoc.ref.update({
+        status: 'completed',
+        completedBy: req.user!.id,
+        completedAt: now(),
+        photos: data.photos || [],
+        checklist: data.checklist || null,
+        notes: data.notes || null,
+        updatedAt: now(),
+      });
+
+      // Update room status to clean
+      if (taskData.roomId) {
+        await db.collection('rooms').doc(taskData.roomId).update({
+          status: 'clean',
+          updatedAt: now(),
+        });
+      }
+
+      // Get updated task
+      const updatedDoc = await db.collection('housekeepingTasks').doc(taskId).get();
+      const updatedData = updatedDoc.data();
+
+      const afterState = {
+        id: updatedDoc.id,
+        ...updatedData,
+        createdAt: toDate(updatedData?.createdAt),
+        updatedAt: toDate(updatedData?.updatedAt),
+        completedAt: updatedData?.completedAt ? toDate(updatedData.completedAt) : null,
+      };
+
+      await createAuditLog({
         tenantId,
-      },
-      include: {
-        room: true,
-      },
-    });
-
-    if (!task) {
-      throw new AppError('Task not found', 404);
-    }
-
-    const beforeState = { ...task };
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const updatedTask = await tx.housekeepingTask.update({
-        where: { id: taskId },
-        data: {
-          status: 'completed',
-          completedBy: req.user!.id,
-          completedAt: new Date(),
-          photos: data.photos || undefined,
-          checklist: data.checklist || undefined,
-          notes: data.notes,
+        userId: req.user!.id,
+        action: 'complete_housekeeping_task',
+        entityType: 'housekeeping_task',
+        entityId: taskId,
+        beforeState,
+        afterState,
+        metadata: {
+          photos: data.photos,
         },
       });
 
-      // Update room status
-      await tx.room.update({
-        where: { id: task.roomId },
-        data: { status: 'clean' },
+      res.json({
+        success: true,
+        data: afterState,
       });
-
-      return updatedTask;
-    });
-
-    await createAuditLog({
-      tenantId,
-      userId: req.user!.id,
-      action: 'complete_housekeeping_task',
-      entityType: 'housekeeping_task',
-      entityId: taskId,
-      beforeState,
-      afterState: updated,
-      metadata: {
-        photos: data.photos,
-      },
-    });
-
-    res.json({
-      success: true,
-      data: updated,
-    });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error completing housekeeping task:', error);
+      throw new AppError(
+        `Failed to complete housekeeping task: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
   }
 );
