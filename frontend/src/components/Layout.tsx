@@ -15,7 +15,10 @@ import {
   X,
   DollarSign,
   Users,
-  CalendarDays
+  CalendarDays,
+  Moon,
+  Settings,
+  UserCheck
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -23,42 +26,46 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-import { Building2 } from 'lucide-react';
-
 const menuItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/reservations', icon: Calendar, label: 'Reservations' },
+  { path: '/group-bookings', icon: Users, label: 'Group Bookings' },
   { path: '/calendar', icon: CalendarDays, label: 'Calendar' },
   { path: '/rooms', icon: DoorOpen, label: 'Rooms' },
   { path: '/rate-plans', icon: DollarSign, label: 'Rate Plans' },
-  { path: '/guests', icon: Users, label: 'Guests' },
+  { path: '/guests', icon: UserCheck, label: 'Guests' },
   { path: '/folios', icon: Receipt, label: 'Folios' },
   { path: '/payments', icon: CreditCard, label: 'Payments' },
   { path: '/housekeeping', icon: Sparkles, label: 'Housekeeping' },
   { path: '/maintenance', icon: Wrench, label: 'Maintenance' },
   { path: '/reports', icon: BarChart3, label: 'Reports' },
+  { path: '/night-audit', icon: Moon, label: 'Night Audit' },
+  { path: '/staff', icon: Users, label: 'Staff' },
+  { path: '/wage-plans', icon: DollarSign, label: 'Wage Plans' },
+  { path: '/settings', icon: Settings, label: 'Settings' },
   { path: '/alerts', icon: AlertCircle, label: 'Alerts' },
 ];
 
-// Admin-only menu items
-const adminMenuItems = [
-  { path: '/tenants', icon: Building2, label: 'Tenants' },
-];
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
+  // Don't show tenant sidebar for IITECH admin
+  const isIITechAdmin = user?.role === 'iitech_admin';
+  const showTenantSidebar = !isIITechAdmin;
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f5f5f5' }}>
-      {/* Sidebar */}
+      {/* Sidebar - Only show for tenant users */}
+      {showTenantSidebar && (
       <aside
         style={{
           width: sidebarOpen ? '250px' : '0',
@@ -87,7 +94,7 @@ export default function Layout({ children }: LayoutProps) {
               <X size={20} />
             </button>
           </div>
-          {user && (
+          {user && !isIITechAdmin && user.tenant && (
             <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#94a3b8' }}>
               <div>{user.tenant.name}</div>
               <div style={{ marginTop: '0.25rem' }}>
@@ -127,40 +134,6 @@ export default function Layout({ children }: LayoutProps) {
               </Link>
             );
           })}
-          {user?.role === 'iitech_admin' && (
-            <>
-              <div style={{ padding: '0.5rem 1.5rem', marginTop: '0.5rem', borderTop: '1px solid #334155' }} />
-              {adminMenuItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path;
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setSidebarOpen(false)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '0.75rem 1.5rem',
-                      color: isActive ? '#fff' : '#cbd5e1',
-                      background: isActive ? '#334155' : 'transparent',
-                      textDecoration: 'none',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive) e.currentTarget.style.background = '#334155';
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive) e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Icon size={20} style={{ marginRight: '0.75rem' }} />
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </>
-          )}
         </nav>
 
         <div style={{ padding: '1.5rem', borderTop: '1px solid #334155', marginTop: 'auto' }}>
@@ -189,9 +162,10 @@ export default function Layout({ children }: LayoutProps) {
           </button>
         </div>
       </aside>
+      )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, marginLeft: sidebarOpen ? '250px' : '0', transition: 'margin-left 0.3s' }}>
+      <div style={{ flex: 1, marginLeft: showTenantSidebar && sidebarOpen ? '250px' : '0', transition: 'margin-left 0.3s', width: showTenantSidebar && sidebarOpen ? 'calc(100% - 250px)' : '100%' }}>
         {/* Top Bar */}
         <header
           style={{
@@ -203,6 +177,7 @@ export default function Layout({ children }: LayoutProps) {
             justifyContent: 'space-between',
           }}
         >
+          {showTenantSidebar && (
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             style={{
@@ -214,6 +189,8 @@ export default function Layout({ children }: LayoutProps) {
           >
             <Menu size={24} />
           </button>
+          )}
+          {!showTenantSidebar && <div />}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
               {user?.role.replace('_', ' ').toUpperCase()}

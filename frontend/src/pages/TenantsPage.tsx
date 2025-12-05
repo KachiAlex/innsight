@@ -30,6 +30,8 @@ export default function TenantsPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     slug: '',
@@ -40,6 +42,13 @@ export default function TenantsPage() {
     ownerPassword: '',
     ownerFirstName: '',
     ownerLastName: '',
+  });
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    slug: '',
+    email: '',
+    phone: '',
+    address: '',
   });
 
   useEffect(() => {
@@ -67,6 +76,10 @@ export default function TenantsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAuthenticated, navigate]);
+
+  useEffect(() => {
+    console.log('Edit modal state changed - showEditModal:', showEditModal, 'editingTenant:', editingTenant?.id);
+  }, [showEditModal, editingTenant]);
 
   const fetchTenants = async () => {
     try {
@@ -106,6 +119,37 @@ export default function TenantsPage() {
     } catch (error: any) {
       console.error('Failed to create tenant:', error);
       const errorMessage = error.response?.data?.error?.message || error.message || 'Failed to create tenant';
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleEditTenant = (tenant: Tenant) => {
+    console.log('handleEditTenant called with tenant:', tenant);
+    setEditingTenant(tenant);
+    setEditFormData({
+      name: tenant.name,
+      slug: tenant.slug,
+      email: tenant.email,
+      phone: tenant.phone || '',
+      address: tenant.address || '',
+    });
+    setShowEditModal(true);
+    console.log('Edit modal should be open now, showEditModal:', true);
+  };
+
+  const handleUpdateTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTenant) return;
+
+    try {
+      await api.patch(`/tenants/${editingTenant.id}`, editFormData);
+      toast.success('Tenant updated successfully');
+      setShowEditModal(false);
+      setEditingTenant(null);
+      fetchTenants();
+    } catch (error: any) {
+      console.error('Failed to update tenant:', error);
+      const errorMessage = error.response?.data?.error?.message || error.response?.data?.message || error.message || 'Failed to update tenant';
       toast.error(errorMessage);
     }
   };
@@ -330,14 +374,26 @@ export default function TenantsPage() {
                     <td style={{ padding: '1rem', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                         <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('Edit button clicked for tenant:', tenant.id);
+                            handleEditTenant(tenant);
+                          }}
                           style={{
                             padding: '0.5rem',
                             background: 'transparent',
                             border: 'none',
                             cursor: 'pointer',
                             color: '#64748b',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 10,
+                            position: 'relative',
                           }}
-                          title="Edit"
+                          title="Edit Tenant"
                           onMouseEnter={(e) => {
                             e.currentTarget.style.color = '#000';
                           }}
@@ -689,6 +745,224 @@ export default function TenantsPage() {
                     }}
                   >
                     Create Tenant
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Tenant Modal */}
+        {showEditModal && editingTenant && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1000,
+            }}
+            onClick={() => {
+              setShowEditModal(false);
+              setEditingTenant(null);
+            }}
+          >
+            <div
+              style={{
+                background: 'white',
+                borderRadius: '8px',
+                padding: '2rem',
+                width: '90%',
+                maxWidth: '600px',
+                maxHeight: '90vh',
+                overflow: 'auto',
+                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 style={{ marginTop: 0, marginBottom: '1.5rem', color: '#000', fontSize: '1.5rem', fontWeight: '700' }}>
+                Edit Tenant
+              </h2>
+              <form onSubmit={handleUpdateTenant}>
+                <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
+                      Tenant Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editFormData.name}
+                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        outline: 'none',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#000';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
+                      Slug *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editFormData.slug}
+                      onChange={(e) =>
+                        setEditFormData({ ...editFormData, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })
+                      }
+                      placeholder="e.g., grand-hotel"
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        fontFamily: 'monospace',
+                        fontSize: '0.875rem',
+                        outline: 'none',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#000';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
+                      Email *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={editFormData.email}
+                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        outline: 'none',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#000';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
+                      Phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={editFormData.phone}
+                      onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        outline: 'none',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#000';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
+                      Address
+                    </label>
+                    <textarea
+                      value={editFormData.address}
+                      onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        fontSize: '0.875rem',
+                        outline: 'none',
+                        resize: 'vertical',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#000';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                      }}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setEditingTenant(null);
+                    }}
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      background: '#f1f5f9',
+                      color: '#000',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: '500',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#e2e8f0';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#f1f5f9';
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      background: '#000',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: '600',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#333';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#000';
+                    }}
+                  >
+                    Update Tenant
                   </button>
                 </div>
               </form>

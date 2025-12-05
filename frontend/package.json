@@ -12,6 +12,8 @@
     "@hookform/resolvers": "^3.3.2",
     "axios": "^1.6.2",
     "date-fns": "^3.0.6",
+    "dompurify": "^3.3.0",
+    "html2canvas": "^1.4.1",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",
     "lucide-react": "^0.303.0",
@@ -26,6 +28,7 @@
     "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.53.3",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@typescript-eslint/eslint-plugin": "^6.15.0",

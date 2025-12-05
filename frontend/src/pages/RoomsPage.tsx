@@ -1,4 +1,4 @@
-import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -361,17 +361,6 @@ export default function RoomsPage() {
     'occupied',
     'out_of_order',
   ];
-
-  const statusLabels: Record<string, string> = {
-    dirty: 'Dirty',
-    maintenance: 'Maintenance',
-    inspected: 'Inspected',
-    clean: 'Clean',
-    available: 'Available',
-    reserved: 'Reserved',
-    occupied: 'Occupied',
-    out_of_order: 'Out of Order',
-  };
 
   const boardRoles = ['housekeeping', 'housekeeping_manager', 'maintenance', 'front_desk'];
   const canActOnBoard = boardRoles.includes(user?.role || '');
@@ -1787,7 +1776,7 @@ function CategoryManagementModal({
         await api.post(`/tenants/${user?.tenantId}/room-categories`, payload);
         toast.success('Category created successfully');
         // Clear form and refetch categories
-        setFormData({ name: '', description: '', totalRooms: '' });
+        setFormData({ name: '', description: '', totalRooms: '', color: '#8b5cf6' });
         setEditingCategory(null);
         onSuccess();
       }
@@ -2049,6 +2038,7 @@ function CategoryManagementModal({
                               name: category.name,
                               description: category.description || '',
                               totalRooms: category.totalRooms?.toString() || '',
+                              color: category.color || '#8b5cf6',
                             });
                           }}
                           style={{

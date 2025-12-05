@@ -15,6 +15,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      external: ['html2canvas', 'dompurify', 'canvg'],
       output: {
         manualChunks: {
           // Vendor chunks

@@ -67,6 +67,11 @@ const GuestsPage = () => {
   return <module.GuestsPage />;
 };
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
+const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
+const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));
+const StaffPage = lazy(() => import('./pages/StaffPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
 
 function App() {
   const PageLoader = () => (
@@ -114,6 +119,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <ReservationsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/group-bookings"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <GroupBookingsPage />
                   </Suspense>
                 </ProtectedRoute>
               }
@@ -248,6 +263,46 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <CalendarPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/night-audit"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <NightAuditPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/staff"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <StaffPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SettingsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/wage-plans"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <WagePlansPage />
                   </Suspense>
                 </ProtectedRoute>
               }

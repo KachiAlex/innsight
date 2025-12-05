@@ -25,6 +25,10 @@ import { ratePlanRouter } from './routes/ratePlans';
 import { guestRouter } from './routes/guests';
 import { calendarRouter } from './routes/calendar';
 import { roomCategoryRouter } from './routes/roomCategories';
+import { groupBookingRouter } from './routes/groupBookings';
+import { staffRouter } from './routes/staff';
+import { settingsRouter } from './routes/settings';
+import { wagePlanRouter } from './routes/wagePlans';
 
 dotenv.config();
 
@@ -75,6 +79,10 @@ app.use('/api/tenants/:tenantId/rate-plans', ratePlanRouter);
 app.use('/api/tenants/:tenantId/guests', guestRouter);
 app.use('/api/tenants/:tenantId/calendar', calendarRouter);
 app.use('/api/tenants/:tenantId/room-categories', roomCategoryRouter);
+app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter);
+app.use('/api/tenants/:tenantId/staff', staffRouter);
+app.use('/api/tenants/:tenantId/settings', settingsRouter);
+app.use('/api/tenants/:tenantId/wage-plans', wagePlanRouter);
 app.use('/api/iot', iotRouter);
 app.use('/api/tenants/:tenantId/iot', iotRouter);
 app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);

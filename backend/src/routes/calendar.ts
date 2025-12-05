@@ -54,6 +54,22 @@ calendarRouter.get(
         .where('tenantId', '==', tenantId)
         .get();
 
+      // Get all group bookings for context
+      const groupBookingsSnapshot = await db.collection('groupBookings')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const groupBookingsMap = new Map<string, any>();
+      groupBookingsSnapshot.docs.forEach(doc => {
+        const gbData = doc.data();
+        groupBookingsMap.set(doc.id, {
+          id: doc.id,
+          groupBookingNumber: gbData.groupBookingNumber || '',
+          groupName: gbData.groupName || null,
+          totalRooms: gbData.totalRooms || 0,
+        });
+      });
+
       // Filter reservations that overlap with the date range
       const overlappingReservations = reservationsSnapshot.docs
         .map(doc => {
@@ -66,6 +82,8 @@ calendarRouter.get(
           // Check if reservation overlaps with the date range
           // Reservation overlaps if: checkIn < end && checkOut > start
           if (checkIn < end && checkOut > start) {
+            const groupBooking = resData.groupBookingId ? groupBookingsMap.get(resData.groupBookingId) : null;
+            
             return {
               id: doc.id,
               ...resData,
@@ -75,6 +93,8 @@ calendarRouter.get(
               checkOutDate: checkOut,
               status: resData.status || 'confirmed',
               rate: Number(resData.rate || 0),
+              groupBookingId: resData.groupBookingId || null,
+              groupBooking: groupBooking || null,
             };
           }
           return null;

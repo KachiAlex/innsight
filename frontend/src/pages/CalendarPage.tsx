@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Filter, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { format, addDays, subDays, startOfDay, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 
 interface CalendarData {
   startDate: string;
@@ -28,6 +29,13 @@ interface CalendarData {
         checkOutDate: Date;
         status: string;
         rate: number;
+        groupBookingId?: string | null;
+        groupBooking?: {
+          id: string;
+          groupBookingNumber: string;
+          groupName?: string | null;
+          totalRooms: number;
+        } | null;
       } | null;
     }>;
   }>;
@@ -35,6 +43,7 @@ interface CalendarData {
 
 export default function CalendarPage() {
   const { user } = useAuthStore();
+  const navigate = useNavigate();
   const [calendarData, setCalendarData] = useState<CalendarData | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentStartDate, setCurrentStartDate] = useState(startOfDay(new Date()));
@@ -523,18 +532,45 @@ export default function CalendarPage() {
                       }}
                     >
                       {day.reservation && (
-                        <div
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            borderRadius: '4px',
-                            background: getStatusBorderColor(day.status),
-                            color: 'white',
-                            fontSize: '0.75rem',
-                            fontWeight: '500',
-                            marginBottom: '0.25rem',
-                          }}
-                        >
-                          {day.reservation.guestName}
+                        <div>
+                          <div
+                            style={{
+                              padding: '0.25rem 0.5rem',
+                              borderRadius: '4px',
+                              background: day.reservation.groupBookingId ? '#8b5cf6' : getStatusBorderColor(day.status),
+                              color: 'white',
+                              fontSize: '0.75rem',
+                              fontWeight: '500',
+                              marginBottom: '0.25rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                            }}
+                          >
+                            {day.reservation.groupBookingId && (
+                              <Users size={12} style={{ flexShrink: 0 }} />
+                            )}
+                            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {day.reservation.guestName}
+                            </span>
+                          </div>
+                          {day.reservation.groupBooking && (
+                            <div
+                              style={{
+                                fontSize: '0.625rem',
+                                color: '#6b21a8',
+                                fontWeight: '500',
+                                marginTop: '0.125rem',
+                                padding: '0.125rem 0.375rem',
+                                background: '#f3e8ff',
+                                borderRadius: '3px',
+                                display: 'inline-block',
+                              }}
+                              title={`Group: ${day.reservation.groupBooking.groupName || day.reservation.groupBooking.groupBookingNumber} (${day.reservation.groupBooking.totalRooms} rooms)`}
+                            >
+                              Group ({day.reservation.groupBooking.totalRooms})
+                            </div>
+                          )}
                         </div>
                       )}
                       {day.status === 'check_in' && (
@@ -585,6 +621,12 @@ export default function CalendarPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <div style={{ width: '20px', height: '20px', background: '#fee2e2', borderRadius: '4px' }} />
             <span style={{ fontSize: '0.875rem', color: '#64748b' }}>Blocked</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div style={{ width: '20px', height: '20px', background: '#8b5cf6', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Users size={12} color="white" />
+            </div>
+            <span style={{ fontSize: '0.875rem', color: '#64748b' }}>Group Booking</span>
           </div>
         </div>
 
@@ -648,22 +690,64 @@ export default function CalendarPage() {
                     {selectedReservation.status.replace('_', ' ').toUpperCase()}
                   </span>
                 </div>
+                {selectedReservation.groupBooking && (
+                  <div
+                    style={{
+                      padding: '0.75rem',
+                      background: '#f3e8ff',
+                      borderRadius: '6px',
+                      border: '1px solid #c084fc',
+                    }}
+                  >
+                    <div style={{ fontSize: '0.875rem', color: '#6b21a8', marginBottom: '0.5rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Users size={16} />
+                      Group Booking
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#7c3aed', marginBottom: '0.25rem' }}>
+                      {selectedReservation.groupBooking.groupName || selectedReservation.groupBooking.groupBookingNumber}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#a855f7' }}>
+                      {selectedReservation.groupBooking.totalRooms} room{selectedReservation.groupBooking.totalRooms !== 1 ? 's' : ''} in this group
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedReservation(null);
+                        navigate(`/group-bookings?highlight=${selectedReservation.groupBooking.id}`);
+                      }}
+                      style={{
+                        marginTop: '0.75rem',
+                        padding: '0.5rem 1rem',
+                        border: '1px solid #c084fc',
+                        borderRadius: '4px',
+                        background: 'white',
+                        color: '#7c3aed',
+                        cursor: 'pointer',
+                        fontSize: '0.875rem',
+                        fontWeight: '500',
+                        width: '100%',
+                      }}
+                    >
+                      View Group Booking
+                    </button>
+                  </div>
+                )}
               </div>
-              <button
-                onClick={() => setSelectedReservation(null)}
-                style={{
-                  marginTop: '1.5rem',
-                  padding: '0.75rem 1.5rem',
-                  border: 'none',
-                  borderRadius: '6px',
-                  background: '#3b82f6',
-                  color: 'white',
-                  cursor: 'pointer',
-                  width: '100%',
-                }}
-              >
-                Close
-              </button>
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+                <button
+                  onClick={() => setSelectedReservation(null)}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem 1.5rem',
+                    border: 'none',
+                    borderRadius: '6px',
+                    background: '#3b82f6',
+                    color: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         )}

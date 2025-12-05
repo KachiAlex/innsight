@@ -7,6 +7,14 @@ import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
+import { 
+  sendEmail, 
+  generateReservationConfirmationEmail, 
+  generateCheckInReminderEmail,
+  generateCheckOutThankYouEmail,
+  getTenantEmailSettings,
+  type ReservationEmailData,
+} from '../utils/email';
 import { v4 as uuidv4 } from 'uuid';
 import admin from 'firebase-admin';
 import type { firestore } from 'firebase-admin';
@@ -475,6 +483,45 @@ reservationRouter.post(
         },
       });
 
+      // Send confirmation email asynchronously (don't block response)
+      if (data.guestEmail) {
+        (async () => {
+          try {
+            const tenantSettings = await getTenantEmailSettings(tenantId);
+            if (tenantSettings) {
+              const roomData = roomDoc.data();
+              const emailData: ReservationEmailData = {
+                reservationNumber,
+                guestName: data.guestName,
+                guestEmail: data.guestEmail!,
+                checkInDate: checkIn,
+                checkOutDate: checkOut,
+                roomNumber: roomData?.roomNumber || 'N/A',
+                roomType: roomData?.roomType || undefined,
+                rate: data.rate,
+                adults: data.adults,
+                children: data.children,
+                specialRequests: data.specialRequests || undefined,
+                propertyName: tenantSettings.propertyName,
+                propertyAddress: tenantSettings.propertyAddress || undefined,
+                propertyPhone: tenantSettings.propertyPhone || undefined,
+                propertyEmail: tenantSettings.propertyEmail || undefined,
+              };
+
+              const emailHtml = generateReservationConfirmationEmail(emailData);
+              await sendEmail({
+                to: data.guestEmail!,
+                subject: `Reservation Confirmation - ${reservationNumber}`,
+                html: emailHtml,
+              });
+            }
+          } catch (emailError) {
+            console.error('Failed to send reservation confirmation email:', emailError);
+            // Don't throw - email failure shouldn't fail the reservation creation
+          }
+        })();
+      }
+
       res.status(201).json({
         success: true,
         data: reservation,
@@ -835,6 +882,45 @@ reservationRouter.post(
         },
       });
 
+      // Send check-in confirmation email asynchronously
+      if (reservationData.guestEmail) {
+        (async () => {
+          try {
+            const tenantSettings = await getTenantEmailSettings(tenantId);
+            if (tenantSettings) {
+              const roomData = roomDoc.data();
+              const emailData: ReservationEmailData = {
+                reservationNumber: reservationData.reservationNumber || reservationId,
+                guestName: reservationData.guestName || 'Guest',
+                guestEmail: reservationData.guestEmail,
+                checkInDate: toDate(reservationData.checkInDate)!,
+                checkOutDate: toDate(reservationData.checkOutDate)!,
+                roomNumber: roomData?.roomNumber || 'N/A',
+                roomType: roomData?.roomType || undefined,
+                rate: Number(reservationData.rate || 0),
+                adults: Number(reservationData.adults || 1),
+                children: Number(reservationData.children || 0),
+                specialRequests: reservationData.specialRequests || undefined,
+                propertyName: tenantSettings.propertyName,
+                propertyAddress: tenantSettings.propertyAddress || undefined,
+                propertyPhone: tenantSettings.propertyPhone || undefined,
+                propertyEmail: tenantSettings.propertyEmail || undefined,
+              };
+
+              const emailHtml = generateCheckInReminderEmail(emailData);
+              await sendEmail({
+                to: reservationData.guestEmail,
+                subject: `Welcome to ${tenantSettings.propertyName}!`,
+                html: emailHtml,
+              });
+            }
+          } catch (emailError) {
+            console.error('Failed to send check-in confirmation email:', emailError);
+            // Don't throw - email failure shouldn't fail the check-in
+          }
+        })();
+      }
+
       res.json({
         success: true,
         data: updated,
@@ -967,6 +1053,47 @@ reservationRouter.post(
           name: getUserDisplayName(req.user),
         },
       });
+
+      // Send checkout thank you email asynchronously
+      if (reservationData.guestEmail) {
+        (async () => {
+          try {
+            const tenantSettings = await getTenantEmailSettings(tenantId);
+            if (tenantSettings) {
+              const roomData = roomDoc.data();
+              const folioData = !foliosSnapshot.empty ? foliosSnapshot.docs[0].data() : null;
+              const emailData: ReservationEmailData & { totalCharges?: number } = {
+                reservationNumber: reservationData.reservationNumber || reservationId,
+                guestName: reservationData.guestName || 'Guest',
+                guestEmail: reservationData.guestEmail,
+                checkInDate: toDate(reservationData.checkInDate)!,
+                checkOutDate: toDate(reservationData.checkOutDate)!,
+                roomNumber: roomData?.roomNumber || 'N/A',
+                roomType: roomData?.roomType || undefined,
+                rate: Number(reservationData.rate || 0),
+                adults: Number(reservationData.adults || 1),
+                children: Number(reservationData.children || 0),
+                specialRequests: reservationData.specialRequests || undefined,
+                propertyName: tenantSettings.propertyName,
+                propertyAddress: tenantSettings.propertyAddress || undefined,
+                propertyPhone: tenantSettings.propertyPhone || undefined,
+                propertyEmail: tenantSettings.propertyEmail || undefined,
+                totalCharges: folioData ? Number(folioData.totalCharges || 0) : undefined,
+              };
+
+              const emailHtml = generateCheckOutThankYouEmail(emailData);
+              await sendEmail({
+                to: reservationData.guestEmail,
+                subject: `Thank you for staying at ${tenantSettings.propertyName}!`,
+                html: emailHtml,
+              });
+            }
+          } catch (emailError) {
+            console.error('Failed to send checkout thank you email:', emailError);
+            // Don't throw - email failure shouldn't fail the checkout
+          }
+        })();
+      }
 
       res.json({
         success: true,

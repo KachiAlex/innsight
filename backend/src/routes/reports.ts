@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
-import { startOfDay, endOfDay, startOfMonth, endOfMonth } from 'date-fns';
+import { authenticate, requireTenantAccess, AuthRequest, requireRole } from '../middleware/auth';
+import { startOfDay, endOfDay, startOfMonth, endOfMonth, format, subDays } from 'date-fns';
 import { AppError } from '../middleware/errorHandler';
-import { db, toDate, toTimestamp } from '../utils/firestore';
+import { db, toDate, toTimestamp, now } from '../utils/firestore';
+import { createAuditLog } from '../utils/audit';
+import { createAlert } from '../utils/alerts';
 
 export const reportRouter = Router({ mergeParams: true });
 
@@ -363,6 +365,426 @@ reportRouter.get(
       console.error('Error fetching shift report:', error);
       throw new AppError(
         `Failed to fetch shift report: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/reports/night-audit - Run night audit for a specific date
+reportRouter.post(
+  '/night-audit',
+  authenticate,
+  requireTenantAccess,
+  requireRole('owner', 'general_manager', 'accountant', 'iitech_admin'),
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { auditDate } = req.body;
+
+      // Use provided date or yesterday (typical night audit runs for previous day)
+      const targetDate = auditDate ? new Date(auditDate) : subDays(new Date(), 1);
+      const auditDayStart = startOfDay(targetDate);
+      const auditDayEnd = endOfDay(targetDate);
+      const auditDateStr = format(auditDayStart, 'yyyy-MM-dd');
+
+      // Check if night audit already exists for this date
+      const existingAuditSnapshot = await db.collection('nightAudits')
+        .where('tenantId', '==', tenantId)
+        .where('auditDate', '==', auditDateStr)
+        .limit(1)
+        .get();
+
+      if (!existingAuditSnapshot.empty) {
+        throw new AppError(`Night audit already completed for ${auditDateStr}`, 400);
+      }
+
+      // Get all rooms
+      const roomsSnapshot = await db.collection('rooms')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const totalRooms = roomsSnapshot.size;
+
+      // Get reservations for the audit day
+      const reservationsSnapshot = await db.collection('reservations')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const reservations = reservationsSnapshot.docs
+        .map(doc => {
+          const resData = doc.data();
+          return {
+            id: doc.id,
+            roomId: resData.roomId,
+            ...resData,
+            checkInDate: toDate(resData.checkInDate),
+            checkOutDate: toDate(resData.checkOutDate),
+            checkedInAt: toDate(resData.checkedInAt),
+            checkedOutAt: toDate(resData.checkedOutAt),
+            rate: Number(resData.rate || 0),
+            status: resData.status,
+          };
+        })
+        .filter(r => {
+          if (!r.checkInDate || !r.checkOutDate) return false;
+          // Include reservations that were active during the audit day
+          return r.checkInDate <= auditDayEnd && r.checkOutDate >= auditDayStart;
+        });
+
+      // Calculate metrics
+      const checkedIn = reservations.filter(r => {
+        if (!r.checkInDate || !r.checkedInAt) return false;
+        return r.status === 'checked_in' && 
+               r.checkInDate <= auditDayEnd && 
+               (r.checkOutDate === null || r.checkOutDate > auditDayStart);
+      }).length;
+
+      const checkedOut = reservations.filter(r => {
+        if (!r.checkedOutAt) return false;
+        return r.checkedOutAt >= auditDayStart && r.checkedOutAt <= auditDayEnd;
+      }).length;
+
+      const noShows = reservations.filter(r => 
+        r.status === 'no_show' && 
+        r.checkInDate && 
+        r.checkInDate >= auditDayStart && 
+        r.checkInDate <= auditDayEnd
+      ).length;
+
+      const cancellations = reservations.filter(r => 
+        r.status === 'cancelled' && 
+        r.checkInDate && 
+        r.checkInDate >= auditDayStart && 
+        r.checkInDate <= auditDayEnd
+      ).length;
+
+      // Calculate room nights
+      const roomNights = reservations.reduce((sum, r) => {
+        if (!r.checkInDate || !r.checkOutDate) return sum;
+        if (r.status === 'checked_in' || r.status === 'checked_out') {
+          // Count nights for this specific day
+          const checkIn = r.checkInDate <= auditDayStart ? auditDayStart : r.checkInDate;
+          const checkOut = r.checkOutDate > auditDayEnd ? auditDayEnd : r.checkOutDate;
+          if (checkIn <= auditDayEnd && checkOut >= auditDayStart) {
+            return sum + 1;
+          }
+        }
+        return sum;
+      }, 0);
+
+      const occupancyRate = totalRooms > 0 ? (roomNights / totalRooms) * 100 : 0;
+
+      // Get payments for the audit day
+      const paymentsSnapshot = await db.collection('payments')
+        .where('tenantId', '==', tenantId)
+        .where('status', '==', 'completed')
+        .get();
+
+      const dayPayments = paymentsSnapshot.docs
+        .map(doc => {
+          const paymentData = doc.data();
+          const createdAt = toDate(paymentData.createdAt);
+          return {
+            id: doc.id,
+            ...paymentData,
+            amount: Number(paymentData.amount || 0),
+            method: paymentData.method || 'unknown',
+            createdAt,
+          };
+        })
+        .filter(p => {
+          if (!p.createdAt) return false;
+          return p.createdAt >= auditDayStart && p.createdAt <= auditDayEnd;
+        });
+
+      const totalRevenue = dayPayments.reduce((sum, p) => sum + p.amount, 0);
+      const revenueByMethod = dayPayments.reduce((acc, p) => {
+        const method = p.method || 'unknown';
+        acc[method] = (acc[method] || 0) + p.amount;
+        return acc;
+      }, {} as Record<string, number>);
+
+      // Calculate ADR and RevPAR
+      const adr = roomNights > 0 ? totalRevenue / roomNights : 0;
+      const revpar = adr * (occupancyRate / 100);
+
+      // Get folios for the day
+      const foliosSnapshot = await db.collection('folios')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const dayFolios = foliosSnapshot.docs
+        .map(doc => {
+          const folioData = doc.data();
+          const createdAt = toDate(folioData.createdAt);
+          return {
+            id: doc.id,
+            ...folioData,
+            totalCharges: Number(folioData.totalCharges || 0),
+            totalPayments: Number(folioData.totalPayments || 0),
+            balance: Number(folioData.balance || 0),
+            createdAt,
+          };
+        })
+        .filter(f => {
+          if (!f.createdAt) return false;
+          return f.createdAt >= auditDayStart && f.createdAt <= auditDayEnd;
+        });
+
+      const totalCharges = dayFolios.reduce((sum, f) => sum + f.totalCharges, 0);
+      const totalPayments = dayFolios.reduce((sum, f) => sum + f.totalPayments, 0);
+      const outstandingBalance = dayFolios.reduce((sum, f) => sum + f.balance, 0);
+
+      // Get open shifts
+      const shiftsSnapshot = await db.collection('shifts')
+        .where('tenantId', '==', tenantId)
+        .where('status', '==', 'open')
+        .get();
+
+      const openShifts = shiftsSnapshot.size;
+
+      // Update room statuses: checked-out rooms should become dirty
+      const roomsToUpdate: string[] = [];
+      for (const reservation of reservations) {
+        if (reservation.status === 'checked_out' && 
+            reservation.checkedOutAt && 
+            reservation.checkedOutAt >= auditDayStart && 
+            reservation.checkedOutAt <= auditDayEnd) {
+          // Find the room and mark it as dirty
+          const roomDoc = await db.collection('rooms').doc(reservation.roomId).get();
+          if (roomDoc.exists) {
+            const roomData = roomDoc.data();
+            if (roomData?.status !== 'dirty' && roomData?.status !== 'out_of_order') {
+              roomsToUpdate.push(roomDoc.id);
+            }
+          }
+        }
+      }
+
+      // Update room statuses in batch
+      const batch = db.batch();
+      for (const roomId of roomsToUpdate) {
+        const roomRef = db.collection('rooms').doc(roomId);
+        batch.update(roomRef, {
+          status: 'dirty',
+          updatedAt: now(),
+        });
+      }
+      await batch.commit();
+
+      // Check for discrepancies
+      const discrepancies: string[] = [];
+      if (openShifts > 0) {
+        discrepancies.push(`${openShifts} open shift(s) found`);
+      }
+      if (outstandingBalance > 0) {
+        discrepancies.push(`Outstanding balance: ${outstandingBalance}`);
+      }
+      const revenueVariance = totalCharges - totalPayments;
+      if (Math.abs(revenueVariance) > 0.01) {
+        discrepancies.push(`Revenue variance: ${revenueVariance}`);
+      }
+
+      // Create night audit record
+      const auditData = {
+        tenantId,
+        auditDate: auditDateStr,
+        auditDateTime: now(),
+        performedBy: req.user!.id,
+        summary: {
+          totalRooms,
+          checkedIn,
+          checkedOut,
+          noShows,
+          cancellations,
+          roomNights,
+          occupancyRate: Number(occupancyRate.toFixed(2)),
+          totalRevenue,
+          revenueByMethod,
+          totalCharges,
+          totalPayments,
+          outstandingBalance,
+          adr: Number(adr.toFixed(2)),
+          revpar: Number(revpar.toFixed(2)),
+          openShifts,
+          roomsUpdated: roomsToUpdate.length,
+        },
+        discrepancies: discrepancies.length > 0 ? discrepancies : null,
+        status: discrepancies.length > 0 ? 'completed_with_warnings' : 'completed',
+        createdAt: now(),
+        updatedAt: now(),
+      };
+
+      const auditRef = db.collection('nightAudits').doc();
+      await auditRef.set(auditData);
+
+      // Create alerts for discrepancies
+      if (discrepancies.length > 0) {
+        for (const discrepancy of discrepancies) {
+          try {
+            await createAlert({
+              tenantId,
+              alertType: 'night_audit_discrepancy',
+              severity: 'medium',
+              title: 'Night Audit Discrepancy',
+              message: discrepancy,
+              metadata: {
+                auditId: auditRef.id,
+                auditDate: auditDateStr,
+              },
+            });
+          } catch (alertError) {
+            console.error('Failed to create alert:', alertError);
+          }
+        }
+      }
+
+      // Create audit log
+      try {
+        await createAuditLog({
+          tenantId,
+          userId: req.user!.id,
+          action: 'run_night_audit',
+          entityType: 'night_audit',
+          entityId: auditRef.id,
+          afterState: auditData,
+        });
+      } catch (auditError) {
+        console.error('Failed to create audit log:', auditError);
+      }
+
+      res.status(201).json({
+        success: true,
+        message: `Night audit completed for ${auditDateStr}`,
+        data: {
+          id: auditRef.id,
+          ...auditData,
+          auditDateTime: toDate(auditData.auditDateTime),
+          createdAt: toDate(auditData.createdAt),
+          updatedAt: toDate(auditData.updatedAt),
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error running night audit:', error);
+      throw new AppError(
+        `Failed to run night audit: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/reports/night-audit/:date - Get night audit report for a specific date
+reportRouter.get(
+  '/night-audit/:date',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const auditDate = req.params.date;
+
+      const auditSnapshot = await db.collection('nightAudits')
+        .where('tenantId', '==', tenantId)
+        .where('auditDate', '==', auditDate)
+        .limit(1)
+        .get();
+
+      if (auditSnapshot.empty) {
+        throw new AppError(`Night audit not found for date ${auditDate}`, 404);
+      }
+
+      const auditDoc = auditSnapshot.docs[0];
+      const auditData = auditDoc.data();
+
+      // Get user who performed the audit
+      let performedByUser: {
+        id: string;
+        firstName: string | null;
+        lastName: string | null;
+        email: string | null;
+      } | null = null;
+      if (auditData.performedBy) {
+        const userDoc = await db.collection('users').doc(auditData.performedBy).get();
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+          performedByUser = {
+            id: userDoc.id,
+            firstName: userData?.firstName || null,
+            lastName: userData?.lastName || null,
+            email: userData?.email || null,
+          };
+        }
+      }
+
+      const audit = {
+        id: auditDoc.id,
+        ...auditData,
+        performedByUser,
+        auditDateTime: toDate(auditData.auditDateTime),
+        createdAt: toDate(auditData.createdAt),
+        updatedAt: toDate(auditData.updatedAt),
+      };
+
+      res.json({
+        success: true,
+        data: audit,
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error fetching night audit:', error);
+      throw new AppError(
+        `Failed to fetch night audit: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/reports/night-audit - List night audit history
+reportRouter.get(
+  '/night-audit',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { limit = 30 } = req.query;
+
+      const auditsSnapshot = await db.collection('nightAudits')
+        .where('tenantId', '==', tenantId)
+        .orderBy('auditDate', 'desc')
+        .limit(Number(limit))
+        .get();
+
+      const audits = auditsSnapshot.docs.map(doc => {
+        const auditData = doc.data();
+        return {
+          id: doc.id,
+          auditDate: auditData.auditDate,
+          status: auditData.status,
+          summary: auditData.summary,
+          discrepancies: auditData.discrepancies,
+          auditDateTime: toDate(auditData.auditDateTime),
+          createdAt: toDate(auditData.createdAt),
+        };
+      });
+
+      res.json({
+        success: true,
+        data: audits,
+        total: audits.length,
+      });
+    } catch (error: any) {
+      console.error('Error fetching night audit history:', error);
+      throw new AppError(
+        `Failed to fetch night audit history: ${error.message || 'Database connection error'}`,
         500
       );
     }

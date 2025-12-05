@@ -15,32 +15,57 @@ interface RatePlan {
   currency: string;
   seasonalRules?: any;
   isActive: boolean;
+  categoryId?: string | null;
+  category?: {
+    id: string;
+    name: string;
+    color?: string;
+  } | null;
   roomCount?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
+interface RoomCategory {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 export default function RatePlansPage() {
   const { user } = useAuthStore();
   const [ratePlans, setRatePlans] = useState<RatePlan[]>([]);
+  const [categories, setCategories] = useState<RoomCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedRatePlan, setSelectedRatePlan] = useState<RatePlan | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterActive, setFilterActive] = useState<boolean | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     baseRate: '',
     currency: 'NGN',
     isActive: true,
+    categoryId: '',
   });
 
   useEffect(() => {
     if (!user?.tenantId) return;
     fetchRatePlans();
-  }, [user, filterActive]);
+    fetchCategories();
+  }, [user, filterActive, filterCategory]);
+
+  const fetchCategories = async () => {
+    try {
+      const response = await api.get(`/tenants/${user?.tenantId}/room-categories`);
+      setCategories(response.data.data || []);
+    } catch (error: any) {
+      console.error('Failed to fetch categories:', error);
+    }
+  };
 
   const fetchRatePlans = async () => {
     try {
@@ -48,6 +73,9 @@ export default function RatePlansPage() {
       const params: any = {};
       if (filterActive !== null) {
         params.isActive = filterActive.toString();
+      }
+      if (filterCategory !== null) {
+        params.categoryId = filterCategory;
       }
       const response = await api.get(`/tenants/${user?.tenantId}/rate-plans`, { params });
       setRatePlans(response.data.data || []);
@@ -72,6 +100,7 @@ export default function RatePlansPage() {
         baseRate: parseFloat(formData.baseRate),
         currency: formData.currency,
         isActive: formData.isActive,
+        categoryId: formData.categoryId || undefined,
       });
 
       toast.success('Rate plan created successfully');
@@ -99,6 +128,7 @@ export default function RatePlansPage() {
         baseRate: parseFloat(formData.baseRate),
         currency: formData.currency,
         isActive: formData.isActive,
+        categoryId: formData.categoryId || undefined,
       });
 
       toast.success('Rate plan updated successfully');
@@ -133,6 +163,7 @@ export default function RatePlansPage() {
       baseRate: ratePlan.baseRate.toString(),
       currency: ratePlan.currency,
       isActive: ratePlan.isActive,
+      categoryId: ratePlan.categoryId || '',
     });
     setShowEditModal(true);
   };
@@ -144,6 +175,7 @@ export default function RatePlansPage() {
       baseRate: '',
       currency: 'NGN',
       isActive: true,
+      categoryId: '',
     });
   };
 
@@ -153,8 +185,28 @@ export default function RatePlansPage() {
     return (
       plan.name.toLowerCase().includes(searchLower) ||
       plan.description?.toLowerCase().includes(searchLower) ||
-      plan.currency.toLowerCase().includes(searchLower)
+      plan.currency.toLowerCase().includes(searchLower) ||
+      plan.category?.name.toLowerCase().includes(searchLower)
     );
+  });
+
+  // Group rate plans by category
+  const groupedRatePlans = filteredRatePlans.reduce((acc, plan) => {
+    const categoryKey = plan.categoryId || 'none';
+    if (!acc[categoryKey]) {
+      acc[categoryKey] = {
+        category: plan.category || null,
+        plans: [],
+      };
+    }
+    acc[categoryKey].plans.push(plan);
+    return acc;
+  }, {} as Record<string, { category: { id: string; name: string; color?: string } | null; plans: RatePlan[] }>);
+
+  const categoryGroups = Object.entries(groupedRatePlans).sort((a, b) => {
+    if (a[0] === 'none') return 1;
+    if (b[0] === 'none') return -1;
+    return (a[1].category?.name || '').localeCompare(b[1].category?.name || '');
   });
 
   if (loading) {
@@ -204,7 +256,27 @@ export default function RatePlansPage() {
               onChange={(value) => setSearchTerm(value)}
             />
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <select
+              value={filterCategory || ''}
+              onChange={(e) => setFilterCategory(e.target.value || null)}
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #e2e8f0',
+                borderRadius: '6px',
+                background: 'white',
+                color: '#64748b',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="">All Categories</option>
+              <option value="none">No Category</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
             <button
               onClick={() => setFilterActive(null)}
               style={{
@@ -253,8 +325,36 @@ export default function RatePlansPage() {
             <p>No rate plans found</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
-            {filteredRatePlans.map((plan) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            {categoryGroups.map(([categoryKey, group]) => (
+              <div key={categoryKey}>
+                <div style={{ marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '2px solid #e2e8f0' }}>
+                  <h2 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {group.category ? (
+                      <>
+                        {group.category.color && (
+                          <span
+                            style={{
+                              width: '12px',
+                              height: '12px',
+                              borderRadius: '50%',
+                              background: group.category.color,
+                              display: 'inline-block',
+                            }}
+                          />
+                        )}
+                        {group.category.name}
+                      </>
+                    ) : (
+                      'No Category'
+                    )}
+                    <span style={{ fontSize: '0.875rem', fontWeight: '400', color: '#64748b' }}>
+                      ({group.plans.length})
+                    </span>
+                  </h2>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+                  {group.plans.map((plan) => (
               <div
                 key={plan.id}
                 style={{
@@ -266,7 +366,7 @@ export default function RatePlansPage() {
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <h3 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', fontWeight: '600' }}>
                       {plan.name}
                     </h3>
@@ -274,6 +374,22 @@ export default function RatePlansPage() {
                       <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.875rem' }}>
                         {plan.description}
                       </p>
+                    )}
+                    {plan.category && (
+                      <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {plan.category.color && (
+                          <span
+                            style={{
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              background: plan.category.color,
+                              display: 'inline-block',
+                            }}
+                          />
+                        )}
+                        <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{plan.category.name}</span>
+                      </div>
                     )}
                   </div>
                   <span
@@ -343,6 +459,9 @@ export default function RatePlansPage() {
                     <Trash2 size={16} />
                     Delete
                   </button>
+                </div>
+              </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -658,6 +777,30 @@ export default function RatePlansPage() {
                       <option value="GBP">GBP</option>
                     </select>
                   </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
+                    Category
+                  </label>
+                  <select
+                    value={formData.categoryId}
+                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      fontSize: '1rem',
+                    }}
+                  >
+                    <option value="">No Category</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>

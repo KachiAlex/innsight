@@ -6,6 +6,17 @@ import { createAuditLog } from '../utils/audit';
 import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, toTimestamp } from '../utils/firestore';
+import { 
+  sendEmail, 
+  generatePaymentReceiptEmail, 
+  getTenantEmailSettings,
+  type PaymentReceiptData,
+} from '../utils/email';
+import { 
+  paymentGatewayService, 
+  type PaymentGateway,
+  type InitializePaymentParams,
+} from '../utils/paymentGateway';
 import { v4 as uuidv4 } from 'uuid';
 import admin from 'firebase-admin';
 export const paymentRouter = Router({ mergeParams: true });
@@ -18,6 +29,17 @@ const createPaymentSchema = z.object({
   paymentGateway: z.enum(['paystack', 'flutterwave', 'stripe', 'manual']).optional(),
   gatewayTransactionId: z.string().optional(),
   notes: z.string().optional(),
+});
+
+const initializePaymentSchema = z.object({
+  folioId: z.string().uuid(),
+  gateway: z.enum(['paystack', 'flutterwave']),
+  callbackUrl: z.string().url().optional(),
+});
+
+const verifyPaymentSchema = z.object({
+  reference: z.string().min(1),
+  gateway: z.enum(['paystack', 'flutterwave']),
 });
 
 // GET /api/tenants/:tenantId/payments
@@ -222,6 +244,48 @@ paymentRouter.post(
         },
       });
 
+      // Send payment receipt email asynchronously
+      (async () => {
+        try {
+          const tenantSettings = await getTenantEmailSettings(tenantId);
+          if (tenantSettings && folioData.guestName && folioData.guestEmail) {
+            // Get reservation if exists
+            let reservationNumber: string | undefined;
+            if (folioData.reservationId) {
+              const reservationDoc = await db.collection('reservations').doc(folioData.reservationId).get();
+              if (reservationDoc.exists) {
+                reservationNumber = reservationDoc.data()?.reservationNumber;
+              }
+            }
+
+            const receiptData: PaymentReceiptData = {
+              guestName: folioData.guestName,
+              guestEmail: folioData.guestEmail,
+              reservationNumber,
+              paymentAmount: data.amount,
+              paymentMethod: data.method,
+              paymentDate: toDate(paymentDoc.data()?.createdAt)!,
+              transactionId: paymentReference,
+              propertyName: tenantSettings.propertyName,
+              propertyAddress: tenantSettings.propertyAddress || undefined,
+              propertyPhone: tenantSettings.propertyPhone || undefined,
+              propertyEmail: tenantSettings.propertyEmail || undefined,
+              description: data.notes || undefined,
+            };
+
+            const emailHtml = generatePaymentReceiptEmail(receiptData);
+            await sendEmail({
+              to: folioData.guestEmail,
+              subject: `Payment Receipt - ${paymentReference}`,
+              html: emailHtml,
+            });
+          }
+        } catch (emailError) {
+          console.error('Failed to send payment receipt email:', emailError);
+          // Don't throw - email failure shouldn't fail the payment
+        }
+      })();
+
       res.status(201).json({
         success: true,
         data: payment,
@@ -395,6 +459,465 @@ paymentRouter.post(
       console.error('Error reconciling payment:', error);
       throw new AppError(
         `Failed to reconcile payment: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/payments/initialize
+paymentRouter.post(
+  '/initialize',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const data = initializePaymentSchema.parse(req.body);
+
+      // Get folio
+      const folioDoc = await db.collection('folios').doc(data.folioId).get();
+      if (!folioDoc.exists) {
+        throw new AppError('Folio not found', 404);
+      }
+
+      const folioData = folioDoc.data();
+      if (folioData?.tenantId !== tenantId) {
+        throw new AppError('Folio not found', 404);
+      }
+
+      if (folioData.status !== 'open') {
+        throw new AppError('Cannot initialize payment for closed or voided folio', 400);
+      }
+
+      // Check if gateway is configured
+      if (!paymentGatewayService.isGatewayConfigured(data.gateway)) {
+        throw new AppError(`${data.gateway} is not configured. Please set the required environment variables.`, 400);
+      }
+
+      // Calculate amount to pay (balance or specified amount)
+      const balance = Number(folioData.balance || 0);
+      if (balance <= 0) {
+        throw new AppError('Folio has no outstanding balance', 400);
+      }
+
+      // Get guest email from reservation or folio
+      let guestEmail = folioData.guestEmail;
+      let guestName = folioData.guestName;
+      let guestPhone = folioData.guestPhone;
+
+      if (!guestEmail && folioData.reservationId) {
+        const reservationDoc = await db.collection('reservations').doc(folioData.reservationId).get();
+        if (reservationDoc.exists) {
+          const resData = reservationDoc.data();
+          guestEmail = resData?.guestEmail || guestEmail;
+          guestName = resData?.guestName || guestName;
+          guestPhone = resData?.guestPhone || guestPhone;
+        }
+      }
+
+      if (!guestEmail) {
+        throw new AppError('Guest email is required for gateway payment', 400);
+      }
+
+      // Initialize payment with gateway
+      const amountInKobo = Math.round(balance * 100); // Convert to smallest currency unit (kobo for NGN)
+
+      const initParams: InitializePaymentParams = {
+        gateway: data.gateway,
+        amount: amountInKobo,
+        email: guestEmail,
+        metadata: {
+          tenantId,
+          folioId: data.folioId,
+          reservationId: folioData.reservationId || null,
+          guestName: guestName || null,
+        },
+        callbackUrl: data.callbackUrl,
+        currency: 'NGN',
+        customerName: guestName || undefined,
+        customerPhone: guestPhone || undefined,
+      };
+
+      const paymentInit = await paymentGatewayService.initializePayment(initParams);
+
+      // Store pending payment record
+      const pendingPaymentRef = db.collection('payments').doc();
+      await pendingPaymentRef.set({
+        tenantId,
+        folioId: data.folioId,
+        amount: balance,
+        method: 'card',
+        reference: paymentInit.reference,
+        paymentGateway: data.gateway,
+        gatewayTransactionId: paymentInit.accessCode,
+        status: 'pending',
+        processedBy: req.user!.id,
+        reconciled: false,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'initialize_gateway_payment',
+        entityType: 'payment',
+        entityId: pendingPaymentRef.id,
+        afterState: {
+          reference: paymentInit.reference,
+          gateway: data.gateway,
+          amount: balance,
+        },
+        metadata: {
+          folioId: data.folioId,
+          authorizationUrl: paymentInit.authorizationUrl,
+        },
+      });
+
+      res.json({
+        success: true,
+        data: {
+          authorizationUrl: paymentInit.authorizationUrl,
+          reference: paymentInit.reference,
+          gateway: paymentInit.gateway,
+          amount: balance,
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (error instanceof z.ZodError) {
+        const message = error.errors?.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ') || 'Invalid payment initialization data';
+        throw new AppError(message, 400);
+      }
+      console.error('Error initializing payment:', error);
+      throw new AppError(
+        `Failed to initialize payment: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/payments/verify
+paymentRouter.post(
+  '/verify',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const data = verifyPaymentSchema.parse(req.body);
+
+      // Verify payment with gateway
+      const verification = await paymentGatewayService.verifyPayment({
+        gateway: data.gateway,
+        reference: data.reference,
+      });
+
+      // Find pending payment by reference
+      const paymentsSnapshot = await db.collection('payments')
+        .where('tenantId', '==', tenantId)
+        .where('reference', '==', data.reference)
+        .limit(1)
+        .get();
+
+      if (paymentsSnapshot.empty) {
+        throw new AppError('Payment record not found', 404);
+      }
+
+      const paymentDoc = paymentsSnapshot.docs[0];
+      const paymentData = paymentDoc.data();
+
+      // Get folio
+      const folioDoc = await db.collection('folios').doc(paymentData.folioId).get();
+      if (!folioDoc.exists) {
+        throw new AppError('Folio not found', 404);
+      }
+
+      const folioData = folioDoc.data();
+      if (folioData?.tenantId !== tenantId) {
+        throw new AppError('Folio not found', 404);
+      }
+
+      const batch = db.batch();
+
+      // Update payment status
+      const paymentStatus = verification.status === 'success' ? 'completed' : verification.status === 'failed' ? 'failed' : 'pending';
+      batch.update(paymentDoc.ref, {
+        status: paymentStatus,
+        gatewayTransactionId: verification.gatewayTransactionId,
+        updatedAt: now(),
+        ...(verification.paidAt && { paidAt: toTimestamp(verification.paidAt) }),
+      });
+
+      // If payment successful, update folio
+      if (verification.status === 'success') {
+        const currentTotalPayments = Number(folioData.totalPayments || 0);
+        const currentBalance = Number(folioData.balance || 0);
+        const paymentAmount = verification.amount / 100; // Convert from kobo to currency unit
+
+        batch.update(folioDoc.ref, {
+          totalPayments: currentTotalPayments + paymentAmount,
+          balance: currentBalance - paymentAmount,
+          updatedAt: now(),
+        });
+      }
+
+      await batch.commit();
+
+      // Get updated payment
+      const updatedDoc = await db.collection('payments').doc(paymentDoc.id).get();
+      const updated = {
+        id: updatedDoc.id,
+        ...updatedDoc.data(),
+        createdAt: toDate(updatedDoc.data()?.createdAt),
+        paidAt: toDate(updatedDoc.data()?.paidAt),
+        updatedAt: toDate(updatedDoc.data()?.updatedAt),
+      };
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'verify_gateway_payment',
+        entityType: 'payment',
+        entityId: paymentDoc.id,
+        afterState: updated,
+        metadata: {
+          verificationStatus: verification.status,
+          gateway: data.gateway,
+        },
+      });
+
+      // Send receipt email if payment successful
+      if (verification.status === 'success' && folioData.guestEmail) {
+        (async () => {
+          try {
+            const tenantSettings = await getTenantEmailSettings(tenantId);
+            if (tenantSettings) {
+              let reservationNumber: string | undefined;
+              if (folioData.reservationId) {
+                const reservationDoc = await db.collection('reservations').doc(folioData.reservationId).get();
+                if (reservationDoc.exists) {
+                  reservationNumber = reservationDoc.data()?.reservationNumber;
+                }
+              }
+
+              const receiptData: PaymentReceiptData = {
+                guestName: folioData.guestName || 'Guest',
+                guestEmail: folioData.guestEmail,
+                reservationNumber,
+                paymentAmount: verification.amount / 100,
+                paymentMethod: data.gateway,
+                paymentDate: verification.paidAt || new Date(),
+                transactionId: data.reference,
+                propertyName: tenantSettings.propertyName,
+                propertyAddress: tenantSettings.propertyAddress || undefined,
+                propertyPhone: tenantSettings.propertyPhone || undefined,
+                propertyEmail: tenantSettings.propertyEmail || undefined,
+              };
+
+              const emailHtml = generatePaymentReceiptEmail(receiptData);
+              await sendEmail({
+                to: folioData.guestEmail,
+                subject: `Payment Receipt - ${data.reference}`,
+                html: emailHtml,
+              });
+            }
+          } catch (emailError) {
+            console.error('Failed to send payment receipt email:', emailError);
+          }
+        })();
+      }
+
+      res.json({
+        success: true,
+        data: {
+          payment: updated,
+          verification: {
+            status: verification.status,
+            amount: verification.amount / 100,
+            currency: verification.currency,
+            reference: verification.reference,
+            gateway: verification.gateway,
+          },
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (error instanceof z.ZodError) {
+        const message = error.errors?.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ') || 'Invalid verification data';
+        throw new AppError(message, 400);
+      }
+      console.error('Error verifying payment:', error);
+      throw new AppError(
+        `Failed to verify payment: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/payments/webhook/:gateway
+// Webhook endpoint (no authentication required - uses gateway signature verification)
+paymentRouter.post(
+  '/webhook/:gateway',
+  async (req, res): Promise<void> => {
+    try {
+      const gateway = req.params.gateway as PaymentGateway;
+      const tenantId = req.body?.data?.metadata?.tenantId || req.body?.meta?.tenantId;
+
+      if (!tenantId) {
+        console.error('Webhook received without tenantId in metadata');
+        res.status(400).json({ success: false, message: 'Missing tenantId in metadata' });
+        return;
+      }
+
+      // Verify webhook signature (gateway-specific)
+      // For production, implement proper signature verification
+      // For now, we'll process the webhook and verify the payment
+
+      let reference: string;
+      if (gateway === 'paystack') {
+        reference = req.body.data?.reference;
+      } else if (gateway === 'flutterwave') {
+        reference = req.body.data?.tx_ref;
+      } else {
+        res.status(400).json({ success: false, message: 'Unsupported gateway' });
+        return;
+      }
+
+      if (!reference) {
+        res.status(400).json({ success: false, message: 'Missing payment reference' });
+        return;
+      }
+
+      // Verify payment
+      const verification = await paymentGatewayService.verifyPayment({
+        gateway,
+        reference,
+      });
+
+      // Find and update payment
+      const paymentsSnapshot = await db.collection('payments')
+        .where('tenantId', '==', tenantId)
+        .where('reference', '==', reference)
+        .limit(1)
+        .get();
+
+      if (!paymentsSnapshot.empty) {
+        const paymentDoc = paymentsSnapshot.docs[0];
+        const paymentData = paymentDoc.data();
+
+        // Get folio
+        const folioDoc = await db.collection('folios').doc(paymentData.folioId).get();
+        if (folioDoc.exists) {
+          const folioData = folioDoc.data();
+          const batch = db.batch();
+
+          // Update payment
+          const paymentStatus = verification.status === 'success' ? 'completed' : verification.status === 'failed' ? 'failed' : 'pending';
+          batch.update(paymentDoc.ref, {
+            status: paymentStatus,
+            gatewayTransactionId: verification.gatewayTransactionId,
+            updatedAt: now(),
+            ...(verification.paidAt && { paidAt: toTimestamp(verification.paidAt) }),
+          });
+
+          // If payment successful, update folio
+          if (verification.status === 'success' && paymentData.status !== 'completed') {
+            const currentTotalPayments = Number(folioData?.totalPayments || 0);
+            const currentBalance = Number(folioData?.balance || 0);
+            const paymentAmount = verification.amount / 100;
+
+            batch.update(folioDoc.ref, {
+              totalPayments: currentTotalPayments + paymentAmount,
+              balance: currentBalance - paymentAmount,
+              updatedAt: now(),
+            });
+          }
+
+          await batch.commit();
+
+          // Send receipt email if payment successful
+          if (verification.status === 'success' && folioData?.guestEmail && paymentData.status !== 'completed') {
+            (async () => {
+              try {
+                const tenantSettings = await getTenantEmailSettings(tenantId);
+                if (tenantSettings) {
+                  let reservationNumber: string | undefined;
+                  if (folioData.reservationId) {
+                    const reservationDoc = await db.collection('reservations').doc(folioData.reservationId).get();
+                    if (reservationDoc.exists) {
+                      reservationNumber = reservationDoc.data()?.reservationNumber;
+                    }
+                  }
+
+                  const receiptData: PaymentReceiptData = {
+                    guestName: folioData.guestName || 'Guest',
+                    guestEmail: folioData.guestEmail,
+                    reservationNumber,
+                    paymentAmount: verification.amount / 100,
+                    paymentMethod: gateway,
+                    paymentDate: verification.paidAt || new Date(),
+                    transactionId: reference,
+                    propertyName: tenantSettings.propertyName,
+                    propertyAddress: tenantSettings.propertyAddress || undefined,
+                    propertyPhone: tenantSettings.propertyPhone || undefined,
+                    propertyEmail: tenantSettings.propertyEmail || undefined,
+                  };
+
+                  const emailHtml = generatePaymentReceiptEmail(receiptData);
+                  await sendEmail({
+                    to: folioData.guestEmail,
+                    subject: `Payment Receipt - ${reference}`,
+                    html: emailHtml,
+                  });
+                }
+              } catch (emailError) {
+                console.error('Failed to send payment receipt email:', emailError);
+              }
+            })();
+          }
+        }
+      }
+
+      // Return success to gateway
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('Webhook processing error:', error);
+      // Still return success to gateway to prevent retries
+      res.json({ success: false, error: error.message });
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/payments/gateways
+paymentRouter.get(
+  '/gateways',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const availableGateways = paymentGatewayService.getAvailableGateways();
+
+      res.json({
+        success: true,
+        data: {
+          gateways: availableGateways.map(gateway => ({
+            name: gateway,
+            configured: paymentGatewayService.isGatewayConfigured(gateway),
+          })),
+        },
+      });
+    } catch (error: any) {
+      console.error('Error fetching available gateways:', error);
+      throw new AppError(
+        `Failed to fetch gateways: ${error.message || 'Database connection error'}`,
         500
       );
     }

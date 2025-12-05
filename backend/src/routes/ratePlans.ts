@@ -14,6 +14,7 @@ const createRatePlanSchema = z.object({
   currency: z.string().default('NGN'),
   seasonalRules: z.any().optional(),
   isActive: z.boolean().default(true),
+  categoryId: z.string().optional(),
 });
 
 const updateRatePlanSchema = createRatePlanSchema.partial();
@@ -26,7 +27,7 @@ ratePlanRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const { isActive } = req.query;
+      const { isActive, categoryId } = req.query;
 
       let query: admin.firestore.Query = db.collection('ratePlans')
         .where('tenantId', '==', tenantId);
@@ -36,17 +37,56 @@ ratePlanRouter.get(
       }
 
       const snapshot = await query.get();
-      const ratePlans = snapshot.docs.map(doc => ({
+      
+      // Filter by category in memory if needed (Firestore doesn't support null comparisons well)
+      let filteredDocs = snapshot.docs;
+      if (categoryId !== undefined) {
+        if (categoryId === 'none' || categoryId === 'null') {
+          filteredDocs = snapshot.docs.filter(doc => !doc.data().categoryId);
+        } else {
+          filteredDocs = snapshot.docs.filter(doc => doc.data().categoryId === categoryId);
+        }
+      }
+      const ratePlans = filteredDocs.map(doc => ({
         id: doc.id,
         ...doc.data(),
         baseRate: Number(doc.data().baseRate || 0),
+        categoryId: doc.data().categoryId || null,
         createdAt: toDate(doc.data().createdAt),
         updatedAt: toDate(doc.data().updatedAt),
       }));
 
+      // Fetch category names for rate plans that have categories
+      const categoryIds = [...new Set(ratePlans.map(rp => rp.categoryId).filter(Boolean))];
+      const categoryMap: Record<string, any> = {};
+      
+      if (categoryIds.length > 0) {
+        const categoryPromises = categoryIds.map(async (catId) => {
+          try {
+            const catDoc = await db.collection('roomCategories').doc(catId as string).get();
+            if (catDoc.exists) {
+              categoryMap[catId as string] = {
+                id: catDoc.id,
+                name: catDoc.data()?.name,
+                color: catDoc.data()?.color,
+              };
+            }
+          } catch (error) {
+            console.error(`Error fetching category ${catId}:`, error);
+          }
+        });
+        await Promise.all(categoryPromises);
+      }
+
+      // Add category info to rate plans
+      const ratePlansWithCategories = ratePlans.map(rp => ({
+        ...rp,
+        category: rp.categoryId ? categoryMap[rp.categoryId] || null : null,
+      }));
+
       res.json({
         success: true,
-        data: ratePlans,
+        data: ratePlansWithCategories,
       });
     } catch (error: any) {
       console.error('Error fetching rate plans:', error);
@@ -85,10 +125,29 @@ ratePlanRouter.get(
         .where('ratePlanId', '==', ratePlanId)
         .get();
 
+      // Fetch category if exists
+      let category: { id: string; name: string; color?: string } | null = null;
+      if (ratePlanData.categoryId) {
+        try {
+          const catDoc = await db.collection('roomCategories').doc(ratePlanData.categoryId).get();
+          if (catDoc.exists) {
+            category = {
+              id: catDoc.id,
+              name: catDoc.data()?.name,
+              color: catDoc.data()?.color,
+            };
+          }
+        } catch (error) {
+          console.error('Error fetching category:', error);
+        }
+      }
+
       const ratePlan = {
         id: ratePlanDoc.id,
         ...ratePlanData,
         baseRate: Number(ratePlanData.baseRate || 0),
+        categoryId: ratePlanData.categoryId || null,
+        category,
         roomCount: roomsSnapshot.size,
         createdAt: toDate(ratePlanData.createdAt),
         updatedAt: toDate(ratePlanData.updatedAt),
@@ -132,9 +191,17 @@ ratePlanRouter.post(
         throw new AppError('Rate plan name already exists', 400);
       }
 
+      // Validate category if provided
+      if (data.categoryId) {
+        const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
+        if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+          throw new AppError('Invalid category', 400);
+        }
+      }
+
       // Create rate plan
       const ratePlanRef = db.collection('ratePlans').doc();
-      const ratePlanData = {
+      const ratePlanData: any = {
         tenantId,
         name: data.name,
         description: data.description || null,
@@ -145,6 +212,10 @@ ratePlanRouter.post(
         createdAt: now(),
         updatedAt: now(),
       };
+
+      if (data.categoryId) {
+        ratePlanData.categoryId = data.categoryId;
+      }
 
       await ratePlanRef.set(ratePlanData);
 
@@ -230,6 +301,20 @@ ratePlanRouter.patch(
         updatedAt: now(),
       };
 
+      // Validate category if being updated
+      if (data.categoryId !== undefined) {
+        if (data.categoryId) {
+          const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
+          if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+            throw new AppError('Invalid category', 400);
+          }
+          updateData.categoryId = data.categoryId;
+        } else {
+          // Setting to null/empty removes category
+          updateData.categoryId = null;
+        }
+      }
+
       if (data.name !== undefined) updateData.name = data.name;
       if (data.description !== undefined) updateData.description = data.description || null;
       if (data.baseRate !== undefined) updateData.baseRate = data.baseRate;
@@ -243,10 +328,29 @@ ratePlanRouter.patch(
       const updatedDoc = await db.collection('ratePlans').doc(ratePlanId).get();
       const updatedData = updatedDoc.data();
 
+      // Fetch category if exists
+      let category: { id: string; name: string; color?: string } | null = null;
+      if (updatedData?.categoryId) {
+        try {
+          const catDoc = await db.collection('roomCategories').doc(updatedData.categoryId).get();
+          if (catDoc.exists) {
+            category = {
+              id: catDoc.id,
+              name: catDoc.data()?.name,
+              color: catDoc.data()?.color,
+            };
+          }
+        } catch (error) {
+          console.error('Error fetching category:', error);
+        }
+      }
+
       const updated = {
         id: updatedDoc.id,
         ...updatedData,
         baseRate: Number(updatedData?.baseRate || 0),
+        categoryId: updatedData?.categoryId || null,
+        category,
         createdAt: toDate(updatedData?.createdAt),
         updatedAt: toDate(updatedData?.updatedAt),
       };

@@ -1,4 +1,4 @@
-import { prisma } from './prisma';
+import { db, now } from './firestore';
 
 export interface AlertParams {
   tenantId: string;
@@ -11,16 +11,19 @@ export interface AlertParams {
 
 export const createAlert = async (params: AlertParams) => {
   try {
-    await prisma.alert.create({
-      data: {
-        tenantId: params.tenantId,
-        alertType: params.alertType,
-        severity: params.severity,
-        title: params.title,
-        message: params.message,
-        metadata: params.metadata || null,
-      },
-    });
+    const alertData = {
+      tenantId: params.tenantId,
+      alertType: params.alertType,
+      severity: params.severity,
+      title: params.title,
+      message: params.message,
+      metadata: params.metadata || null,
+      status: 'open',
+      createdAt: now(),
+      updatedAt: now(),
+    };
+
+    await db.collection('alerts').add(alertData);
 
     // TODO: Send email/SMS/push notification based on severity
     // For MVP, alerts are stored and can be viewed in dashboard
