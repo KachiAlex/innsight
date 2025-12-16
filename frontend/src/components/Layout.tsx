@@ -32,6 +32,7 @@ const menuItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/reservations', icon: Calendar, label: 'Reservations' },
   { path: '/group-bookings', icon: Users, label: 'Group Bookings' },
+  { path: '/deposit-management', icon: DollarSign, label: 'Deposit Management' },
   { path: '/calendar', icon: CalendarDays, label: 'Calendar' },
   { path: '/rooms', icon: DoorOpen, label: 'Rooms' },
   { path: '/rate-plans', icon: DollarSign, label: 'Rate Plans' },

@@ -65,6 +65,7 @@ const GuestsPage = lazy(() => import('./pages/GuestsPage'));
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
 const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));
+const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
@@ -125,6 +126,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <GroupBookingsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/deposit-management"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <DepositManagementPage />
                   </Suspense>
                 </ProtectedRoute>
               }
