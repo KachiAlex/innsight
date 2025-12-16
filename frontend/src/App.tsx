@@ -70,6 +70,7 @@ const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage')
 const GuestRequestsPage = lazy(() => import('./pages/GuestRequestsPage'));
 const RoomServicePage = lazy(() => import('./pages/RoomServicePage'));
 const LostFoundPage = lazy(() => import('./pages/LostFoundPage'));
+const AnalyticsDashboardPage = lazy(() => import('./pages/AnalyticsDashboardPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
@@ -210,6 +211,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <ReportsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <AnalyticsDashboardPage />
                   </Suspense>
                 </ProtectedRoute>
               }

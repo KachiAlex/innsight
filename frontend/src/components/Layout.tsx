@@ -23,7 +23,8 @@ import {
   UserCog,
   MessageSquare,
   ChefHat,
-  Package
+  Package,
+  BarChart3
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -48,6 +49,7 @@ const menuItems = [
   { path: '/room-service', icon: ChefHat, label: 'Room Service' },
   { path: '/maintenance', icon: Wrench, label: 'Maintenance' },
   { path: '/reports', icon: BarChart3, label: 'Reports' },
+  { path: '/analytics', icon: BarChart3, label: 'Analytics Dashboard' },
   { path: '/night-audit', icon: Moon, label: 'Night Audit' },
   { path: '/staff', icon: UserCog, label: 'Staff' },
   { path: '/wage-plans', icon: Wallet, label: 'Wage Plans' },
