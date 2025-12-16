@@ -5,7 +5,6 @@ import Button from '../components/Button';
 import {
   Plus,
   Search,
-  Filter,
   Package,
   User,
   MapPin,
@@ -15,12 +14,9 @@ import {
   Clock,
   AlertTriangle,
   Edit,
-  Trash2,
   Eye,
   DollarSign,
-  Hash,
-  Phone,
-  Mail
+  Hash
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -165,15 +161,6 @@ export default function LostFoundPage() {
     }).format(amount);
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
 
   const getTimeAgo = (dateString: string) => {
     const now = new Date();

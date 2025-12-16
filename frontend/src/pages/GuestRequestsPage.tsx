@@ -3,14 +3,10 @@ import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Button from '../components/Button';
 import {
-  Plus,
   Search,
-  Filter,
   MessageSquare,
   Clock,
   AlertTriangle,
-  CheckCircle,
-  XCircle,
   MoreVertical,
   User,
   Calendar,

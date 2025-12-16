@@ -8,13 +8,9 @@ import {
   TrendingDown,
   DollarSign,
   Users,
-  Calendar,
   Building,
-  Clock,
   Target,
   AlertTriangle,
-  CheckCircle,
-  XCircle,
   RefreshCw,
   Download,
   Filter,
@@ -62,16 +58,6 @@ interface DashboardMetrics {
   };
 }
 
-interface ChartData {
-  labels: string[];
-  datasets: Array<{
-    label: string;
-    data: number[];
-    backgroundColor?: string;
-    borderColor?: string;
-    borderWidth?: number;
-  }>;
-}
 
 export default function AnalyticsDashboardPage() {
   const { user } = useAuthStore();

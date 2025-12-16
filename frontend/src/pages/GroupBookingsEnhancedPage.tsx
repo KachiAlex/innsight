@@ -5,21 +5,14 @@ import Button from '../components/Button';
 import {
   Plus,
   Search,
-  Filter,
   Users,
   Calendar,
   DollarSign,
   Building,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Edit,
-  Trash2,
-  MapPin,
-  Phone,
-  Mail,
   User,
-  Bed
+  Bed,
+  Mail,
+  Phone
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -80,7 +73,6 @@ export default function GroupBookingsEnhancedPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<GroupBooking | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
@@ -317,7 +309,7 @@ export default function GroupBookingsEnhancedPage() {
             <option value="cancelled">Cancelled</option>
           </select>
 
-          <Button onClick={() => setShowCreateModal(true)}>
+          <Button onClick={() => alert('Create group booking functionality coming soon!')}>
             <Plus size={18} style={{ marginRight: '0.5rem' }} />
             New Group Booking
           </Button>
@@ -345,7 +337,7 @@ export default function GroupBookingsEnhancedPage() {
               ? 'No bookings match your current filters.'
               : 'Start by creating your first group booking for events or large parties.'}
           </p>
-          <Button onClick={() => setShowCreateModal(true)}>
+          <Button onClick={() => alert('Create group booking functionality coming soon!')}>
             <Plus size={18} style={{ marginRight: '0.5rem' }} />
             Create Group Booking
           </Button>

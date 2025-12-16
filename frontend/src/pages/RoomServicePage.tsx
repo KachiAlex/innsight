@@ -5,15 +5,12 @@ import Button from '../components/Button';
 import {
   Plus,
   Search,
-  Filter,
   ChefHat,
   Clock,
   DollarSign,
   Edit,
   Trash2,
   ShoppingCart,
-  Package,
-  Star,
   AlertTriangle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -81,12 +78,7 @@ export default function RoomServicePage() {
   const [stats, setStats] = useState<OrderStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [showItemModal, setShowItemModal] = useState(false);
-  const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
-  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
 
   useEffect(() => {
     if (activeTab === 'menu') {
@@ -478,11 +470,11 @@ export default function RoomServicePage() {
           }}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: '600' }}>Menu Management</h2>
             <div style={{ display: 'flex', gap: '1rem' }}>
-              <Button onClick={() => setShowCategoryModal(true)}>
+              <Button onClick={() => alert('Add category functionality coming soon!')}>
                 <Plus size={18} style={{ marginRight: '0.5rem' }} />
                 Add Category
               </Button>
-              <Button onClick={() => setShowItemModal(true)}>
+              <Button onClick={() => alert('Add item functionality coming soon!')}>
                 <Plus size={18} style={{ marginRight: '0.5rem' }} />
                 Add Item
               </Button>

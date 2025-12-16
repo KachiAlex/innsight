@@ -8,7 +8,6 @@ import {
   CreditCard,
   Sparkles,
   Wrench,
-  BarChart3,
   AlertCircle,
   LogOut,
   Menu,

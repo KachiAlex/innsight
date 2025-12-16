@@ -64,7 +64,6 @@ const GuestProfilePage = lazy(() => import('./pages/GuestProfilePageEnhanced'));
 const GuestsPage = lazy(() => import('./pages/GuestsPage'));
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
-const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));
 const GroupBookingsEnhancedPage = lazy(() => import('./pages/GroupBookingsEnhancedPage'));
 const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage'));
 const GuestRequestsPage = lazy(() => import('./pages/GuestRequestsPage'));
