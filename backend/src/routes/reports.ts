@@ -815,3 +815,635 @@ reportRouter.get(
     }
   }
 );
+
+// GET /api/tenants/:tenantId/reports/performance-metrics
+reportRouter.get(
+  '/performance-metrics',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { startDate, endDate, metrics = 'all' } = req.query;
+
+      const start = startDate ? new Date(startDate as string) : startOfMonth(new Date());
+      const end = endDate ? new Date(endDate as string) : endOfDay(new Date());
+
+      const startTimestamp = toTimestamp(start);
+      const endTimestamp = toTimestamp(end);
+
+      const metricsList = metrics === 'all' ? [
+        'occupancy', 'revenue', 'guestSatisfaction', 'operationalEfficiency',
+        'averageDailyRate', 'revpar', 'goppar'
+      ] : (metrics as string).split(',');
+
+      const result: any = {
+        period: { start, end },
+        metrics: {}
+      };
+
+      // Calculate occupancy rate
+      if (metricsList.includes('occupancy')) {
+        try {
+          const occupancySnapshot = await db.collection('roomOccupancy')
+            .where('tenantId', '==', tenantId)
+            .where('date', '>=', startTimestamp)
+            .where('date', '<=', endTimestamp)
+            .get();
+
+          const totalRooms = await db.collection('rooms')
+            .where('tenantId', '==', tenantId)
+            .get();
+
+          const occupiedRoomDays = occupancySnapshot.docs.reduce((sum, doc) => {
+            return sum + (doc.data().occupiedRooms || 0);
+          }, 0);
+
+          const totalRoomDays = totalRooms.docs.length * Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+
+          result.metrics.occupancy = {
+            occupiedRoomDays,
+            totalRoomDays,
+            occupancyRate: totalRoomDays > 0 ? (occupiedRoomDays / totalRoomDays) * 100 : 0,
+            totalRooms: totalRooms.docs.length
+          };
+        } catch (error) {
+          console.warn('Error calculating occupancy metrics:', error);
+          result.metrics.occupancy = { occupiedRoomDays: 0, totalRoomDays: 0, occupancyRate: 0, totalRooms: 0 };
+        }
+      }
+
+      // Calculate revenue metrics
+      if (metricsList.includes('revenue')) {
+        try {
+          const paymentsSnapshot = await db.collection('payments')
+            .where('tenantId', '==', tenantId)
+            .where('status', '==', 'completed')
+            .get();
+
+          const revenue = paymentsSnapshot.docs.reduce((sum, doc) => {
+            const data = doc.data();
+            const paymentDate = toDate(data.createdAt);
+            if (paymentDate && paymentDate >= start && paymentDate <= end) {
+              return sum + (data.amount || 0);
+            }
+            return sum;
+          }, 0);
+
+          result.metrics.revenue = {
+            totalRevenue: revenue,
+            transactionCount: paymentsSnapshot.docs.length
+          };
+        } catch (error) {
+          console.warn('Error calculating revenue metrics:', error);
+          result.metrics.revenue = { totalRevenue: 0, transactionCount: 0 };
+        }
+      }
+
+      // Calculate guest satisfaction (placeholder - would integrate with feedback system)
+      if (metricsList.includes('guestSatisfaction')) {
+        try {
+          const requestsSnapshot = await db.collection('guestRequests')
+            .where('tenantId', '==', tenantId)
+            .get();
+
+          const resolvedRequests = requestsSnapshot.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end && data.status === 'resolved';
+          }).length;
+
+          const totalRequests = requestsSnapshot.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end;
+          }).length;
+
+          result.metrics.guestSatisfaction = {
+            totalRequests,
+            resolvedRequests,
+            resolutionRate: totalRequests > 0 ? (resolvedRequests / totalRequests) * 100 : 0
+          };
+        } catch (error) {
+          console.warn('Error calculating guest satisfaction metrics:', error);
+          result.metrics.guestSatisfaction = { totalRequests: 0, resolvedRequests: 0, resolutionRate: 0 };
+        }
+      }
+
+      // Calculate operational efficiency
+      if (metricsList.includes('operationalEfficiency')) {
+        try {
+          const housekeepingTasks = await db.collection('housekeepingTasks')
+            .where('tenantId', '==', tenantId)
+            .get();
+
+          const maintenanceTickets = await db.collection('maintenanceTickets')
+            .where('tenantId', '==', tenantId)
+            .get();
+
+          const completedTasks = housekeepingTasks.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end && data.status === 'completed';
+          }).length;
+
+          const completedTickets = maintenanceTickets.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end && data.status === 'completed';
+          }).length;
+
+          const totalTasks = housekeepingTasks.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end;
+          }).length;
+
+          const totalTickets = maintenanceTickets.docs.filter(doc => {
+            const data = doc.data();
+            const createdAt = toDate(data.createdAt);
+            return createdAt && createdAt >= start && createdAt <= end;
+          }).length;
+
+          result.metrics.operationalEfficiency = {
+            totalTasks: totalTasks + totalTickets,
+            completedTasks: completedTasks + completedTickets,
+            completionRate: (totalTasks + totalTickets) > 0 ? ((completedTasks + completedTickets) / (totalTasks + totalTickets)) * 100 : 0
+          };
+        } catch (error) {
+          console.warn('Error calculating operational efficiency metrics:', error);
+          result.metrics.operationalEfficiency = { totalTasks: 0, completedTasks: 0, completionRate: 0 };
+        }
+      }
+
+      // Calculate ADR (Average Daily Rate)
+      if (metricsList.includes('averageDailyRate')) {
+        try {
+          const reservationsSnapshot = await db.collection('reservations')
+            .where('tenantId', '==', tenantId)
+            .where('checkOut', '>=', startTimestamp)
+            .where('checkIn', '<=', endTimestamp)
+            .get();
+
+          const totalRevenue = reservationsSnapshot.docs.reduce((sum, doc) => {
+            const data = doc.data();
+            return sum + (data.totalAmount || 0);
+          }, 0);
+
+          const totalRoomNights = reservationsSnapshot.docs.reduce((sum, doc) => {
+            const data = doc.data();
+            const checkIn = toDate(data.checkIn);
+            const checkOut = toDate(data.checkOut);
+            if (checkIn && checkOut) {
+              const nights = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+              return sum + nights;
+            }
+            return sum;
+          }, 0);
+
+          result.metrics.averageDailyRate = {
+            totalRevenue,
+            totalRoomNights,
+            adr: totalRoomNights > 0 ? totalRevenue / totalRoomNights : 0
+          };
+        } catch (error) {
+          console.warn('Error calculating ADR metrics:', error);
+          result.metrics.averageDailyRate = { totalRevenue: 0, totalRoomNights: 0, adr: 0 };
+        }
+      }
+
+      // Calculate RevPAR (Revenue Per Available Room)
+      if (metricsList.includes('revpar')) {
+        try {
+          const totalRooms = await db.collection('rooms')
+            .where('tenantId', '==', tenantId)
+            .get();
+
+          const totalRoomDays = totalRooms.docs.length * Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+
+          const paymentsSnapshot = await db.collection('payments')
+            .where('tenantId', '==', tenantId)
+            .where('status', '==', 'completed')
+            .get();
+
+          const totalRevenue = paymentsSnapshot.docs.reduce((sum, doc) => {
+            const data = doc.data();
+            const paymentDate = toDate(data.createdAt);
+            if (paymentDate && paymentDate >= start && paymentDate <= end) {
+              return sum + (data.amount || 0);
+            }
+            return sum;
+          }, 0);
+
+          result.metrics.revpar = {
+            totalRevenue,
+            totalRoomDays,
+            revpar: totalRoomDays > 0 ? totalRevenue / totalRoomDays : 0
+          };
+        } catch (error) {
+          console.warn('Error calculating RevPAR metrics:', error);
+          result.metrics.revpar = { totalRevenue: 0, totalRoomDays: 0, revpar: 0 };
+        }
+      }
+
+      // Calculate GOPPAR (Gross Operating Profit Per Available Room)
+      if (metricsList.includes('goppar')) {
+        // This would require detailed cost data - placeholder for now
+        result.metrics.goppar = {
+          note: 'GOPPAR calculation requires detailed cost accounting integration',
+          value: null
+        };
+      }
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      console.error('Error fetching performance metrics:', error);
+      throw new AppError(
+        `Failed to fetch performance metrics: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/reports/guest-feedback
+reportRouter.get(
+  '/guest-feedback',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { startDate, endDate, type = 'all' } = req.query;
+
+      const start = startDate ? new Date(startDate as string) : subDays(new Date(), 30);
+      const end = endDate ? new Date(endDate as string) : new Date();
+
+      // This is a placeholder for a guest feedback system
+      // In a real implementation, this would pull from a feedback collection
+      const feedback = {
+        period: { start, end },
+        summary: {
+          totalFeedback: 0,
+          averageRating: 0,
+          responseRate: 0,
+          categories: {
+            cleanliness: { count: 0, averageRating: 0 },
+            service: { count: 0, averageRating: 0 },
+            amenities: { count: 0, averageRating: 0 },
+            value: { count: 0, averageRating: 0 },
+            location: { count: 0, averageRating: 0 }
+          }
+        },
+        recentFeedback: [],
+        note: 'Guest feedback system not yet implemented. This endpoint is ready for integration with feedback collection services like ReviewPro, TripAdvisor, or custom feedback forms.'
+      };
+
+      res.json({
+        success: true,
+        data: feedback
+      });
+    } catch (error: any) {
+      console.error('Error fetching guest feedback:', error);
+      throw new AppError(
+        `Failed to fetch guest feedback: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/reports/financial
+reportRouter.get(
+  '/financial',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { startDate, endDate, reportType = 'summary' } = req.query;
+
+      const start = startDate ? new Date(startDate as string) : startOfMonth(new Date());
+      const end = endDate ? new Date(endDate as string) : endOfDay(new Date());
+
+      const startTimestamp = toTimestamp(start);
+      const endTimestamp = toTimestamp(end);
+
+      const result: any = {
+        period: { start, end },
+        reportType,
+        summary: {}
+      };
+
+      // Get revenue breakdown
+      try {
+        const paymentsSnapshot = await db.collection('payments')
+          .where('tenantId', '==', tenantId)
+          .where('status', '==', 'completed')
+          .get();
+
+        const revenueByMethod: any = {};
+        let totalRevenue = 0;
+        let totalTransactions = 0;
+
+        paymentsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const paymentDate = toDate(data.createdAt);
+
+          if (paymentDate && paymentDate >= start && paymentDate <= end) {
+            const amount = data.amount || 0;
+            const method = data.method || 'other';
+
+            totalRevenue += amount;
+            totalTransactions += 1;
+
+            if (!revenueByMethod[method]) {
+              revenueByMethod[method] = 0;
+            }
+            revenueByMethod[method] += amount;
+          }
+        });
+
+        result.summary.revenue = {
+          totalRevenue,
+          totalTransactions,
+          averageTransaction: totalTransactions > 0 ? totalRevenue / totalTransactions : 0,
+          byMethod: revenueByMethod
+        };
+      } catch (error) {
+        console.warn('Error calculating financial revenue:', error);
+        result.summary.revenue = { totalRevenue: 0, totalTransactions: 0, averageTransaction: 0, byMethod: {} };
+      }
+
+      // Get expense breakdown (placeholder - would integrate with expense tracking)
+      result.summary.expenses = {
+        totalExpenses: 0,
+        byCategory: {
+          'Housekeeping': 0,
+          'Maintenance': 0,
+          'Utilities': 0,
+          'Marketing': 0,
+          'Administrative': 0
+        },
+        note: 'Expense tracking requires integration with accounting/expense management system'
+      };
+
+      // Calculate profit/loss
+      result.summary.profitLoss = {
+        grossRevenue: result.summary.revenue.totalRevenue,
+        totalExpenses: result.summary.expenses.totalExpenses,
+        netProfit: result.summary.revenue.totalRevenue - result.summary.expenses.totalExpenses,
+        profitMargin: result.summary.revenue.totalRevenue > 0 ?
+          ((result.summary.revenue.totalRevenue - result.summary.expenses.totalExpenses) / result.summary.revenue.totalRevenue) * 100 : 0
+      };
+
+      // Cash flow analysis
+      result.cashFlow = {
+        operatingCashFlow: result.summary.revenue.totalRevenue - result.summary.expenses.totalExpenses,
+        investingCashFlow: 0, // Would track capital expenditures
+        financingCashFlow: 0, // Would track loans, equity, etc.
+        netCashFlow: result.summary.revenue.totalRevenue - result.summary.expenses.totalExpenses
+      };
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      console.error('Error fetching financial report:', error);
+      throw new AppError(
+        `Failed to fetch financial report: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// POST /api/tenants/:tenantId/reports/custom
+reportRouter.post(
+  '/custom',
+  authenticate,
+  requireTenantAccess,
+  requireRole('manager', 'admin'),
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const {
+        name,
+        description,
+        dateRange,
+        metrics,
+        filters,
+        groupBy,
+        format = 'json'
+      } = req.body;
+
+      // Validate required fields
+      if (!name || !dateRange || !metrics) {
+        throw new AppError('Missing required fields: name, dateRange, metrics', 400);
+      }
+
+      const start = new Date(dateRange.start);
+      const end = new Date(dateRange.end);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new AppError('Invalid date range', 400);
+      }
+
+      // Create custom report configuration
+      const customReport = {
+        id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        tenantId,
+        name,
+        description,
+        dateRange: { start, end },
+        metrics,
+        filters: filters || {},
+        groupBy: groupBy || 'day',
+        format,
+        createdBy: req.user?.id,
+        createdAt: now(),
+        status: 'processing'
+      };
+
+      // Save report configuration
+      await db.collection('customReports').doc(customReport.id).set({
+        ...customReport,
+        dateRange: {
+          start: toTimestamp(start),
+          end: toTimestamp(end)
+        }
+      });
+
+      // Process the report (this would typically be done asynchronously)
+      const reportData = await generateCustomReport(tenantId, metrics, { start, end }, filters, groupBy);
+
+      // Update report with results
+      await db.collection('customReports').doc(customReport.id).update({
+        status: 'completed',
+        data: reportData,
+        completedAt: now()
+      });
+
+      res.json({
+        success: true,
+        data: {
+          ...customReport,
+          data: reportData,
+          status: 'completed'
+        }
+      });
+    } catch (error: any) {
+      console.error('Error creating custom report:', error);
+      throw new AppError(
+        `Failed to create custom report: ${error.message || 'Processing error'}`,
+        500
+      );
+    }
+  }
+);
+
+// GET /api/tenants/:tenantId/reports/custom
+reportRouter.get(
+  '/custom',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const { limit = 20 } = req.query;
+
+      const reportsSnapshot = await db.collection('customReports')
+        .where('tenantId', '==', tenantId)
+        .orderBy('createdAt', 'desc')
+        .limit(Number(limit))
+        .get();
+
+      const reports = reportsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name,
+          description: data.description,
+          dateRange: {
+            start: toDate(data.dateRange.start),
+            end: toDate(data.dateRange.end)
+          },
+          metrics: data.metrics,
+          filters: data.filters,
+          groupBy: data.groupBy,
+          format: data.format,
+          status: data.status,
+          createdAt: toDate(data.createdAt),
+          completedAt: data.completedAt ? toDate(data.completedAt) : null,
+          createdBy: data.createdBy
+        };
+      });
+
+      res.json({
+        success: true,
+        data: reports,
+        total: reports.length
+      });
+    } catch (error: any) {
+      console.error('Error fetching custom reports:', error);
+      throw new AppError(
+        `Failed to fetch custom reports: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// Helper function to generate custom reports
+async function generateCustomReport(
+  tenantId: string,
+  metrics: string[],
+  dateRange: { start: Date; end: Date },
+  filters: any = {},
+  groupBy: string = 'day'
+) {
+  const startTimestamp = toTimestamp(dateRange.start);
+  const endTimestamp = toTimestamp(dateRange.end);
+
+  const result: any = {
+    period: dateRange,
+    groupBy,
+    data: []
+  };
+
+  // This is a simplified implementation - in production, this would be more sophisticated
+  // with proper aggregation and grouping logic
+
+  if (metrics.includes('revenue')) {
+    try {
+      const paymentsSnapshot = await db.collection('payments')
+        .where('tenantId', '==', tenantId)
+        .where('status', '==', 'completed')
+        .get();
+
+      const revenueData: any = {};
+
+      paymentsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const paymentDate = toDate(data.createdAt);
+
+        if (paymentDate && paymentDate >= dateRange.start && paymentDate <= dateRange.end) {
+          const dateKey = format(paymentDate, groupBy === 'month' ? 'yyyy-MM' : 'yyyy-MM-dd');
+          const amount = data.amount || 0;
+
+          if (!revenueData[dateKey]) {
+            revenueData[dateKey] = { date: dateKey, revenue: 0, transactions: 0 };
+          }
+          revenueData[dateKey].revenue += amount;
+          revenueData[dateKey].transactions += 1;
+        }
+      });
+
+      result.revenue = Object.values(revenueData);
+    } catch (error) {
+      console.warn('Error generating revenue data for custom report:', error);
+      result.revenue = [];
+    }
+  }
+
+  if (metrics.includes('occupancy')) {
+    try {
+      const occupancySnapshot = await db.collection('roomOccupancy')
+        .where('tenantId', '==', tenantId)
+        .where('date', '>=', startTimestamp)
+        .where('date', '<=', endTimestamp)
+        .get();
+
+      const occupancyData: any = {};
+
+      occupancySnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const date = toDate(data.date);
+        if (date) {
+          const dateKey = format(date, groupBy === 'month' ? 'yyyy-MM' : 'yyyy-MM-dd');
+
+          if (!occupancyData[dateKey]) {
+            occupancyData[dateKey] = { date: dateKey, occupiedRooms: 0, totalRooms: data.totalRooms || 0 };
+          }
+          occupancyData[dateKey].occupiedRooms += data.occupiedRooms || 0;
+        }
+      });
+
+      // Calculate occupancy rates
+      Object.values(occupancyData).forEach((item: any) => {
+        item.occupancyRate = item.totalRooms > 0 ? (item.occupiedRooms / item.totalRooms) * 100 : 0;
+      });
+
+      result.occupancy = Object.values(occupancyData);
+    } catch (error) {
+      console.warn('Error generating occupancy data for custom report:', error);
+      result.occupancy = [];
+    }
+  }
+
+  return result;
+}
