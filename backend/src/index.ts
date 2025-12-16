@@ -30,6 +30,8 @@ import { overbookingRouter } from './routes/overbooking';
 import { guestRequestsRouter } from './routes/guest-requests';
 import { lostFoundRouter } from './routes/lost-found';
 import { roomServiceRouter } from './routes/room-service';
+import { analyticsRouter } from './routes/analytics';
+import { automationRouter } from './routes/automation';
 import { calendarRouter } from './routes/calendar';
 import { roomCategoryRouter } from './routes/roomCategories';
 import { staffRouter } from './routes/staff';
@@ -90,6 +92,8 @@ app.use('/api/tenants/:tenantId/overbooking', overbookingRouter); // Overbooking
 app.use('/api/tenants/:tenantId/guest-requests', guestRequestsRouter); // Guest requests
 app.use('/api/tenants/:tenantId/lost-found', lostFoundRouter); // Lost & found
 app.use('/api/tenants/:tenantId/room-service', roomServiceRouter); // Room service
+app.use('/api/tenants/:tenantId/analytics', analyticsRouter); // Analytics & BI
+app.use('/api/tenants/:tenantId/automation', automationRouter); // Automation & Workflows
 app.use('/api/tenants/:tenantId/calendar', calendarRouter);
 app.use('/api/tenants/:tenantId/room-categories', roomCategoryRouter);
 app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter);
