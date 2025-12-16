@@ -36,6 +36,15 @@ model Tenant {
   alerts           Alert[]
   iotGateways      IoTGateway[]
   iotEvents        IoTEvent[]
+  guests           Guest[]
+  loyaltyProgram   LoyaltyProgram?
+  depositPolicies  DepositPolicy[]
+  groupBookings    GroupBooking[]
+  overbookingSettings OverbookingSetting[]
+  overbookingAlerts OverbookingAlert[]
+  guestRequests    GuestRequest[]
+  lostItems        LostItem[]
+  menuCategories   MenuCategory[]
 
   @@map("tenants")
 }
@@ -71,6 +80,15 @@ model User {
   shifts       Shift[]
   audits       Audit[]
   resolvedAlerts Alert[]
+  createdGroupBookings GroupBooking[]
+  assignedGroupBookings GroupBooking[] @relation("AssignedGroupBookings")
+  assignedRequests GuestRequest[] @relation("AssignedRequests")
+  createdRequests GuestRequest[] @relation("RequestCreator")
+  foundItems LostItem[] @relation("FoundItems")
+  createdItems LostItem[] @relation("ItemCreator")
+  assignedOrders RoomServiceOrder[] @relation("AssignedOrders")
+  createdOrders RoomServiceOrder[] @relation("OrderCreator")
+  deliveredOrders RoomServiceOrder[] @relation("DeliveryStaff")
 
   @@unique([tenantId, email])
   @@index([tenantId, role])
@@ -126,6 +144,8 @@ model Reservation {
   id              String   @id @default(uuid())
   tenantId        String
   roomId          String
+  guestId         String?  // Link to Guest table (nullable for backward compatibility)
+  groupBookingId  String?  // Link to group booking (nullable)
   reservationNumber String @unique
   guestName       String
   guestEmail      String?
@@ -139,7 +159,8 @@ model Reservation {
   source          String   @default("manual") // manual, web, ota, channel_manager
   rate            Decimal  @db.Decimal(10, 2)
   depositAmount   Decimal? @db.Decimal(10, 2)
-  depositStatus   String?  // pending, paid, refunded
+  depositStatus   String?  // pending, paid, refunded, waived
+  depositRequired Boolean  @default(true)
   specialRequests String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -150,14 +171,19 @@ model Reservation {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   room   Room   @relation(fields: [roomId], references: [id])
+  guest  Guest? @relation(fields: [guestId], references: [id])
+  groupBooking GroupBooking? @relation(fields: [groupBookingId], references: [id])
   creator User  @relation("ReservationCreator", fields: [createdBy], references: [id])
   checkInStaff User? @relation("CheckInStaff", fields: [checkedInBy], references: [id])
   checkOutStaff User? @relation("CheckOutStaff", fields: [checkedOutBy], references: [id])
   createdBy     String
   folios        Folio[]
+  depositPayments DepositPayment[]
 
   @@index([tenantId, status])
   @@index([tenantId, checkInDate, checkOutDate])
+  @@index([tenantId, guestId])
+  @@index([tenantId, groupBookingId])
   @@index([reservationNumber])
   @@map("reservations")
 }
@@ -420,4 +446,698 @@ model IoTEvent {
   @@index([tenantId, timestamp])
   @@index([sensorId])
   @@map("iot_events")
+}
+
+// ============================================
+// DEPOSIT MANAGEMENT MODULE
+// ============================================
+
+// Deposit Policies - Configurable deposit rules per tenant/room type
+model DepositPolicy {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String   // e.g., "Standard Policy", "VIP Policy"
+  description     String?
+  isActive        Boolean  @default(true)
+
+  // Application Rules
+  appliesToAllRooms    Boolean @default(true)
+  roomCategoryIds      String[] // Array of room category IDs this policy applies to
+  ratePlanIds          String[] // Array of rate plan IDs this policy applies to
+
+  // Deposit Calculation
+  depositType          String   // percentage, fixed_amount, nights, custom
+  depositValue         Decimal  @db.Decimal(10, 2) // Percentage (0-100) or fixed amount
+  maxDepositAmount     Decimal? @db.Decimal(10, 2) // Cap for percentage-based deposits
+  minDepositAmount     Decimal? @db.Decimal(10, 2) // Minimum deposit required
+
+  // Timing Rules
+  dueDaysBeforeCheckIn Int      // Days before check-in deposit is due
+  refundableAfterDays  Int?     // Days after booking when deposit becomes refundable
+  cancellationFee      Decimal? @db.Decimal(5, 2) // Percentage fee on cancellation
+
+  // Special Conditions
+  requiresForWeekends  Boolean  @default(false)
+  requiresForHolidays  Boolean  @default(false)
+  requiresForPeakSeason Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("deposit_policies")
+}
+
+// Deposit Payments - Track individual deposit payments
+model DepositPayment {
+  id              String   @id @default(uuid())
+  tenantId        String
+  reservationId   String
+  amount          Decimal  @db.Decimal(10, 2)
+  currency        String   @default("NGN")
+  method          String   // card, bank_transfer, cash, other
+  reference       String?  @unique
+  status          String   @default("pending") // pending, completed, failed, refunded
+  paymentGateway  String?  // paystack, flutterwave, stripe, manual
+  gatewayTransactionId String?
+  notes           String?
+  paidAt          DateTime?
+  processedBy     String?
+  refundedAt      DateTime?
+  refundedBy      String?
+  refundAmount    Decimal? @db.Decimal(10, 2)
+  refundReason    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, reservationId])
+  @@index([reference])
+  @@map("deposit_payments")
+}
+
+// ============================================
+// GROUP RESERVATION MODULE
+// ============================================
+
+// Group Bookings - Master booking for groups/events
+model GroupBooking {
+  id              String   @id @default(uuid())
+  tenantId        String
+  groupBookingNumber String @unique
+  groupName       String
+  groupType       String   // wedding, conference, tour, corporate, family, other
+  contactPerson   String
+  contactEmail    String
+  contactPhone    String
+
+  // Booking Details
+  expectedGuests  Int
+  confirmedGuests Int      @default(0)
+  checkInDate     DateTime
+  checkOutDate    DateTime
+  totalRooms      Int
+
+  // Financial
+  totalRevenue    Decimal  @db.Decimal(12, 2) @default(0)
+  depositAmount   Decimal? @db.Decimal(10, 2)
+  depositPaid     Boolean  @default(false)
+
+  // Status & Progress
+  status          String   @default("pending") // pending, confirmed, in_progress, completed, cancelled
+  bookingProgress String   @default("initial_contact") // initial_contact, contract_signed, deposit_received, rooms_allocated, confirmed
+
+  // Special Requirements
+  specialRequests String?
+  dietaryRequirements String?
+  setupRequirements String?
+
+  // Assignment
+  assignedTo      String?  // Staff member assigned to manage this group
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creator User @relation(fields: [createdBy], references: [id])
+  assignedStaff User? @relation("AssignedGroupBookings", fields: [assignedTo], references: [id])
+  reservations Reservation[]
+  roomBlocks   RoomBlock[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkInDate, checkOutDate])
+  @@index([groupBookingNumber])
+  @@map("group_bookings")
+}
+
+// Room Blocks - Allocated room blocks for group bookings
+model RoomBlock {
+  id              String   @id @default(uuid())
+  tenantId        String
+  groupBookingId  String
+  roomCategoryId  String
+  roomType        String
+  totalRooms      Int      // Total rooms in this block
+  allocatedRooms  Int      @default(0) // Rooms actually assigned
+  availableRooms  Int      // totalRooms - allocatedRooms
+
+  // Pricing
+  negotiatedRate  Decimal? @db.Decimal(10, 2) // Special rate for this block
+  discountPercent Decimal? @db.Decimal(5, 2) // Discount percentage
+
+  // Dates (can be subset of group booking dates)
+  checkInDate     DateTime
+  checkOutDate    DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, groupBookingId])
+  @@index([tenantId, roomCategoryId])
+  @@map("room_blocks")
+}
+
+// ============================================
+// OVERBOOKING MODULE
+// ============================================
+
+// Overbooking Settings - Per room type overbooking limits
+model OverbookingSetting {
+  id              String   @id @default(uuid())
+  tenantId        String
+  roomCategoryId  String?  // If null, applies to all categories
+  roomType        String?  // If null, applies to all room types
+
+  // Overbooking Limits
+  maxOverbookingPercent Decimal @db.Decimal(5, 2) @default(10) // Max 10% overbooking
+  maxOverbookingCount   Int?    // Alternative: fixed number instead of percentage
+
+  // Alert Thresholds
+  alertThresholdPercent Decimal @db.Decimal(5, 2) @default(5) // Alert at 5% overbooking
+  criticalThresholdPercent Decimal @db.Decimal(5, 2) @default(8) // Critical alert at 8%
+
+  // Restrictions
+  allowOverbooking     Boolean @default(false)
+  requireManagerApproval Boolean @default(true)
+  blackoutDates       DateTime[] // Dates when overbooking is not allowed
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, roomCategoryId, roomType])
+  @@index([tenantId])
+  @@map("overbooking_settings")
+}
+
+// Overbooking Alerts - Track overbooking situations
+model OverbookingAlert {
+  id              String   @id @default(uuid())
+  tenantId        String
+  roomCategoryId  String
+  roomType        String
+  date            DateTime // Date of overbooking
+  totalRooms      Int      // Total rooms available
+  bookedRooms     Int      // Confirmed bookings
+  overbookedRooms Int      // Number of overbookings
+  overbookingPercent Decimal @db.Decimal(5, 2)
+
+  // Resolution
+  status          String   @default("active") // active, resolved, escalated
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  resolutionNotes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, date])
+  @@index([tenantId, status])
+  @@map("overbooking_alerts")
+}
+
+// ============================================
+// GUEST REQUESTS MODULE
+// ============================================
+
+// Guest Requests - Service requests from guests
+model GuestRequest {
+  id              String   @id @default(uuid())
+  tenantId        String
+  guestId         String?  // Link to guest if known
+  reservationId   String?  // Link to reservation if applicable
+  roomId          String?  // Room making the request
+
+  // Request Details
+  requestType     String   // amenities, maintenance, housekeeping, concierge, other
+  priority        String   @default("normal") // low, normal, high, urgent
+  title           String
+  description     String
+  status          String   @default("pending") // pending, assigned, in_progress, completed, cancelled
+
+  // Contact Information
+  guestName       String?
+  guestPhone      String?
+  guestEmail      String?
+  roomNumber      String?
+
+  // Assignment & Resolution
+  assignedTo      String?  // Staff member assigned
+  department      String?  // housekeeping, maintenance, concierge, front_desk
+  estimatedCompletion DateTime?
+  actualCompletion    DateTime?
+
+  // Communication
+  guestNotified   Boolean  @default(false)
+  lastGuestUpdate DateTime?
+
+  // Metadata
+  source          String   @default("manual") // manual, app, kiosk, phone
+  tags            String[] // Array of tags for categorization
+
+  createdBy       String   // Staff who created the request
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guest Guest? @relation(fields: [guestId], references: [id])
+  assignedStaff User? @relation("AssignedRequests", fields: [assignedTo], references: [id])
+  creator User @relation("RequestCreator", fields: [createdBy], references: [id])
+
+  messages GuestRequestMessage[]
+  updates  GuestRequestUpdate[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, priority])
+  @@index([tenantId, requestType])
+  @@index([tenantId, guestId])
+  @@index([tenantId, assignedTo])
+  @@map("guest_requests")
+}
+
+// Guest Request Messages - Communication thread
+model GuestRequestMessage {
+  id              String   @id @default(uuid())
+  tenantId        String
+  guestRequestId  String
+  message         String
+  messageType     String   @default("note") // note, update, resolution, guest_response
+  isFromGuest     Boolean  @default(false)
+  isVisibleToGuest Boolean @default(false)
+
+  createdBy       String?  // Staff member or null for guest messages
+  createdAt       DateTime @default(now())
+
+  guestRequest GuestRequest @relation(fields: [guestRequestId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, guestRequestId])
+  @@map("guest_request_messages")
+}
+
+// Guest Request Updates - Status change history
+model GuestRequestUpdate {
+  id              String   @id @default(uuid())
+  tenantId        String
+  guestRequestId  String
+  previousStatus  String
+  newStatus       String
+  updateType      String   // status_change, assignment, priority_change, notes
+  notes           String?
+  performedBy     String
+
+  createdAt       DateTime @default(now())
+
+  guestRequest GuestRequest @relation(fields: [guestRequestId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, guestRequestId])
+  @@map("guest_request_updates")
+}
+
+// ============================================
+// LOST & FOUND MODULE
+// ============================================
+
+// Lost Items - Items reported lost by guests
+model LostItem {
+  id              String   @id @default(uuid())
+  tenantId        String
+  itemNumber      String   @unique // Auto-generated item number
+
+  // Item Details
+  itemName        String
+  description     String
+  category        String   // electronics, clothing, jewelry, documents, other
+  color           String?
+  brand           String?
+  serialNumber    String?
+  value           Decimal? @db.Decimal(10, 2)
+
+  // Location & Circumstances
+  foundLocation   String   // room_number, lobby, restaurant, pool, parking, other
+  foundBy         String?  // Staff member who found it
+  foundAt         DateTime
+  circumstances   String?  // How/where it was found
+
+  // Guest Information (if reported lost)
+  reportedByGuestId   String?
+  reportedByName      String?
+  reportedByPhone     String?
+  reportedByEmail     String?
+  reportedByRoom      String?
+  reportedAt          DateTime?
+
+  // Current Status
+  status          String   @default("unclaimed") // unclaimed, claimed, returned, disposed, donated
+  storageLocation String?  // Where the item is stored
+  storageNotes    String?
+
+  // Resolution
+  claimedBy       String?  // Guest who claimed it
+  claimedAt       DateTime?
+  claimMethod     String?  // id_check, description_match, other
+  returnedTo      String?  // Guest contact info for return
+  returnMethod    String?  // hand_delivered, mailed, picked_up
+
+  // Disposal
+  disposedAt      DateTime?
+  disposedBy      String?
+  disposalMethod  String?  // donated, discarded, sold
+
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  foundStaff User? @relation("FoundItems", fields: [foundBy], references: [id])
+  reportedGuest Guest? @relation(fields: [reportedByGuestId], references: [id])
+  creator User @relation("ItemCreator", fields: [createdBy], references: [id])
+
+  @@unique([tenantId, itemNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, category])
+  @@index([tenantId, foundAt])
+  @@map("lost_items")
+}
+
+// ============================================
+// ROOM SERVICE MODULE
+// ============================================
+
+// Menu Categories - Organize menu items
+model MenuCategory {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String
+  description     String?
+  displayOrder    Int      @default(0)
+  isActive        Boolean  @default(true)
+  imageUrl        String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items MenuItem[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("menu_categories")
+}
+
+// Menu Items - Individual food/drink items
+model MenuItem {
+  id              String   @id @default(uuid())
+  tenantId        String
+  categoryId      String
+
+  name            String
+  description     String?
+  price           Decimal  @db.Decimal(8, 2)
+  imageUrl        String?
+  isActive        Boolean  @default(true)
+  isVegetarian    Boolean  @default(false)
+  isVegan         Boolean  @default(false)
+  isGlutenFree    Boolean  @default(false)
+  containsNuts    Boolean  @default(false)
+  spiceLevel      String   @default("mild") // mild, medium, hot, very_hot
+  preparationTime Int?     // Minutes to prepare
+  allergens       String[] // Array of allergens
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  orderItems RoomServiceOrderItem[]
+
+  @@index([tenantId, isActive])
+  @@index([tenantId, categoryId])
+  @@map("menu_items")
+}
+
+// Room Service Orders - Guest orders
+model RoomServiceOrder {
+  id              String   @id @default(uuid())
+  tenantId        String
+  orderNumber     String   @unique
+
+  // Guest Information
+  guestId         String?
+  guestName       String
+  roomNumber      String
+  guestPhone      String?
+
+  // Order Details
+  status          String   @default("pending") // pending, confirmed, preparing, ready, delivered, cancelled
+  orderType       String   @default("room_service") // room_service, in_room_dining, lounge_order
+  specialInstructions String?
+  estimatedDelivery DateTime?
+
+  // Financial
+  subtotal        Decimal  @db.Decimal(8, 2) @default(0)
+  taxAmount       Decimal  @db.Decimal(8, 2) @default(0)
+  serviceCharge   Decimal  @db.Decimal(8, 2) @default(0)
+  totalAmount     Decimal  @db.Decimal(8, 2) @default(0)
+
+  // Delivery
+  deliveredAt     DateTime?
+  deliveredBy     String?
+  deliveryNotes   String?
+
+  // Assignment
+  assignedTo      String?  // Kitchen staff
+  preparedAt      DateTime?
+
+  // Timestamps
+  requestedAt     DateTime @default(now())
+  confirmedAt     DateTime?
+  createdBy       String?  // Staff who took the order
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guest Guest? @relation(fields: [guestId], references: [id])
+  assignedStaff User? @relation("AssignedOrders", fields: [assignedTo], references: [id])
+  creator User? @relation("OrderCreator", fields: [createdBy], references: [id])
+  deliveryStaff User? @relation("DeliveryStaff", fields: [deliveredBy], references: [id])
+
+  items RoomServiceOrderItem[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, requestedAt])
+  @@index([tenantId, roomNumber])
+  @@map("room_service_orders")
+}
+
+// Order Items - Individual items in an order
+model RoomServiceOrderItem {
+  id              String   @id @default(uuid())
+  tenantId        String
+  orderId         String
+  menuItemId      String
+
+  quantity        Int
+  unitPrice       Decimal  @db.Decimal(8, 2)
+  totalPrice      Decimal  @db.Decimal(8, 2)
+  specialRequests String?
+
+  // Preparation status
+  status          String   @default("pending") // pending, preparing, ready, delivered
+  preparedAt      DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order RoomServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, orderId])
+  @@index([tenantId, status])
+  @@map("room_service_order_items")
+}
+
+// ============================================
+// GUEST MANAGEMENT MODULE
+// ============================================
+
+// Dedicated Guest table - stores unique guest records
+model Guest {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String
+  email           String?
+  phone           String?
+  idNumber        String?
+  dateOfBirth     DateTime?
+  nationality     String?
+  address         String?
+  city            String?
+  state           String?
+  country         String?
+  postalCode      String?
+  
+  // Loyalty & Status
+  loyaltyTier     String   @default("bronze") // bronze, silver, gold, platinum, vip
+  loyaltyPoints   Int      @default(0)
+  totalStays      Int      @default(0)
+  totalNights     Int      @default(0)
+  totalSpent      Decimal  @default(0) @db.Decimal(12, 2)
+  
+  // Preferences
+  preferredRoomType   String?
+  preferredFloor      Int?
+  smokingPreference   Boolean  @default(false)
+  bedPreference       String?  // king, queen, twin, etc.
+  pillowPreference    String?  // soft, medium, firm
+  
+  // Dietary & Special
+  dietaryRestrictions Json?    // Array of dietary restrictions
+  allergies           Json?    // Array of allergies
+  specialRequests     String?
+  
+  // Guest Flags
+  isVIP               Boolean  @default(false)
+  isBanned            Boolean  @default(false)
+  bannedReason        String?
+  bannedAt            DateTime?
+  
+  // Marketing
+  marketingOptIn      Boolean  @default(true)
+  emailOptIn          Boolean  @default(true)
+  smsOptIn            Boolean  @default(true)
+  
+  // Dates
+  firstStayDate       DateTime?
+  lastStayDate        DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  // Relations
+  reservations    Reservation[]
+  activityLogs    GuestActivityLog[]
+  notes           GuestNote[]
+  loyaltyTransactions LoyaltyTransaction[]
+  guestRequests    GuestRequest[]
+  lostItems        LostItem[]
+  roomServiceOrders RoomServiceOrder[]
+  
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
+  @@index([tenantId, loyaltyTier])
+  @@index([tenantId, isVIP])
+  @@index([tenantId, email])
+  @@index([tenantId, phone])
+  @@map("guests")
+}
+
+// Guest Activity Log - tracks all guest interactions
+model GuestActivityLog {
+  id          String   @id @default(uuid())
+  tenantId    String
+  guestId     String
+  activityType String  // check_in, check_out, reservation, cancellation, payment, complaint, request, note, loyalty_earned, loyalty_redeemed
+  title       String   // Brief description
+  description String?  // Detailed description
+  metadata    Json?    // Additional context (reservation ID, room number, amount, etc.)
+  performedBy String?  // Staff member who performed/logged the action
+  createdAt   DateTime @default(now())
+  
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  @@index([tenantId, guestId, createdAt])
+  @@index([tenantId, activityType])
+  @@map("guest_activity_logs")
+}
+
+// Guest Notes - staff observations and notes
+model GuestNote {
+  id          String   @id @default(uuid())
+  tenantId    String
+  guestId     String
+  noteType    String   @default("general") // general, complaint, compliment, special_request, vip, warning
+  note        String
+  isImportant Boolean  @default(false)
+  isPinned    Boolean  @default(false)
+  createdBy   String   // Staff member who created the note
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  @@index([tenantId, guestId, createdAt])
+  @@index([tenantId, isImportant])
+  @@index([tenantId, isPinned])
+  @@map("guest_notes")
+}
+
+// Loyalty Program Configuration - per tenant
+model LoyaltyProgram {
+  id                  String   @id @default(uuid())
+  tenantId            String   @unique
+  isActive            Boolean  @default(true)
+  programName         String   @default("InnSight Rewards")
+  
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  // Points Configuration
+  pointsPerNight      Int      @default(10)  // Points earned per night
+  pointsPerCurrency   Decimal  @default(1)   @db.Decimal(10, 2) // Points per currency unit spent
+  
+  // Tier Thresholds (points required)
+  silverThreshold     Int      @default(100)
+  goldThreshold       Int      @default(500)
+  platinumThreshold   Int      @default(1000)
+  vipThreshold        Int      @default(5000)
+  
+  // Tier Benefits (discount percentages)
+  bronzeDiscount      Decimal  @default(0)    @db.Decimal(5, 2)
+  silverDiscount      Decimal  @default(5)    @db.Decimal(5, 2)
+  goldDiscount        Decimal  @default(10)   @db.Decimal(5, 2)
+  platinumDiscount    Decimal  @default(15)   @db.Decimal(5, 2)
+  vipDiscount         Decimal  @default(20)   @db.Decimal(5, 2)
+  
+  // Redemption
+  pointsRedemptionRate Decimal @default(100)  @db.Decimal(10, 2) // Points needed for 1 unit of currency
+  minRedemptionPoints  Int     @default(500)  // Minimum points to redeem
+  
+  // Expiry
+  pointsExpiryMonths  Int?    // Points expire after X months (null = never)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("loyalty_programs")
+}
+
+// Loyalty Transactions - track points earned and redeemed
+model LoyaltyTransaction {
+  id              String   @id @default(uuid())
+  tenantId        String
+  guestId         String
+  transactionType String   // earned, redeemed, expired, adjusted
+  points          Int      // Positive for earned, negative for redeemed/expired
+  balanceBefore   Int      // Points balance before transaction
+  balanceAfter    Int      // Points balance after transaction
+  description     String
+  reservationId   String?  // Link to reservation if applicable
+  metadata        Json?    // Additional context (rate, nights, discount applied, etc.)
+  createdBy       String?  // Staff member who performed the transaction
+  createdAt       DateTime @default(now())
+  
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  @@index([tenantId, guestId, createdAt])
+  @@index([tenantId, transactionType])
+  @@map("loyalty_transactions")
 }

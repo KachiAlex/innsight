@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.7.1",
+    "@prisma/debug": "^7.1.0",
     "@types/nodemailer": "^7.0.4",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

@@ -60,12 +60,8 @@ const MaintenancePage = lazy(() => import('./pages/MaintenancePage'));
 const PaymentsPage = lazy(() => import('./pages/PaymentsPage'));
 const TenantsPage = lazy(() => import('./pages/TenantsPage'));
 const RatePlansPage = lazy(() => import('./pages/RatePlansPage'));
-const GuestProfilePageModule = lazy(() => import('./pages/GuestProfilePage'));
-const GuestProfilePage = () => <GuestProfilePageModule />;
-const GuestsPage = () => {
-  const module = require('./pages/GuestProfilePage');
-  return <module.GuestsPage />;
-};
+const GuestProfilePage = lazy(() => import('./pages/GuestProfilePageEnhanced'));
+const GuestsPage = lazy(() => import('./pages/GuestsPage'));
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
 const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));

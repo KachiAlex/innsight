@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -46,24 +46,21 @@ export default function ReportsPage() {
     startDate: format(startOfMonth(new Date()), 'yyyy-MM-dd'),
     endDate: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
   });
+  const [exporting, setExporting] = useState(false);
 
-  useEffect(() => {
+  const fetchReports = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchReports();
-  }, [user, dateRange]);
-
-  const fetchReports = async () => {
     setLoading(true);
     try {
       const [revenueRes, occupancyRes] = await Promise.all([
-        api.get(`/tenants/${user?.tenantId}/reports/revenue`, {
+        api.get(`/tenants/${user.tenantId}/reports/revenue`, {
           params: {
             startDate: dateRange.startDate,
             endDate: dateRange.endDate,
             groupBy: 'day',
           },
         }),
-        api.get(`/tenants/${user?.tenantId}/reports/occupancy`, {
+        api.get(`/tenants/${user.tenantId}/reports/occupancy`, {
           params: {
             startDate: dateRange.startDate,
             endDate: dateRange.endDate,
@@ -73,12 +70,19 @@ export default function ReportsPage() {
 
       setRevenueData(revenueRes.data.data);
       setOccupancyData(occupancyRes.data.data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch reports:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch reports');
+      setRevenueData(null);
+      setOccupancyData(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, dateRange]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   const getQuickDateRange = (days: number) => {
     const end = new Date();
@@ -89,7 +93,7 @@ export default function ReportsPage() {
     });
   };
 
-  const prepareChartData = () => {
+  const prepareChartData = useMemo(() => {
     if (!revenueData?.dailyBreakdown) return [];
     return Object.entries(revenueData.dailyBreakdown)
       .map(([date, revenue]) => ({
@@ -98,19 +102,23 @@ export default function ReportsPage() {
         revenue: Number(revenue),
       }))
       .sort((a, b) => new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime());
-  };
+  }, [revenueData?.dailyBreakdown]);
 
-  const preparePaymentMethodData = () => {
+  const preparePaymentMethodData = useMemo(() => {
     if (!revenueData?.paymentMethods) return [];
     return Object.entries(revenueData.paymentMethods).map(([method, amount]) => ({
       method: method.replace('_', ' ').toUpperCase(),
       amount: Number(amount),
     }));
-  };
+  }, [revenueData?.paymentMethods]);
 
   const exportToPDF = async () => {
-    if (!revenueData || !occupancyData) return;
+    if (!revenueData || !occupancyData) {
+      toast.error('No data available to export');
+      return;
+    }
 
+    setExporting(true);
     try {
       // Dynamically import PDF libraries only when needed
       const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
@@ -149,9 +157,8 @@ export default function ReportsPage() {
       });
 
       // Daily Revenue Table
-      const chartData = prepareChartData();
-      if (chartData.length > 0) {
-        const revenueTableData = chartData.map((item) => [item.date, `₦${item.revenue.toLocaleString()}`]);
+      if (prepareChartData.length > 0) {
+        const revenueTableData = prepareChartData.map((item) => [item.date, `₦${item.revenue.toLocaleString()}`]);
         autoTable(doc, {
           startY: (doc as any).lastAutoTable.finalY + 20,
           head: [['Date', 'Revenue']],
@@ -162,21 +169,22 @@ export default function ReportsPage() {
 
       doc.save(`revenue-report-${dateRange.startDate}-${dateRange.endDate}.pdf`);
       toast.success('Report exported to PDF');
-    } catch (error) {
+    } catch (error: any) {
       console.error('PDF export failed:', error);
-      toast.error('Failed to export PDF');
+      toast.error(error.message || 'Failed to export PDF');
+    } finally {
+      setExporting(false);
     }
   };
 
   const exportToCSV = () => {
-    const chartData = prepareChartData();
-    if (!chartData.length) {
+    if (!prepareChartData.length) {
       toast.error('No data to export');
       return;
     }
 
     const headers = ['Date', 'Revenue'];
-    const rows = chartData.map((item) => [item.date, item.revenue.toString()]);
+    const rows = prepareChartData.map((item) => [item.date, item.revenue.toString()]);
     
     const csvContent = [
       headers.join(','),
@@ -206,8 +214,8 @@ export default function ReportsPage() {
     );
   }
 
-  const chartData = prepareChartData();
-  const paymentMethodData = preparePaymentMethodData();
+  const chartData = prepareChartData;
+  const paymentMethodData = preparePaymentMethodData;
 
   return (
     <Layout>
@@ -232,11 +240,11 @@ export default function ReportsPage() {
               }}
             >
               <Download size={18} />
-              Export PDF
+              {exporting ? 'Exporting...' : 'Export PDF'}
             </button>
             <button
               onClick={exportToCSV}
-              disabled={!chartData.length}
+              disabled={!prepareChartData.length || exporting}
               style={{
                 display: 'flex',
                 alignItems: 'center',

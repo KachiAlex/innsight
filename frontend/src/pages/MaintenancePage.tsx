@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import FileUpload from '../components/FileUpload';
+import EmptyState from '../components/EmptyState';
 
 interface MaintenanceTicket {
   id: string;
@@ -40,29 +41,33 @@ export default function MaintenancePage() {
     status: '',
     priority: '',
   });
+  const [resolvingTickets, setResolvingTickets] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const fetchTickets = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchTickets();
-  }, [user, filters]);
-
-  const fetchTickets = async () => {
     setLoading(true);
     try {
       const params: any = {};
       if (filters.status) params.status = filters.status;
       if (filters.priority) params.priority = filters.priority;
 
-      const response = await api.get(`/tenants/${user?.tenantId}/maintenance`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/maintenance`, { params });
       setTickets(response.data.data || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch tickets:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch tickets');
+      setTickets([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, filters]);
+
+  useEffect(() => {
+    fetchTickets();
+  }, [fetchTickets]);
 
   const handleResolve = async (ticketId: string) => {
+    setResolvingTickets(prev => new Set(prev).add(ticketId));
     try {
       await api.patch(`/tenants/${user?.tenantId}/maintenance/${ticketId}`, {
         status: 'resolved',
@@ -72,6 +77,12 @@ export default function MaintenancePage() {
       fetchTickets();
     } catch (error: any) {
       // Error handled by API interceptor
+    } finally {
+      setResolvingTickets(prev => {
+        const next = new Set(prev);
+        next.delete(ticketId);
+        return next;
+      });
     }
   };
 
@@ -289,15 +300,17 @@ export default function MaintenancePage() {
                       e.stopPropagation();
                       handleResolve(ticket.id);
                     }}
+                    disabled={resolvingTickets.has(ticket.id)}
                     style={{
                       marginTop: '1rem',
                       width: '100%',
                       padding: '0.75rem',
-                      background: '#10b981',
+                      background: resolvingTickets.has(ticket.id) ? '#94a3b8' : '#10b981',
                       color: 'white',
                       border: 'none',
                       borderRadius: '6px',
-                      cursor: 'pointer',
+                      cursor: resolvingTickets.has(ticket.id) ? 'not-allowed' : 'pointer',
+                      opacity: resolvingTickets.has(ticket.id) ? 0.6 : 1,
                       fontWeight: '500',
                       display: 'flex',
                       alignItems: 'center',
@@ -306,7 +319,7 @@ export default function MaintenancePage() {
                     }}
                   >
                     <CheckCircle size={18} />
-                    Resolve
+                    {resolvingTickets.has(ticket.id) ? 'Resolving...' : 'Resolve'}
                   </button>
                 )}
               </div>
@@ -314,19 +327,18 @@ export default function MaintenancePage() {
           })}
         </div>
 
-        {tickets.length === 0 && (
-          <div
-            style={{
-              background: 'white',
-              padding: '3rem',
-              borderRadius: '8px',
-              textAlign: 'center',
-              color: '#94a3b8',
+        {!loading && tickets.length === 0 && (
+          <EmptyState
+            icon={Wrench}
+            title={filters.status || filters.priority ? 'No tickets match your filters' : 'No maintenance tickets yet'}
+            description={filters.status || filters.priority
+              ? 'Try adjusting your filter criteria'
+              : 'Create your first maintenance ticket to get started'}
+            action={filters.status || filters.priority ? undefined : {
+              label: 'Create Ticket',
+              onClick: () => setShowCreateModal(true),
             }}
-          >
-            <Wrench size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-            <p>No maintenance tickets found</p>
-          </div>
+          />
         )}
 
         {showCreateModal && (

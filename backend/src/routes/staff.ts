@@ -44,9 +44,10 @@ staffRouter.get(
       const tenantId = req.params.tenantId;
       const { role, roleClassification, isActive, search } = req.query;
 
+      // Build query - Firestore doesn't support != with other where clauses
+      // So we'll filter out owners in memory
       let query: FirebaseFirestore.Query = db.collection('users')
-        .where('tenantId', '==', tenantId)
-        .where('role', '!=', 'owner'); // Exclude owner from staff list
+        .where('tenantId', '==', tenantId);
 
       if (role) {
         query = query.where('role', '==', role);
@@ -61,23 +62,28 @@ staffRouter.get(
       }
 
       const snapshot = await query.get();
-      let staff = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          email: data.email,
-          firstName: data.firstName,
-          lastName: data.lastName,
-          phone: data.phone || null,
-          role: data.role,
-          roleClassification: data.roleClassification || null,
-          roleDescription: data.roleDescription || null,
-          isActive: data.isActive !== undefined ? data.isActive : true,
-          lastLoginAt: data.lastLoginAt ? toDate(data.lastLoginAt) : null,
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        };
-      });
+      let staff = snapshot.docs
+        .filter(doc => {
+          const data = doc.data();
+          return data.role !== 'owner'; // Exclude owner from staff list
+        })
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            email: data.email,
+            firstName: data.firstName,
+            lastName: data.lastName,
+            phone: data.phone || null,
+            role: data.role,
+            roleClassification: data.roleClassification || null,
+            roleDescription: data.roleDescription || null,
+            isActive: data.isActive !== undefined ? data.isActive : true,
+            lastLoginAt: data.lastLoginAt ? toDate(data.lastLoginAt) : null,
+            createdAt: toDate(data.createdAt),
+            updatedAt: toDate(data.updatedAt),
+          };
+        });
 
       // Filter by search term if provided
       if (search) {

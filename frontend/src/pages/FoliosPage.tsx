@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { X, Filter, Printer } from 'lucide-react';
+import { X, Filter, Printer, Receipt } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
 import { TableSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
 import Pagination from '../components/Pagination';
 import { printFolio } from '../utils/print';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface Folio {
   id: string;
@@ -30,6 +32,7 @@ export default function FoliosPage() {
   const [loading, setLoading] = useState(true);
   const [selectedFolio, setSelectedFolio] = useState<Folio | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     status: '',
@@ -43,12 +46,9 @@ export default function FoliosPage() {
     totalPages: 0,
   });
 
-  useEffect(() => {
+  const fetchFolios = useCallback(async (page = pagination.page) => {
     if (!user?.tenantId) return;
-    fetchFolios(pagination.page);
-  }, [user, pagination.page, filters]);
-
-  const fetchFolios = async (page = pagination.page) => {
+    setLoading(true);
     try {
       const params: any = {
         page,
@@ -58,24 +58,31 @@ export default function FoliosPage() {
       if (filters.startDate) params.startDate = filters.startDate;
       if (filters.endDate) params.endDate = filters.endDate;
 
-      const response = await api.get(`/tenants/${user?.tenantId}/folios`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/folios`, { params });
       setFolios(response.data.data || []);
       if (response.data.pagination) {
         setPagination(response.data.pagination);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch folios:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch folios');
+      setFolios([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, filters, pagination.limit]);
+
+  useEffect(() => {
+    fetchFolios(pagination.page);
+  }, [fetchFolios, pagination.page]);
 
   const handleViewDetails = async (folioId: string) => {
     try {
       const response = await api.get(`/tenants/${user?.tenantId}/folios/${folioId}`);
       setSelectedFolio(response.data.data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch folio details:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch folio details');
     }
   };
 
@@ -85,15 +92,15 @@ export default function FoliosPage() {
     }
   };
 
-  const filteredFolios = folios.filter((folio) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
+  const filteredFolios = useMemo(() => folios.filter((folio) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return (
       folio.guestName.toLowerCase().includes(searchLower) ||
       folio.room?.roomNumber.toLowerCase().includes(searchLower) ||
       folio.status.toLowerCase().includes(searchLower)
     );
-  });
+  }), [folios, debouncedSearchTerm]);
 
   if (loading) {
     return (
@@ -316,13 +323,21 @@ export default function FoliosPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredFolios.length === 0 ? (
+              {filteredFolios.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
-                    {searchTerm ? 'No folios match your search' : 'No folios found'}
+                  <td colSpan={7} style={{ padding: '3rem', textAlign: 'center' }}>
+                    <EmptyState
+                      icon={Receipt}
+                      title={searchTerm || filters.status || filters.startDate || filters.endDate 
+                        ? 'No folios match your filters' 
+                        : 'No folios yet'}
+                      description={searchTerm || filters.status || filters.startDate || filters.endDate
+                        ? 'Try adjusting your search or filter criteria'
+                        : 'Folios will appear here when guests make reservations'}
+                    />
                   </td>
                 </tr>
-              ) : (
+              ) : filteredFolios.length > 0 ? (
                 filteredFolios.map((folio) => (
                   <tr key={folio.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
                     <td style={{ padding: '1rem', color: '#1e293b' }}>{folio.guestName}</td>
@@ -384,7 +399,7 @@ export default function FoliosPage() {
                     </td>
                   </tr>
                 ))
-              )}
+              ) : null}
             </tbody>
           </table>
           {pagination.totalPages > 1 && (

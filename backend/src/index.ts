@@ -23,9 +23,15 @@ import { iotRouter } from './routes/iot';
 import { uploadRouter } from './routes/upload';
 import { ratePlanRouter } from './routes/ratePlans';
 import { guestRouter } from './routes/guests';
+import { guestEnhancedRouter } from './routes/guests-enhanced';
+import { depositRouter } from './routes/deposits';
+import { groupBookingRouter } from './routes/group-bookings';
+import { overbookingRouter } from './routes/overbooking';
+import { guestRequestsRouter } from './routes/guest-requests';
+import { lostFoundRouter } from './routes/lost-found';
+import { roomServiceRouter } from './routes/room-service';
 import { calendarRouter } from './routes/calendar';
 import { roomCategoryRouter } from './routes/roomCategories';
-import { groupBookingRouter } from './routes/groupBookings';
 import { staffRouter } from './routes/staff';
 import { settingsRouter } from './routes/settings';
 import { wagePlanRouter } from './routes/wagePlans';
@@ -76,7 +82,14 @@ app.use('/api/tenants/:tenantId/alerts', alertRouter);
 app.use('/api/tenants/:tenantId/reports', reportRouter);
 app.use('/api/tenants/:tenantId/upload', uploadRouter);
 app.use('/api/tenants/:tenantId/rate-plans', ratePlanRouter);
-app.use('/api/tenants/:tenantId/guests', guestRouter);
+app.use('/api/tenants/:tenantId/guests', guestRouter); // Legacy guest routes (default)
+app.use('/api/tenants/:tenantId/guests-enhanced', guestEnhancedRouter); // Enhanced guest routes (after migration)
+app.use('/api/tenants/:tenantId/deposits', depositRouter); // Deposit management
+app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter); // Group bookings
+app.use('/api/tenants/:tenantId/overbooking', overbookingRouter); // Overbooking management
+app.use('/api/tenants/:tenantId/guest-requests', guestRequestsRouter); // Guest requests
+app.use('/api/tenants/:tenantId/lost-found', lostFoundRouter); // Lost & found
+app.use('/api/tenants/:tenantId/room-service', roomServiceRouter); // Room service
 app.use('/api/tenants/:tenantId/calendar', calendarRouter);
 app.use('/api/tenants/:tenantId/room-categories', roomCategoryRouter);
 app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter);

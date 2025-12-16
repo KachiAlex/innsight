@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Plus, Edit, Trash2, DollarSign, X, Users } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Users, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface WagePlan {
   id: string;
@@ -49,8 +51,11 @@ export default function WagePlansPage() {
   const [selectedWagePlan, setSelectedWagePlan] = useState<WagePlan | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [filterClassification, setFilterClassification] = useState<string>('');
   const [filterActive, setFilterActive] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingPlans, setDeletingPlans] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<{
     name: string;
     description: string;
@@ -77,45 +82,50 @@ export default function WagePlansPage() {
     isActive: true,
   });
 
-  useEffect(() => {
+  const fetchWagePlans = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchWagePlans();
-    fetchStaff();
-  }, [user, filterClassification, filterActive]);
-
-  const fetchWagePlans = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const params: any = {};
       if (filterClassification) params.roleClassification = filterClassification;
       if (filterActive !== null) params.isActive = filterActive.toString();
 
-      const response = await api.get(`/tenants/${user?.tenantId}/wage-plans`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/wage-plans`, { params });
       setWagePlans(response.data.data || []);
     } catch (error: any) {
       console.error('Failed to fetch wage plans:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch wage plans');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to fetch wage plans');
+      setWagePlans([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, filterClassification, filterActive]);
 
-  const fetchStaff = async () => {
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    fetchWagePlans();
+    fetchStaff();
+  }, [user, fetchWagePlans]);
+
+  const fetchStaff = useCallback(async () => {
+    if (!user?.tenantId) return;
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/staff`);
+      const response = await api.get(`/tenants/${user.tenantId}/staff`);
       setStaff(response.data.data || []);
     } catch (error: any) {
       console.error('Failed to fetch staff:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch staff');
     }
-  };
+  }, [user?.tenantId]);
 
   const handleCreate = async () => {
-    try {
-      if (!formData.name || !formData.baseAmount) {
-        toast.error('Please fill in all required fields');
-        return;
-      }
+    if (!formData.name || !formData.baseAmount) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
 
+    setSaving(true);
+    try {
       const wagePlanData: any = {
         name: formData.name,
         description: formData.description || undefined,
@@ -136,26 +146,28 @@ export default function WagePlansPage() {
       }
 
       await api.post(`/tenants/${user?.tenantId}/wage-plans`, wagePlanData);
-
       toast.success('Wage plan created successfully');
       setShowCreateModal(false);
       resetForm();
       fetchWagePlans();
     } catch (error: any) {
       console.error('Failed to create wage plan:', error);
-      toast.error(error.response?.data?.message || 'Failed to create wage plan');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to create wage plan');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEdit = async () => {
     if (!selectedWagePlan) return;
 
-    try {
-      if (!formData.name || !formData.baseAmount) {
-        toast.error('Please fill in all required fields');
-        return;
-      }
+    if (!formData.name || !formData.baseAmount) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
 
+    setSaving(true);
+    try {
       const wagePlanData: any = {
         name: formData.name,
         description: formData.description || undefined,
@@ -180,7 +192,6 @@ export default function WagePlansPage() {
       }
 
       await api.patch(`/tenants/${user?.tenantId}/wage-plans/${selectedWagePlan.id}`, wagePlanData);
-
       toast.success('Wage plan updated successfully');
       setShowEditModal(false);
       setSelectedWagePlan(null);
@@ -188,20 +199,29 @@ export default function WagePlansPage() {
       fetchWagePlans();
     } catch (error: any) {
       console.error('Failed to update wage plan:', error);
-      toast.error(error.response?.data?.message || 'Failed to update wage plan');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to update wage plan');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (wagePlanId: string) => {
     if (!window.confirm('Are you sure you want to delete this wage plan?')) return;
 
+    setDeletingPlans(prev => new Set(prev).add(wagePlanId));
     try {
       await api.delete(`/tenants/${user?.tenantId}/wage-plans/${wagePlanId}`);
       toast.success('Wage plan deleted successfully');
       fetchWagePlans();
     } catch (error: any) {
       console.error('Failed to delete wage plan:', error);
-      toast.error(error.response?.data?.message || 'Failed to delete wage plan');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to delete wage plan');
+    } finally {
+      setDeletingPlans(prev => {
+        const next = new Set(prev);
+        next.delete(wagePlanId);
+        return next;
+      });
     }
   };
 
@@ -211,6 +231,7 @@ export default function WagePlansPage() {
       return;
     }
 
+    setSaving(true);
     try {
       await api.post(`/tenants/${user?.tenantId}/wage-plans/${selectedWagePlan.id}/assign-to-staff/${selectedStaff}`);
       toast.success('Wage plan assigned successfully');
@@ -220,7 +241,9 @@ export default function WagePlansPage() {
       fetchStaff();
     } catch (error: any) {
       console.error('Failed to assign wage plan:', error);
-      toast.error(error.response?.data?.message || 'Failed to assign wage plan');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to assign wage plan');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -281,25 +304,25 @@ export default function WagePlansPage() {
     });
   };
 
-  const filteredWagePlans = wagePlans.filter((plan) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
+  const filteredWagePlans = useMemo(() => wagePlans.filter((plan) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return (
       plan.name.toLowerCase().includes(searchLower) ||
       plan.description?.toLowerCase().includes(searchLower) ||
       (plan.role && plan.role.toLowerCase().includes(searchLower))
     );
-  });
+  }), [wagePlans, debouncedSearchTerm]);
 
   // Group by classification
-  const groupedPlans = filteredWagePlans.reduce((acc, plan) => {
+  const groupedPlans = useMemo(() => filteredWagePlans.reduce((acc: Record<string, WagePlan[]>, plan: WagePlan) => {
     const key = plan.roleClassification;
     if (!acc[key]) {
       acc[key] = [];
     }
     acc[key].push(plan);
     return acc;
-  }, {} as Record<string, WagePlan[]>);
+  }, {} as Record<string, WagePlan[]>), [filteredWagePlans]);
 
   if (loading) {
     return (
@@ -409,11 +432,21 @@ export default function WagePlansPage() {
           </div>
         </div>
 
-        {filteredWagePlans.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-            <DollarSign size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-            <p>No wage plans found</p>
-          </div>
+        {!loading && filteredWagePlans.length === 0 ? (
+          <EmptyState
+            icon={Wallet}
+            title={searchTerm || filterClassification ? 'No wage plans match your filters' : 'No wage plans yet'}
+            description={searchTerm || filterClassification
+              ? 'Try adjusting your search or filter criteria'
+              : 'Create your first wage plan to get started'}
+            action={searchTerm || filterClassification ? undefined : {
+              label: 'Create Wage Plan',
+              onClick: () => {
+                resetForm();
+                setShowCreateModal(true);
+              },
+            }}
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             {Object.entries(groupedPlans).map(([classification, plans]) => (
@@ -487,7 +520,7 @@ export default function WagePlansPage() {
                             Benefits:
                           </p>
                           <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.875rem', color: '#64748b' }}>
-                            {plan.benefits.map((benefit, idx) => (
+                            {plan.benefits.map((benefit: string, idx: number) => (
                               <li key={idx}>{benefit}</li>
                             ))}
                           </ul>
@@ -538,14 +571,16 @@ export default function WagePlansPage() {
                         </button>
                         <button
                           onClick={() => handleDelete(plan.id)}
+                          disabled={deletingPlans.has(plan.id)}
                           style={{
                             flex: 1,
                             padding: '0.5rem',
                             border: '1px solid #fee2e2',
                             borderRadius: '6px',
                             background: 'white',
-                            color: '#ef4444',
-                            cursor: 'pointer',
+                            color: deletingPlans.has(plan.id) ? '#94a3b8' : '#ef4444',
+                            cursor: deletingPlans.has(plan.id) ? 'not-allowed' : 'pointer',
+                            opacity: deletingPlans.has(plan.id) ? 0.6 : 1,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
@@ -554,7 +589,7 @@ export default function WagePlansPage() {
                           }}
                         >
                           <Trash2 size={16} />
-                          Delete
+                          {deletingPlans.has(plan.id) ? 'Deleting...' : 'Delete'}
                         </button>
                       </div>
                     </div>
@@ -1224,18 +1259,20 @@ export default function WagePlansPage() {
                   </button>
                   <button
                     onClick={handleEdit}
+                    disabled={saving}
                     style={{
                       flex: 1,
                       padding: '0.75rem',
                       border: 'none',
                       borderRadius: '6px',
-                      background: '#3b82f6',
+                      background: saving ? '#94a3b8' : '#3b82f6',
                       color: 'white',
-                      cursor: 'pointer',
+                      cursor: saving ? 'not-allowed' : 'pointer',
+                      opacity: saving ? 0.6 : 1,
                       fontWeight: '500',
                     }}
                   >
-                    Update
+                    {saving ? 'Updating...' : 'Update'}
                   </button>
                 </div>
               </div>

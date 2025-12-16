@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -7,6 +7,8 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { TableSkeleton } from '../components/LoadingSkeleton';
 import Pagination from '../components/Pagination';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface Payment {
   id: string;
@@ -37,6 +39,8 @@ export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+  const [reconcilingPayments, setReconcilingPayments] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState({
     status: '',
     method: '',
@@ -53,17 +57,13 @@ export default function PaymentsPage() {
     totalPages: 0,
   });
 
-  useEffect(() => {
+  const fetchPayments = useCallback(async (page = pagination.page) => {
     if (!user?.tenantId) return;
-    fetchPayments(pagination.page);
-  }, [user, filters, activeTab, pagination.page]);
-
-  const fetchPayments = async (page = pagination.page) => {
     setLoading(true);
     try {
       let response;
       if (activeTab === 'reconcile') {
-        response = await api.get(`/tenants/${user?.tenantId}/payments/reconcile`, {
+        response = await api.get(`/tenants/${user.tenantId}/payments/reconcile`, {
           params: { page, limit: pagination.limit },
         });
       } else {
@@ -73,32 +73,45 @@ export default function PaymentsPage() {
         if (filters.reconciled) params.reconciled = filters.reconciled;
         if (filters.startDate) params.startDate = filters.startDate;
         if (filters.endDate) params.endDate = filters.endDate;
-        response = await api.get(`/tenants/${user?.tenantId}/payments`, { params });
+        response = await api.get(`/tenants/${user.tenantId}/payments`, { params });
       }
       setPayments(response.data.data || []);
       if (response.data.pagination) {
         setPagination(response.data.pagination);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch payments:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch payments');
+      setPayments([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, activeTab, filters, pagination.limit]);
+
+  useEffect(() => {
+    fetchPayments(pagination.page);
+  }, [fetchPayments, pagination.page]);
 
   const handleReconcile = async (paymentId: string) => {
+    setReconcilingPayments(prev => new Set(prev).add(paymentId));
     try {
       await api.post(`/tenants/${user?.tenantId}/payments/${paymentId}/reconcile`);
       toast.success('Payment reconciled successfully');
       fetchPayments();
     } catch (error: any) {
       // Error handled by API interceptor
+    } finally {
+      setReconcilingPayments(prev => {
+        const next = new Set(prev);
+        next.delete(paymentId);
+        return next;
+      });
     }
   };
 
-  const filteredPayments = payments.filter((payment) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
+  const filteredPayments = useMemo(() => payments.filter((payment) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return (
       payment.reference?.toLowerCase().includes(searchLower) ||
       payment.folio.guestName.toLowerCase().includes(searchLower) ||
@@ -106,7 +119,7 @@ export default function PaymentsPage() {
       payment.gatewayTransactionId?.toLowerCase().includes(searchLower) ||
       `${payment.user.firstName} ${payment.user.lastName}`.toLowerCase().includes(searchLower)
     );
-  });
+  }), [payments, debouncedSearchTerm]);
 
   const getMethodColor = (method: string) => {
     const colors: Record<string, { bg: string; text: string }> = {
@@ -401,7 +414,17 @@ export default function PaymentsPage() {
           {filteredPayments.length === 0 ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
               <CreditCard size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-              <p>No payments found</p>
+              {filteredPayments.length === 0 ? (
+                <EmptyState
+                  icon={CreditCard}
+                  title={searchTerm || filters.status || filters.method || filters.startDate 
+                    ? 'No payments match your filters' 
+                    : 'No payments yet'}
+                  description={searchTerm || filters.status || filters.method || filters.startDate
+                    ? 'Try adjusting your search or filter criteria'
+                    : 'Payments will appear here when guests make transactions'}
+                />
+              ) : null}
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -488,16 +511,17 @@ export default function PaymentsPage() {
                               alignItems: 'center',
                               gap: '0.5rem',
                               padding: '0.5rem 1rem',
-                              background: '#10b981',
+                              background: reconcilingPayments.has(payment.id) ? '#94a3b8' : '#10b981',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
-                              cursor: 'pointer',
+                              cursor: reconcilingPayments.has(payment.id) ? 'not-allowed' : 'pointer',
+                              opacity: reconcilingPayments.has(payment.id) ? 0.6 : 1,
                               fontSize: '0.875rem',
                             }}
                           >
                             <CheckCircle size={16} />
-                            Reconcile
+                            {reconcilingPayments.has(payment.id) ? 'Reconciling...' : 'Reconcile'}
                           </button>
                         )}
                         {payment.reconciled && (

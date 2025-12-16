@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -7,6 +7,8 @@ import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
 import Pagination from '../components/Pagination';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface RoomCategory {
   id: string;
@@ -64,6 +66,7 @@ export default function RoomsPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<RoomCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('');
   const [selectedFloorFilter, setSelectedFloorFilter] = useState<string>('');
   const [selectedRoomTypeFilter, setSelectedRoomTypeFilter] = useState<string>('');
@@ -84,7 +87,7 @@ export default function RoomsPage() {
   });
   const [pagination, setPagination] = useState({
     page: 1,
-    limit: 20,
+    limit: 50, // Increased from 20 to reduce pagination overhead
     total: 0,
     totalPages: 1,
     hasNext: false,
@@ -92,20 +95,16 @@ export default function RoomsPage() {
   });
   const [latestReport, setLatestReport] = useState<any>(null);
 
-  useEffect(() => {
+  const fetchRooms = useCallback(async (page = 1, limit = pagination.limit, showLoading = false) => {
     if (!user?.tenantId) return;
-    fetchRooms(1, pagination.limit);
-  }, [user, selectedCategoryFilter, selectedFloorFilter]);
-
-  useEffect(() => {
-    if (!user?.tenantId) return;
-    fetchCategories();
-  }, [user]);
-
-  const fetchRooms = async (page = 1, limit = pagination.limit) => {
-    setLoading(true);
+    
+    // Only show full loading skeleton on initial load
+    if (showLoading) {
+      setLoading(true);
+    }
+    
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/rooms`, {
+      const response = await api.get(`/tenants/${user.tenantId}/rooms`, {
         params: {
           page,
           limit,
@@ -133,12 +132,16 @@ export default function RoomsPage() {
         }));
       }
       setSelectedRooms(new Set());
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch rooms:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch rooms');
+      setRooms([]);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
-  };
+  }, [user?.tenantId, selectedCategoryFilter, selectedFloorFilter, pagination.limit]);
 
   const fetchCategories = async () => {
     try {
@@ -169,9 +172,32 @@ export default function RoomsPage() {
     }
   };
 
+  // Initial data fetch - load rooms and categories in parallel
   useEffect(() => {
-    fetchLatestReport();
+    if (!user?.tenantId) return;
+    
+    const loadInitialData = async () => {
+      try {
+        // Fetch all data in parallel for faster loading
+        await Promise.all([
+          fetchRooms(1, pagination.limit, true), // showLoading = true for initial load
+          fetchCategories(),
+          fetchLatestReport(),
+        ]);
+      } catch (error) {
+        console.error('Failed to load initial data:', error);
+        setLoading(false);
+      }
+    };
+    
+    loadInitialData();
   }, [user?.tenantId]);
+  
+  // Refetch when filters change (without showing loading skeleton)
+  useEffect(() => {
+    if (!user?.tenantId || loading) return;
+    fetchRooms(1, pagination.limit, false); // showLoading = false for filter changes
+  }, [selectedCategoryFilter, selectedFloorFilter]);
 
   const fetchRoomLogs = async (roomId: string, page = 1, limit = roomLogsPagination.limit) => {
     setRoomLogsLoading(true);
@@ -270,10 +296,10 @@ export default function RoomsPage() {
     setRoomLogs([]);
   };
 
-  const filteredRooms = rooms.filter((room) => {
-    // Filter by search term
-    if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase();
+  const filteredRooms = useMemo(() => rooms.filter((room) => {
+    // Filter by search term (use debounced value for actual filtering but immediate for UI responsiveness)
+    if (debouncedSearchTerm) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
       const matchesSearch =
         room.roomNumber.toLowerCase().includes(searchLower) ||
         room.roomType.toLowerCase().includes(searchLower) ||
@@ -312,7 +338,7 @@ export default function RoomsPage() {
     }
 
     return true;
-  });
+  }), [rooms, debouncedSearchTerm, selectedCategoryFilter, selectedRoomTypeFilter, selectedStatusFilter, selectedFloorFilter]);
 
   const roomTypeOptions = useMemo(() => {
     return Array.from(new Set(rooms.map((room) => room.roomType).filter(Boolean)));
@@ -1138,8 +1164,17 @@ export default function RoomsPage() {
               color: '#94a3b8',
             }}
           >
-            <DoorOpen size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-            <p>No rooms found. Create your first room to get started.</p>
+            <EmptyState
+              icon={DoorOpen}
+              title={searchTerm || selectedCategoryFilter || selectedFloorFilter ? 'No rooms found' : 'No rooms yet'}
+              description={searchTerm || selectedCategoryFilter || selectedFloorFilter 
+                ? 'Try adjusting your filters to find rooms' 
+                : 'Create your first room to get started'}
+              action={searchTerm || selectedCategoryFilter || selectedFloorFilter ? undefined : {
+                label: 'Create Room',
+                onClick: () => setShowCreateModal(true),
+              }}
+            />
           </div>
         )}
 

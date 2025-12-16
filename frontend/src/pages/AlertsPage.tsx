@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -6,6 +6,7 @@ import { AlertCircle, CheckCircle, Filter } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { TableSkeleton } from '../components/LoadingSkeleton';
+import EmptyState from '../components/EmptyState';
 
 interface Alert {
   id: string;
@@ -32,13 +33,10 @@ export default function AlertsPage() {
     alertType: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [resolvingAlerts, setResolvingAlerts] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
+  const fetchAlerts = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchAlerts();
-  }, [user, filters]);
-
-  const fetchAlerts = async () => {
     setLoading(true);
     try {
       const params: any = {};
@@ -46,22 +44,35 @@ export default function AlertsPage() {
       if (filters.severity) params.severity = filters.severity;
       if (filters.alertType) params.alertType = filters.alertType;
 
-      const response = await api.get(`/tenants/${user?.tenantId}/alerts`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/alerts`, { params });
       setAlerts(response.data.data || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch alerts:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch alerts');
+      setAlerts([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, filters]);
+
+  useEffect(() => {
+    fetchAlerts();
+  }, [fetchAlerts]);
 
   const handleResolve = async (alertId: string) => {
+    setResolvingAlerts(prev => new Set(prev).add(alertId));
     try {
       await api.post(`/tenants/${user?.tenantId}/alerts/${alertId}/resolve`);
       toast.success('Alert resolved successfully');
       fetchAlerts();
     } catch (error: any) {
       // Error handled by API interceptor
+    } finally {
+      setResolvingAlerts(prev => {
+        const next = new Set(prev);
+        next.delete(alertId);
+        return next;
+      });
     }
   };
 
@@ -214,12 +225,15 @@ export default function AlertsPage() {
             overflow: 'hidden',
           }}
         >
-          {alerts.length === 0 ? (
-            <div style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
-              <AlertCircle size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-              <p>No alerts found</p>
-            </div>
-          ) : (
+          {!loading && alerts.length === 0 ? (
+            <EmptyState
+              icon={AlertCircle}
+              title={filters.status || filters.severity || filters.alertType ? 'No alerts match your filters' : 'No alerts yet'}
+              description={filters.status || filters.severity || filters.alertType
+                ? 'Try adjusting your filter criteria'
+                : 'Alerts will appear here when system events occur'}
+            />
+          ) : alerts.length > 0 ? (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
@@ -278,21 +292,23 @@ export default function AlertsPage() {
                         {alert.status !== 'resolved' && (
                           <button
                             onClick={() => handleResolve(alert.id)}
+                            disabled={resolvingAlerts.has(alert.id)}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
                               gap: '0.5rem',
                               padding: '0.5rem 1rem',
-                              background: '#10b981',
+                              background: resolvingAlerts.has(alert.id) ? '#94a3b8' : '#10b981',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
-                              cursor: 'pointer',
+                              cursor: resolvingAlerts.has(alert.id) ? 'not-allowed' : 'pointer',
+                              opacity: resolvingAlerts.has(alert.id) ? 0.6 : 1,
                               fontSize: '0.875rem',
                             }}
                           >
                             <CheckCircle size={16} />
-                            Resolve
+                            {resolvingAlerts.has(alert.id) ? 'Resolving...' : 'Resolve'}
                           </button>
                         )}
                         {alert.resolver && (
@@ -306,7 +322,7 @@ export default function AlertsPage() {
                 })}
               </tbody>
             </table>
-          )}
+          ) : null}
         </div>
       </div>
     </Layout>

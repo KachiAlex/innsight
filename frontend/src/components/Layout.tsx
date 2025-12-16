@@ -19,9 +19,10 @@ import {
   Moon,
   Settings,
   UserCheck,
-  Wallet
+  Wallet,
+  UserCog
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -41,7 +42,7 @@ const menuItems = [
   { path: '/maintenance', icon: Wrench, label: 'Maintenance' },
   { path: '/reports', icon: BarChart3, label: 'Reports' },
   { path: '/night-audit', icon: Moon, label: 'Night Audit' },
-  { path: '/staff', icon: Users, label: 'Staff' },
+  { path: '/staff', icon: UserCog, label: 'Staff' },
   { path: '/wage-plans', icon: Wallet, label: 'Wage Plans' },
   { path: '/settings', icon: Settings, label: 'Settings' },
   { path: '/alerts', icon: AlertCircle, label: 'Alerts' },
@@ -63,6 +64,15 @@ export default function Layout({ children }: LayoutProps) {
   const isIITechAdmin = user?.role === 'iitech_admin';
   const showTenantSidebar = !isIITechAdmin;
 
+  // Debug: Log menu items and user info
+  useEffect(() => {
+    console.log('Layout mounted - Menu items:', menuItems.map(item => item.label));
+    console.log('Layout - User role:', user?.role);
+    console.log('Layout - Show tenant sidebar:', showTenantSidebar);
+    console.log('Layout - Staff menu item:', menuItems.find(item => item.path === '/staff'));
+    console.log('Layout - Wage Plans menu item:', menuItems.find(item => item.path === '/wage-plans'));
+  }, [user, showTenantSidebar]);
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f5f5f5' }}>
       {/* Sidebar - Only show for tenant users */}
@@ -77,9 +87,11 @@ export default function Layout({ children }: LayoutProps) {
           position: 'fixed',
           height: '100vh',
           zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        <div style={{ padding: '1.5rem', borderBottom: '1px solid #334155' }}>
+        <div style={{ padding: '1.5rem', borderBottom: '1px solid #334155', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 'bold' }}>InnSight PMS</h2>
             <button
@@ -105,10 +117,11 @@ export default function Layout({ children }: LayoutProps) {
           )}
         </div>
 
-        <nav style={{ padding: '1rem 0' }}>
+        <nav style={{ padding: '1rem 0', flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
           {menuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
+            console.log(`Rendering menu item: ${item.label}, Path: ${item.path}, Active: ${isActive}`);
             return (
               <Link
                 key={item.path}
@@ -130,14 +143,14 @@ export default function Layout({ children }: LayoutProps) {
                   if (!isActive) e.currentTarget.style.background = 'transparent';
                 }}
               >
-                <Icon size={20} style={{ marginRight: '0.75rem' }} />
-                {item.label}
+                <Icon size={20} style={{ marginRight: '0.75rem', flexShrink: 0 }} />
+                <span>{item.label}</span>
               </Link>
             );
           })}
         </nav>
 
-        <div style={{ padding: '1.5rem', borderTop: '1px solid #334155', marginTop: 'auto' }}>
+        <div style={{ padding: '1.5rem', borderTop: '1px solid #334155', flexShrink: 0 }}>
           <button
             onClick={handleLogout}
             style={{

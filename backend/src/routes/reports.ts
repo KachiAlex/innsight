@@ -757,13 +757,27 @@ reportRouter.get(
       const tenantId = req.params.tenantId;
       const { limit = 30 } = req.query;
 
-      const auditsSnapshot = await db.collection('nightAudits')
-        .where('tenantId', '==', tenantId)
-        .orderBy('auditDate', 'desc')
-        .limit(Number(limit))
-        .get();
+      let auditsSnapshot;
+      try {
+        // Try with orderBy first (requires composite index)
+        auditsSnapshot = await db.collection('nightAudits')
+          .where('tenantId', '==', tenantId)
+          .orderBy('auditDate', 'desc')
+          .limit(Number(limit))
+          .get();
+      } catch (error: any) {
+        // If orderBy fails (missing index), fetch all and sort in memory
+        if (error.code === 9 || error.message?.includes('index')) {
+          console.warn('Firestore index missing for nightAudits, sorting in memory');
+          auditsSnapshot = await db.collection('nightAudits')
+            .where('tenantId', '==', tenantId)
+            .get();
+        } else {
+          throw error;
+        }
+      }
 
-      const audits = auditsSnapshot.docs.map(doc => {
+      let audits = auditsSnapshot.docs.map(doc => {
         const auditData = doc.data();
         return {
           id: doc.id,
@@ -775,6 +789,17 @@ reportRouter.get(
           createdAt: toDate(auditData.createdAt),
         };
       });
+
+      // Sort by auditDate descending if not already sorted
+      audits.sort((a, b) => {
+        if (!a.auditDate || !b.auditDate) return 0;
+        return b.auditDate.localeCompare(a.auditDate);
+      });
+
+      // Apply limit if sorting in memory
+      if (audits.length > Number(limit)) {
+        audits = audits.slice(0, Number(limit));
+      }
 
       res.json({
         success: true,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -6,6 +6,8 @@ import { Plus, Edit, Trash2, Users, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { TableSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface Staff {
   id: string;
@@ -37,9 +39,12 @@ export default function StaffPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [filterRole, setFilterRole] = useState<string>('');
   const [filterClassification, setFilterClassification] = useState<string>('');
   const [filterActive, setFilterActive] = useState<boolean | null>(null);
+  const [deletingStaff, setDeletingStaff] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<{
     email: string;
     password: string;
@@ -62,63 +67,66 @@ export default function StaffPage() {
     isActive: true,
   });
 
-  useEffect(() => {
+  const fetchStaff = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchStaff();
-  }, [user, filterRole, filterClassification, filterActive]);
-
-  const fetchStaff = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       const params: any = {};
       if (filterRole) params.role = filterRole;
       if (filterClassification) params.roleClassification = filterClassification;
       if (filterActive !== null) params.isActive = filterActive.toString();
-      if (searchTerm) params.search = searchTerm;
+      if (debouncedSearchTerm) params.search = debouncedSearchTerm;
 
-      const response = await api.get(`/tenants/${user?.tenantId}/staff`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/staff`, { params });
       setStaff(response.data.data || []);
     } catch (error: any) {
       console.error('Failed to fetch staff:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch staff');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to fetch staff');
+      setStaff([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId, filterRole, filterClassification, filterActive, debouncedSearchTerm]);
+
+  useEffect(() => {
+    fetchStaff();
+  }, [fetchStaff]);
 
   const handleCreate = async () => {
+    if (!formData.email || !formData.password || !formData.firstName || !formData.lastName || !formData.role) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    setSaving(true);
     try {
-      if (!formData.email || !formData.password || !formData.firstName || !formData.lastName || !formData.role) {
-        toast.error('Please fill in all required fields');
-        return;
-      }
-
       await api.post(`/tenants/${user?.tenantId}/staff`, formData);
-
       toast.success('Staff member created successfully');
       setShowCreateModal(false);
       resetForm();
       fetchStaff();
     } catch (error: any) {
       console.error('Failed to create staff:', error);
-      toast.error(error.response?.data?.message || 'Failed to create staff');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to create staff');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEdit = async () => {
     if (!selectedStaff) return;
 
-    try {
-      if (!formData.firstName || !formData.lastName || !formData.role) {
-        toast.error('Please fill in all required fields');
-        return;
-      }
+    if (!formData.firstName || !formData.lastName || !formData.role) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
 
+    setSaving(true);
+    try {
       const updateData: any = { ...formData };
       if (!updateData.password) delete updateData.password;
 
       await api.patch(`/tenants/${user?.tenantId}/staff/${selectedStaff.id}`, updateData);
-
       toast.success('Staff member updated successfully');
       setShowEditModal(false);
       setSelectedStaff(null);
@@ -126,20 +134,29 @@ export default function StaffPage() {
       fetchStaff();
     } catch (error: any) {
       console.error('Failed to update staff:', error);
-      toast.error(error.response?.data?.message || 'Failed to update staff');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to update staff');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDelete = async (staffId: string) => {
     if (!window.confirm('Are you sure you want to deactivate this staff member?')) return;
 
+    setDeletingStaff(prev => new Set(prev).add(staffId));
     try {
       await api.delete(`/tenants/${user?.tenantId}/staff/${staffId}`);
       toast.success('Staff member deactivated successfully');
       fetchStaff();
     } catch (error: any) {
       console.error('Failed to delete staff:', error);
-      toast.error(error.response?.data?.message || 'Failed to deactivate staff');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to deactivate staff');
+    } finally {
+      setDeletingStaff(prev => {
+        const next = new Set(prev);
+        next.delete(staffId);
+        return next;
+      });
     }
   };
 
@@ -173,16 +190,17 @@ export default function StaffPage() {
     });
   };
 
-  const filteredStaff = staff.filter((s) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
+  const filteredStaff = useMemo(() => staff.filter((s) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return (
       s.firstName.toLowerCase().includes(searchLower) ||
       s.lastName.toLowerCase().includes(searchLower) ||
       s.email.toLowerCase().includes(searchLower) ||
+      s.phone?.toLowerCase().includes(searchLower) ||
       s.role.toLowerCase().includes(searchLower)
     );
-  });
+  }), [staff, debouncedSearchTerm]);
 
   // Get unique roles and classifications for filters
   const uniqueRoles = [...new Set(staff.map(s => s.role))].sort();
@@ -316,11 +334,21 @@ export default function StaffPage() {
           </div>
         </div>
 
-        {filteredStaff.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
-            <Users size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-            <p>No staff members found</p>
-          </div>
+        {!loading && filteredStaff.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title={searchTerm || filterRole || filterClassification ? 'No staff match your filters' : 'No staff members yet'}
+            description={searchTerm || filterRole || filterClassification
+              ? 'Try adjusting your search or filter criteria'
+              : 'Add your first staff member to get started'}
+            action={searchTerm || filterRole || filterClassification ? undefined : {
+              label: 'Add Staff',
+              onClick: () => {
+                resetForm();
+                setShowCreateModal(true);
+              },
+            }}
+          />
         ) : (
           <div
             style={{
@@ -391,12 +419,14 @@ export default function StaffPage() {
                         </button>
                         <button
                           onClick={() => handleDelete(staffMember.id)}
+                          disabled={deletingStaff.has(staffMember.id)}
                           style={{
                             padding: '0.5rem',
                             background: 'transparent',
                             border: 'none',
-                            cursor: 'pointer',
-                            color: '#ef4444',
+                            cursor: deletingStaff.has(staffMember.id) ? 'not-allowed' : 'pointer',
+                            color: deletingStaff.has(staffMember.id) ? '#94a3b8' : '#ef4444',
+                            opacity: deletingStaff.has(staffMember.id) ? 0.6 : 1,
                           }}
                           title="Deactivate"
                         >
@@ -639,18 +669,20 @@ export default function StaffPage() {
                   </button>
                   <button
                     onClick={handleCreate}
+                    disabled={saving}
                     style={{
                       flex: 1,
                       padding: '0.75rem',
                       border: 'none',
                       borderRadius: '6px',
-                      background: '#3b82f6',
+                      background: saving ? '#94a3b8' : '#3b82f6',
                       color: 'white',
-                      cursor: 'pointer',
+                      cursor: saving ? 'not-allowed' : 'pointer',
+                      opacity: saving ? 0.6 : 1,
                       fontWeight: '500',
                     }}
                   >
-                    Create
+                    {saving ? 'Creating...' : 'Create'}
                   </button>
                 </div>
               </div>
@@ -893,18 +925,20 @@ export default function StaffPage() {
                   </button>
                   <button
                     onClick={handleEdit}
+                    disabled={saving}
                     style={{
                       flex: 1,
                       padding: '0.75rem',
                       border: 'none',
                       borderRadius: '6px',
-                      background: '#3b82f6',
+                      background: saving ? '#94a3b8' : '#3b82f6',
                       color: 'white',
-                      cursor: 'pointer',
+                      cursor: saving ? 'not-allowed' : 'pointer',
+                      opacity: saving ? 0.6 : 1,
                       fontWeight: '500',
                     }}
                   >
-                    Update
+                    {saving ? 'Updating...' : 'Update'}
                   </button>
                 </div>
               </div>

@@ -65,6 +65,7 @@ export default function ReservationsPage() {
   const [rooms, setRooms] = useState<Array<{ id: string; roomNumber: string }>>([]);
   const [selectedReservations, setSelectedReservations] = useState<Set<string>>(new Set());
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [processingReservations, setProcessingReservations] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user?.tenantId) return;
@@ -109,16 +110,24 @@ export default function ReservationsPage() {
   };
 
   const handleCheckIn = async (reservationId: string) => {
+    setProcessingReservations(prev => new Set(prev).add(reservationId));
     try {
       await api.post(`/tenants/${user?.tenantId}/reservations/${reservationId}/checkin`);
       fetchReservations();
       toast.success('Guest checked in successfully');
     } catch (error: any) {
       // Error handled by API interceptor
+    } finally {
+      setProcessingReservations(prev => {
+        const next = new Set(prev);
+        next.delete(reservationId);
+        return next;
+      });
     }
   };
 
   const handleCheckOut = async (reservationId: string) => {
+    setProcessingReservations(prev => new Set(prev).add(reservationId));
     try {
       await api.post(`/tenants/${user?.tenantId}/reservations/${reservationId}/checkout`, {
         finalCharges: {},
@@ -128,6 +137,12 @@ export default function ReservationsPage() {
       toast.success('Guest checked out successfully');
     } catch (error: any) {
       // Error handled by API interceptor
+    } finally {
+      setProcessingReservations(prev => {
+        const next = new Set(prev);
+        next.delete(reservationId);
+        return next;
+      });
     }
   };
 
@@ -642,13 +657,15 @@ export default function ReservationsPage() {
                         {reservation.status === 'confirmed' && (
                           <button
                             onClick={() => handleCheckIn(reservation.id)}
+                            disabled={processingReservations.has(reservation.id) || isBulkProcessing}
                             style={{
                               padding: '0.5rem',
-                              background: '#10b981',
+                              background: processingReservations.has(reservation.id) ? '#94a3b8' : '#10b981',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
-                              cursor: 'pointer',
+                              cursor: processingReservations.has(reservation.id) ? 'not-allowed' : 'pointer',
+                              opacity: processingReservations.has(reservation.id) ? 0.6 : 1,
                             }}
                             title="Check In"
                           >
@@ -658,13 +675,15 @@ export default function ReservationsPage() {
                         {reservation.status === 'checked_in' && (
                           <button
                             onClick={() => handleCheckOut(reservation.id)}
+                            disabled={processingReservations.has(reservation.id) || isBulkProcessing}
                             style={{
                               padding: '0.5rem',
-                              background: '#f59e0b',
+                              background: processingReservations.has(reservation.id) ? '#94a3b8' : '#f59e0b',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
-                              cursor: 'pointer',
+                              cursor: processingReservations.has(reservation.id) ? 'not-allowed' : 'pointer',
+                              opacity: processingReservations.has(reservation.id) ? 0.6 : 1,
                             }}
                             title="Check Out"
                           >

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -61,25 +61,25 @@ export default function SettingsPage() {
     otherSettings: {},
   });
 
-  useEffect(() => {
+  const fetchSettings = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchSettings();
-  }, [user]);
-
-  const fetchSettings = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const response = await api.get(`/tenants/${user?.tenantId}/settings`);
+      const response = await api.get(`/tenants/${user.tenantId}/settings`);
       if (response.data.data) {
         setSettings(response.data.data);
       }
     } catch (error: any) {
       console.error('Failed to fetch settings:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch settings');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to fetch settings');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId]);
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
 
   const handleSave = async () => {
     try {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -7,6 +7,8 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import FileUpload from '../components/FileUpload';
 import toast from 'react-hot-toast';
 import SearchInput from '../components/SearchInput';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface Task {
   id: string;
@@ -34,30 +36,34 @@ export default function HousekeepingPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<TaskDetails | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
-  useEffect(() => {
+  const fetchTasks = useCallback(async () => {
     if (!user?.tenantId) return;
-    fetchTasks();
-  }, [user]);
-
-  const fetchTasks = async () => {
+    setLoading(true);
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/housekeeping`);
+      const response = await api.get(`/tenants/${user.tenantId}/housekeeping`);
       setTasks(response.data.data || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch tasks:', error);
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch tasks');
+      setTasks([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId]);
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
 
   const handleCompleteTask = async (taskId: string) => {
     setSelectedTask(tasks.find(t => t.id === taskId) || null);
   };
 
-  const filteredTasks = tasks.filter((task) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
+  const filteredTasks = useMemo(() => tasks.filter((task) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
     return (
       task.room?.roomNumber.toLowerCase().includes(searchLower) ||
       task.taskType.toLowerCase().includes(searchLower) ||
@@ -65,7 +71,7 @@ export default function HousekeepingPage() {
       task.assignedStaff?.firstName.toLowerCase().includes(searchLower) ||
       task.assignedStaff?.lastName.toLowerCase().includes(searchLower)
     );
-  });
+  }), [tasks, debouncedSearchTerm]);
 
   if (loading) {
     return (
@@ -177,6 +183,13 @@ export default function HousekeepingPage() {
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '0.5rem',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#059669';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = '#10b981';
                   }}
                 >
                   <CheckCircle size={18} />
@@ -187,19 +200,18 @@ export default function HousekeepingPage() {
           ))}
         </div>
 
-        {filteredTasks.length === 0 && (
-          <div
-            style={{
-              background: 'white',
-              padding: '3rem',
-              borderRadius: '8px',
-              textAlign: 'center',
-              color: '#94a3b8',
+        {!loading && filteredTasks.length === 0 && (
+          <EmptyState
+            icon={Sparkles}
+            title={searchTerm ? 'No tasks match your search' : 'No housekeeping tasks yet'}
+            description={searchTerm 
+              ? 'Try adjusting your search terms to find tasks' 
+              : 'Create your first housekeeping task to get started'}
+            action={searchTerm ? undefined : {
+              label: 'Create Task',
+              onClick: () => setShowCreateModal(true),
             }}
-          >
-            <Sparkles size={48} style={{ margin: '0 auto 1rem', opacity: 0.5 }} />
-            <p>No housekeeping tasks found</p>
-          </div>
+          />
         )}
 
         {showCreateModal && (

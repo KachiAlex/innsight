@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -7,6 +7,8 @@ import toast from 'react-hot-toast';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
 import { format } from 'date-fns';
+import { useDebounce } from '../hooks/useDebounce';
+import EmptyState from '../components/EmptyState';
 
 interface GroupBooking {
   id: string;
@@ -61,16 +63,35 @@ export default function GroupBookingsPage() {
   const [groupBookings, setGroupBookings] = useState<GroupBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<GroupBooking | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [processingActions, setProcessingActions] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (user?.tenantId) {
-      fetchGroupBookings();
+  const fetchGroupBookings = useCallback(async () => {
+    if (!user?.tenantId) return;
+    setLoading(true);
+    try {
+      const params: any = {};
+      if (statusFilter) {
+        params.status = statusFilter;
+      }
+      const response = await api.get(`/tenants/${user.tenantId}/group-bookings`, { params });
+      setGroupBookings(response.data.data || []);
+    } catch (error: any) {
+      console.error('Failed to fetch group bookings:', error);
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to fetch group bookings');
+      setGroupBookings([]);
+    } finally {
+      setLoading(false);
     }
   }, [user?.tenantId, statusFilter]);
+
+  useEffect(() => {
+    fetchGroupBookings();
+  }, [fetchGroupBookings]);
 
   // Handle highlight from URL (e.g., from calendar navigation)
   useEffect(() => {
@@ -95,24 +116,8 @@ export default function GroupBookingsPage() {
     }
   }, [groupBookings, user?.tenantId]);
 
-  const fetchGroupBookings = async () => {
-    try {
-      setLoading(true);
-      const params: any = {};
-      if (statusFilter) {
-        params.status = statusFilter;
-      }
-      const response = await api.get(`/tenants/${user?.tenantId}/group-bookings`, { params });
-      setGroupBookings(response.data.data || []);
-    } catch (error: any) {
-      console.error('Failed to fetch group bookings:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch group bookings');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleCheckIn = async (bookingId: string) => {
+    setProcessingActions(prev => new Set(prev).add(bookingId));
     try {
       const response = await api.post(`/tenants/${user?.tenantId}/group-bookings/${bookingId}/checkin`);
       toast.success(response.data.message);
@@ -123,11 +128,18 @@ export default function GroupBookingsPage() {
       }
     } catch (error: any) {
       console.error('Failed to check in group booking:', error);
-      toast.error(error.response?.data?.message || 'Failed to check in group booking');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to check in group booking');
+    } finally {
+      setProcessingActions(prev => {
+        const next = new Set(prev);
+        next.delete(bookingId);
+        return next;
+      });
     }
   };
 
   const handleCheckOut = async (bookingId: string) => {
+    setProcessingActions(prev => new Set(prev).add(bookingId));
     try {
       const response = await api.post(`/tenants/${user?.tenantId}/group-bookings/${bookingId}/checkout`);
       toast.success(response.data.message);
@@ -138,7 +150,13 @@ export default function GroupBookingsPage() {
       }
     } catch (error: any) {
       console.error('Failed to check out group booking:', error);
-      toast.error(error.response?.data?.message || 'Failed to check out group booking');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to check out group booking');
+    } finally {
+      setProcessingActions(prev => {
+        const next = new Set(prev);
+        next.delete(bookingId);
+        return next;
+      });
     }
   };
 
@@ -147,6 +165,7 @@ export default function GroupBookingsPage() {
       return;
     }
 
+    setProcessingActions(prev => new Set(prev).add(bookingId));
     try {
       await api.post(`/tenants/${user?.tenantId}/group-bookings/${bookingId}/cancel`);
       toast.success('Group booking cancelled successfully');
@@ -157,7 +176,13 @@ export default function GroupBookingsPage() {
       }
     } catch (error: any) {
       console.error('Failed to cancel group booking:', error);
-      toast.error(error.response?.data?.message || 'Failed to cancel group booking');
+      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to cancel group booking');
+    } finally {
+      setProcessingActions(prev => {
+        const next = new Set(prev);
+        next.delete(bookingId);
+        return next;
+      });
     }
   };
 
@@ -173,19 +198,17 @@ export default function GroupBookingsPage() {
   };
 
 
-  const filteredBookings = groupBookings.filter((booking) => {
-    if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase();
-      return (
-        booking.groupBookingNumber.toLowerCase().includes(searchLower) ||
-        booking.guestName.toLowerCase().includes(searchLower) ||
-        booking.guestEmail?.toLowerCase().includes(searchLower) ||
-        booking.guestPhone?.toLowerCase().includes(searchLower) ||
-        booking.groupName?.toLowerCase().includes(searchLower)
-      );
-    }
-    return true;
-  });
+  const filteredBookings = useMemo(() => groupBookings.filter((booking) => {
+    if (!debouncedSearchTerm) return true;
+    const searchLower = debouncedSearchTerm.toLowerCase();
+    return (
+      booking.groupBookingNumber.toLowerCase().includes(searchLower) ||
+      booking.guestName.toLowerCase().includes(searchLower) ||
+      booking.guestEmail?.toLowerCase().includes(searchLower) ||
+      booking.guestPhone?.toLowerCase().includes(searchLower) ||
+      booking.groupName?.toLowerCase().includes(searchLower)
+    );
+  }), [groupBookings, debouncedSearchTerm]);
 
   if (loading) {
     return (
@@ -266,14 +289,21 @@ export default function GroupBookingsPage() {
           </div>
         </div>
 
-        {filteredBookings.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', background: 'white', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            <Users size={48} style={{ margin: '0 auto 1rem', opacity: 0.5, color: '#64748b' }} />
-            <p style={{ color: '#64748b', fontSize: '1.1rem' }}>No group bookings found</p>
-          </div>
-        ) : (
+        {!loading && filteredBookings.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title={searchTerm || statusFilter ? 'No group bookings match your filters' : 'No group bookings yet'}
+            description={searchTerm || statusFilter
+              ? 'Try adjusting your search or filter criteria'
+              : 'Create your first group booking to get started'}
+            action={searchTerm || statusFilter ? undefined : {
+              label: 'Create Group Booking',
+              onClick: () => setShowCreateModal(true),
+            }}
+          />
+        ) : filteredBookings.length > 0 ? (
           <div style={{ display: 'grid', gap: '1rem' }}>
-            {filteredBookings.map((booking) => {
+            {filteredBookings.map((booking: GroupBooking) => {
               const statusStyle = getStatusColor(booking.status);
               const StatusIcon = statusStyle.icon;
 
@@ -366,7 +396,7 @@ export default function GroupBookingsPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.5rem', paddingTop: '1rem', borderTop: '1px solid #e2e8f0' }}>
-                    {booking.reservations.slice(0, 5).map((res) => (
+                    {booking.reservations.slice(0, 5).map((res: { id: string; reservationNumber: string; roomNumber?: string; status: string }) => (
                       <span
                         key={res.id}
                         style={{
@@ -398,7 +428,7 @@ export default function GroupBookingsPage() {
               );
             })}
           </div>
-        )}
+        ) : null}
 
         {/* Details Modal */}
         {showDetailsModal && selectedBooking && (
@@ -412,6 +442,7 @@ export default function GroupBookingsPage() {
             onCheckOut={handleCheckOut}
             onCancel={handleCancel}
             tenantId={user?.tenantId || ''}
+            isProcessing={processingActions.has(selectedBooking.id)}
           />
         )}
 
@@ -439,6 +470,7 @@ function GroupBookingDetailsModal({
   onCheckOut,
   onCancel,
   tenantId,
+  isProcessing = false,
 }: {
   booking: GroupBooking;
   onClose: () => void;
@@ -446,6 +478,7 @@ function GroupBookingDetailsModal({
   onCheckOut: (id: string) => void;
   onCancel: (id: string) => void;
   tenantId: string;
+  isProcessing?: boolean;
 }) {
   const [details, setDetails] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -616,6 +649,7 @@ function GroupBookingDetailsModal({
               {details.status === 'confirmed' || details.status === 'partially_checked_in' ? (
                 <button
                   onClick={() => onCheckIn(details.id)}
+                  disabled={isProcessing}
                   style={{
                     flex: 1,
                     padding: '0.75rem',
@@ -623,16 +657,18 @@ function GroupBookingDetailsModal({
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
-                    cursor: 'pointer',
+                    cursor: isProcessing ? 'not-allowed' : 'pointer',
                     fontWeight: '500',
+                    opacity: isProcessing ? 0.6 : 1,
                   }}
                 >
-                  Check In All Rooms
+                  {isProcessing ? 'Processing...' : 'Check In All Rooms'}
                 </button>
               ) : null}
               {details.status === 'checked_in' || details.status === 'partially_checked_out' ? (
                 <button
                   onClick={() => onCheckOut(details.id)}
+                  disabled={isProcessing}
                   style={{
                     flex: 1,
                     padding: '0.75rem',
@@ -640,27 +676,30 @@ function GroupBookingDetailsModal({
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
-                    cursor: 'pointer',
+                    cursor: isProcessing ? 'not-allowed' : 'pointer',
                     fontWeight: '500',
+                    opacity: isProcessing ? 0.6 : 1,
                   }}
                 >
-                  Check Out All Rooms
+                  {isProcessing ? 'Processing...' : 'Check Out All Rooms'}
                 </button>
               ) : null}
               {details.status !== 'cancelled' && details.status !== 'checked_out' ? (
                 <button
                   onClick={() => onCancel(details.id)}
+                  disabled={isProcessing}
                   style={{
                     padding: '0.75rem 1.5rem',
                     background: 'white',
                     color: '#ef4444',
                     border: '1px solid #fee2e2',
                     borderRadius: '6px',
-                    cursor: 'pointer',
+                    cursor: isProcessing ? 'not-allowed' : 'pointer',
                     fontWeight: '500',
+                    opacity: isProcessing ? 0.6 : 1,
                   }}
                 >
-                  Cancel
+                  {isProcessing ? 'Processing...' : 'Cancel'}
                 </button>
               ) : null}
             </div>

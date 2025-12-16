@@ -2,7 +2,14 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db } from '../utils/firestore';
 import { createAccountabilityReportForTenant } from '../routes/rooms';
 
-export const dailyAccountabilityReport = onSchedule('0 6 * * *', async () => {
+export const dailyAccountabilityReport = onSchedule(
+  {
+    schedule: '0 6 * * *',
+    timeZone: 'UTC',
+    memory: '256MiB',
+    timeoutSeconds: 540,
+  },
+  async () => {
     const tenantsSnapshot = await db.collection('tenants').get();
     await Promise.all(
       tenantsSnapshot.docs.map(async (tenantDoc) => {
@@ -13,5 +20,6 @@ export const dailyAccountabilityReport = onSchedule('0 6 * * *', async () => {
         }
       })
     );
-  });
+  }
+);
 
