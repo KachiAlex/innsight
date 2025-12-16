@@ -69,6 +69,7 @@ const GroupBookingsEnhancedPage = lazy(() => import('./pages/GroupBookingsEnhanc
 const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage'));
 const GuestRequestsPage = lazy(() => import('./pages/GuestRequestsPage'));
 const RoomServicePage = lazy(() => import('./pages/RoomServicePage'));
+const LostFoundPage = lazy(() => import('./pages/LostFoundPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
@@ -273,6 +274,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <GuestRequestsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/lost-found"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <LostFoundPage />
                   </Suspense>
                 </ProtectedRoute>
               }

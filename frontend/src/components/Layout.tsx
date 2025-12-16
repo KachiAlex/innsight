@@ -22,7 +22,8 @@ import {
   Wallet,
   UserCog,
   MessageSquare,
-  ChefHat
+  ChefHat,
+  Package
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -40,6 +41,7 @@ const menuItems = [
   { path: '/rate-plans', icon: DollarSign, label: 'Rate Plans' },
   { path: '/guests', icon: UserCheck, label: 'Guests' },
   { path: '/guest-requests', icon: MessageSquare, label: 'Guest Requests' },
+  { path: '/lost-found', icon: Package, label: 'Lost & Found' },
   { path: '/folios', icon: Receipt, label: 'Folios' },
   { path: '/payments', icon: CreditCard, label: 'Payments' },
   { path: '/housekeeping', icon: Sparkles, label: 'Housekeeping' },
