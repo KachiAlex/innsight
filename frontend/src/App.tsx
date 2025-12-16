@@ -67,6 +67,7 @@ const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
 const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));
 const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage'));
 const GuestRequestsPage = lazy(() => import('./pages/GuestRequestsPage'));
+const RoomServicePage = lazy(() => import('./pages/RoomServicePage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
@@ -177,6 +178,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <HousekeepingPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/room-service"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <RoomServicePage />
                   </Suspense>
                 </ProtectedRoute>
               }

@@ -21,7 +21,8 @@ import {
   UserCheck,
   Wallet,
   UserCog,
-  MessageSquare
+  MessageSquare,
+  ChefHat
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -42,6 +43,7 @@ const menuItems = [
   { path: '/folios', icon: Receipt, label: 'Folios' },
   { path: '/payments', icon: CreditCard, label: 'Payments' },
   { path: '/housekeeping', icon: Sparkles, label: 'Housekeeping' },
+  { path: '/room-service', icon: ChefHat, label: 'Room Service' },
   { path: '/maintenance', icon: Wrench, label: 'Maintenance' },
   { path: '/reports', icon: BarChart3, label: 'Reports' },
   { path: '/night-audit', icon: Moon, label: 'Night Audit' },
