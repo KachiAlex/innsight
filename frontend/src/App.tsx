@@ -66,6 +66,7 @@ const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NightAuditPage = lazy(() => import('./pages/NightAuditPage'));
 const GroupBookingsPage = lazy(() => import('./pages/GroupBookingsPage'));
 const DepositManagementPage = lazy(() => import('./pages/DepositManagementPage'));
+const GuestRequestsPage = lazy(() => import('./pages/GuestRequestsPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
@@ -250,6 +251,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <GuestsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/guest-requests"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <GuestRequestsPage />
                   </Suspense>
                 </ProtectedRoute>
               }

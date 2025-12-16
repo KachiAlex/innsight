@@ -1,10 +1,10 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { 
-  LayoutDashboard, 
-  Calendar, 
-  DoorOpen, 
-  Receipt, 
+import {
+  LayoutDashboard,
+  Calendar,
+  DoorOpen,
+  Receipt,
   CreditCard,
   Sparkles,
   Wrench,
@@ -20,7 +20,8 @@ import {
   Settings,
   UserCheck,
   Wallet,
-  UserCog
+  UserCog,
+  MessageSquare
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -37,6 +38,7 @@ const menuItems = [
   { path: '/rooms', icon: DoorOpen, label: 'Rooms' },
   { path: '/rate-plans', icon: DollarSign, label: 'Rate Plans' },
   { path: '/guests', icon: UserCheck, label: 'Guests' },
+  { path: '/guest-requests', icon: MessageSquare, label: 'Guest Requests' },
   { path: '/folios', icon: Receipt, label: 'Folios' },
   { path: '/payments', icon: CreditCard, label: 'Payments' },
   { path: '/housekeeping', icon: Sparkles, label: 'Housekeeping' },
