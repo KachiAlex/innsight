@@ -35,9 +35,6 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 
-# Prisma
-backend/prisma/migrations/
-
 # Uploads
 backend/uploads/
 frontend/dist/
