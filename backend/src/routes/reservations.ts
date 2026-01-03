@@ -1,11 +1,12 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import { db, now, toDate, toTimestamp } from '../utils/firestore';
+import { prisma } from '../utils/prisma';
 import { createRoomLog } from '../utils/roomLogs';
 import { 
   sendEmail, 
@@ -16,8 +17,6 @@ import {
   type ReservationEmailData,
 } from '../utils/email';
 import { v4 as uuidv4 } from 'uuid';
-import admin from 'firebase-admin';
-import type { firestore } from 'firebase-admin';
 export const reservationRouter = Router({ mergeParams: true });
 
 const getUserDisplayName = (user?: {
@@ -28,6 +27,48 @@ const getUserDisplayName = (user?: {
   if (!user) return null;
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   return name || user.email || null;
+};
+
+const decimalToNumber = (value?: Prisma.Decimal | null) =>
+  value !== null && value !== undefined ? Number(value) : null;
+
+const serializeReservation = (reservation: any) => {
+  if (!reservation) return reservation;
+  return {
+    ...reservation,
+    rate: decimalToNumber(reservation.rate),
+    depositAmount: decimalToNumber(reservation.depositAmount),
+  };
+};
+
+type RoomReservationSummary = {
+  reservationId: string;
+  reservationNumber: string | null;
+  status: string | null;
+  checkInDate: Date | null;
+  checkOutDate: Date | null;
+  guestName: string | null;
+};
+
+const serializeFolio = (folio: any) => {
+  if (!folio) return folio;
+  return {
+    ...folio,
+    totalCharges: decimalToNumber(folio.totalCharges) ?? 0,
+    totalPayments: decimalToNumber(folio.totalPayments) ?? 0,
+    balance: decimalToNumber(folio.balance) ?? 0,
+    charges: (folio.charges ?? []).map((charge: any) => ({
+      ...charge,
+      amount: decimalToNumber(charge.amount) ?? 0,
+      total: decimalToNumber(charge.total) ?? 0,
+      taxRate: decimalToNumber(charge.taxRate),
+      taxAmount: decimalToNumber(charge.taxAmount),
+    })),
+    payments: (folio.payments ?? []).map((payment: any) => ({
+      ...payment,
+      amount: decimalToNumber(payment.amount) ?? 0,
+    })),
+  };
 };
 
 const availabilityQuerySchema = z.object({
@@ -80,6 +121,9 @@ reservationRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
       const parsed = availabilityQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
@@ -109,60 +153,41 @@ reservationRouter.get(
         throw new AppError('Minimum rate cannot be greater than maximum rate', 400);
       }
 
-      // Fetch rooms for tenant (optionally filtered by type/floor)
-      let roomsQuery: admin.firestore.Query = db.collection('rooms')
-        .where('tenantId', '==', tenantId);
-
-      if (roomType) {
-        roomsQuery = roomsQuery.where('roomType', '==', roomType);
-      }
-      if (typeof floor === 'number') {
-        roomsQuery = roomsQuery.where('floor', '==', floor);
-      }
-
-      const roomsSnapshot = await roomsQuery.get();
-      if (roomsSnapshot.empty) {
-        res.json({
-          success: true,
-          data: {
-            startDate: start.toISOString(),
-            endDate: end.toISOString(),
-            totalRooms: 0,
-            availableCount: 0,
-            availableRooms: [],
-            unavailableRooms: [],
-          },
-        });
-        return;
-      }
-
       const blockedStatuses = includeOutOfOrder ? [] : ['out_of_order', 'maintenance'];
 
-      const rooms = roomsSnapshot.docs
-        .map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
-        .filter((room: any) => {
-          if (!room) return false;
-          if (!includeOutOfOrder && blockedStatuses.includes(room.status)) {
-            return false;
-          }
-          if (minOccupancy && (room.maxOccupancy || 0) < minOccupancy) {
-            return false;
-          }
-          if (categoryId) {
-            if (categoryId === 'none') {
-              if (room.categoryId) return false;
-            } else if (room.categoryId !== categoryId) {
-              return false;
-            }
-          }
-          if (ratePlanId && room.ratePlanId !== ratePlanId) {
-            return false;
-          }
-          return true;
-        });
+      const rooms = await prisma.room.findMany({
+        where: {
+          tenantId,
+          ...(roomType ? { roomType } : {}),
+          ...(typeof floor === 'number' ? { floor } : {}),
+          ...(includeOutOfOrder
+            ? {}
+            : {
+                status: {
+                  notIn: blockedStatuses,
+                },
+              }),
+          ...(minOccupancy
+            ? {
+                maxOccupancy: {
+                  gte: minOccupancy,
+                },
+              }
+            : {}),
+          ...(categoryId
+            ? categoryId === 'none'
+              ? {
+                  categoryId: null,
+                }
+              : { categoryId }
+            : {}),
+          ...(ratePlanId ? { ratePlanId } : {}),
+        },
+        include: {
+          ratePlan: true,
+          category: true,
+        },
+      });
 
       if (rooms.length === 0) {
         res.json({
@@ -179,42 +204,50 @@ reservationRouter.get(
         return;
       }
 
-      const allowedRoomIds = new Set(rooms.map((room: any) => room.id));
+      const allowedRoomIds = rooms.map((room) => room.id);
 
-      // Fetch overlapping reservations
-      const reservationsSnapshot = await db.collection('reservations')
-        .where('tenantId', '==', tenantId)
-        .where('status', 'in', ['confirmed', 'checked_in'])
-        .get();
+      const overlappingReservations = await prisma.reservation.findMany({
+        where: {
+          tenantId,
+          status: {
+            in: ['confirmed', 'checked_in'],
+          },
+          roomId: {
+            in: allowedRoomIds,
+          },
+        },
+        select: {
+          id: true,
+          reservationNumber: true,
+          status: true,
+          checkInDate: true,
+          checkOutDate: true,
+          guestName: true,
+          roomId: true,
+        },
+      });
 
-      const unavailableRoomReservations = new Map<string, any[]>();
+      const unavailableRoomReservations: Map<string, RoomReservationSummary[]> = new Map();
 
-      reservationsSnapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        const checkIn = toDate(data.checkInDate);
-        const checkOut = toDate(data.checkOutDate);
+      for (const reservation of overlappingReservations) {
+        const overlaps =
+          reservation.checkInDate < end && reservation.checkOutDate > start;
 
-        if (!checkIn || !checkOut) return;
-
-        const overlaps = checkIn < end && checkOut > start;
-        if (!overlaps) return;
-
-        const roomId = data.roomId;
-        if (!roomId || !allowedRoomIds.has(roomId)) return;
-
-        if (!unavailableRoomReservations.has(roomId)) {
-          unavailableRoomReservations.set(roomId, []);
+        if (!overlaps || !reservation.roomId) {
+          continue;
         }
 
-        unavailableRoomReservations.get(roomId)!.push({
-          reservationId: doc.id,
-          reservationNumber: data.reservationNumber || null,
-          status: data.status || 'confirmed',
-          checkInDate: checkIn,
-          checkOutDate: checkOut,
-          guestName: data.guestName || null,
+        const summaries = unavailableRoomReservations.get(reservation.roomId) ?? [];
+        summaries.push({
+          reservationId: reservation.id,
+          reservationNumber: reservation.reservationNumber,
+          status: reservation.status,
+          checkInDate: reservation.checkInDate,
+          checkOutDate: reservation.checkOutDate,
+          guestName: reservation.guestName,
         });
-      });
+        unavailableRoomReservations.set(reservation.roomId, summaries);
+      }
 
       const availableRoomsRaw = rooms.filter((room: any) => {
         if (!room?.id) return false;
@@ -224,56 +257,30 @@ reservationRouter.get(
         return true;
       });
 
-      const availableRoomsWithRates = await Promise.all(
-        availableRoomsRaw.map(async (room: any) => {
-          let ratePlan: { id: string; name: string | null; baseRate: number | null } | null = null;
-          try {
-            if (room.ratePlanId) {
-              const ratePlanDoc = await db.collection('ratePlans').doc(room.ratePlanId).get();
-              if (ratePlanDoc.exists) {
-                const data = ratePlanDoc.data();
-                ratePlan = {
-                  id: ratePlanDoc.id,
-                  name: data?.name || null,
-                  baseRate: data?.baseRate || null,
-                };
-              }
+      const availableRoomsWithRates = availableRoomsRaw.map((room) => ({
+        id: room.id,
+        roomNumber: room.roomNumber || '',
+        roomType: room.roomType || '',
+        floor: typeof room.floor === 'number' ? room.floor : null,
+        status: room.status || 'available',
+        maxOccupancy: room.maxOccupancy || 0,
+        amenities: room.amenities || null,
+        categoryId: room.categoryId || null,
+        ratePlanId: room.ratePlanId || null,
+        ratePlan: room.ratePlan
+          ? {
+              id: room.ratePlan.id,
+              name: room.ratePlan.name,
+              baseRate: room.ratePlan.baseRate,
             }
-          } catch (error) {
-            console.warn(`Error fetching rate plan for room ${room.id}:`, error);
+          : null,
+        category: room.category
+          ? {
+            id: room.category.id,
+            name: room.category.name,
           }
-
-          let category: { id: string; name: string | null } | null = null;
-          try {
-            if (room.categoryId) {
-              const categoryDoc = await db.collection('roomCategories').doc(room.categoryId).get();
-              if (categoryDoc.exists) {
-                const data = categoryDoc.data();
-                category = {
-                  id: categoryDoc.id,
-                  name: data?.name || null,
-                };
-              }
-            }
-          } catch (error) {
-            console.warn(`Error fetching category for room ${room.id}:`, error);
-          }
-
-          return {
-            id: room.id,
-            roomNumber: room.roomNumber || '',
-            roomType: room.roomType || '',
-            floor: room.floor || null,
-            status: room.status || 'available',
-            maxOccupancy: room.maxOccupancy || 0,
-            amenities: room.amenities || null,
-            categoryId: room.categoryId || null,
-            ratePlanId: room.ratePlanId || null,
-            ratePlan,
-            category,
-          };
-        })
-      );
+          : null,
+      }));
 
       const availableRooms = availableRoomsWithRates.filter((room) => {
         const baseRate =
@@ -294,16 +301,16 @@ reservationRouter.get(
         return true;
       });
 
-      const unavailableRooms = Array.from(unavailableRoomReservations.entries()).map(
-        ([roomId, reservations]) => ({
-          roomId,
-          reservations: reservations.map((reservation) => ({
-            ...reservation,
-            checkInDate: reservation.checkInDate?.toISOString?.() || null,
-            checkOutDate: reservation.checkOutDate?.toISOString?.() || null,
-          })),
-        })
-      );
+      const unavailableRooms = Array.from(
+        unavailableRoomReservations.entries()
+      ).map(([roomId, reservations]: [string, RoomReservationSummary[]]) => ({
+        roomId,
+        reservations: reservations.map((reservation) => ({
+          ...reservation,
+          checkInDate: reservation.checkInDate?.toISOString?.() || null,
+          checkOutDate: reservation.checkOutDate?.toISOString?.() || null,
+        })),
+      }));
 
       const recommendedRooms = availableRoomsWithRates
         .filter((room) => room.status !== 'available')
@@ -357,6 +364,9 @@ reservationRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
       const data = createReservationSchema.parse(req.body);
 
       // Validate dates
@@ -366,36 +376,40 @@ reservationRouter.post(
         throw new AppError('Check-out date must be after check-in date', 400);
       }
 
-      // Check room availability
-      const roomDoc = await db.collection('rooms').doc(data.roomId).get();
-      if (!roomDoc.exists) {
-        throw new AppError('Room not found', 404);
-      }
+      // Validate room
+      const room = await prisma.room.findFirst({
+        where: {
+          id: data.roomId,
+          tenantId,
+        },
+      });
 
-      const roomData = roomDoc.data();
-      if (roomData?.tenantId !== tenantId) {
+      if (!room) {
         throw new AppError('Room not found', 404);
       }
 
       // Check for overlapping reservations
-      const checkInTimestamp = toTimestamp(checkIn);
-      const checkOutTimestamp = toTimestamp(checkOut);
-
-      const overlappingSnapshot = await db.collection('reservations')
-        .where('tenantId', '==', tenantId)
-        .where('roomId', '==', data.roomId)
-        .where('status', 'in', ['confirmed', 'checked_in'])
-        .get();
-
-      const overlapping = overlappingSnapshot.docs.find(doc => {
-        const resData = doc.data();
-        const resCheckIn = toDate(resData.checkInDate);
-        const resCheckOut = toDate(resData.checkOutDate);
-        
-        if (!resCheckIn || !resCheckOut) return false;
-        
-        // Check if dates overlap
-        return resCheckIn <= checkOut && resCheckOut >= checkIn;
+      const overlapping = await prisma.reservation.findFirst({
+        where: {
+          tenantId,
+          roomId: data.roomId,
+          status: {
+            in: ['confirmed', 'checked_in'],
+          },
+          AND: [
+            {
+              checkInDate: {
+                lt: checkOut,
+              },
+            },
+            {
+              checkOutDate: {
+                gt: checkIn,
+              },
+            },
+          ],
+        },
+        select: { id: true },
       });
 
       if (overlapping) {
@@ -404,53 +418,50 @@ reservationRouter.post(
 
       const reservationNumber = `RES-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
 
-      // Create reservation
-      const reservationRef = db.collection('reservations').doc();
-      const reservationData = {
-        tenantId,
-        roomId: data.roomId,
-        reservationNumber,
-        guestName: data.guestName,
-        guestEmail: data.guestEmail || null,
-        guestPhone: data.guestPhone || null,
-        guestIdNumber: data.guestIdNumber || null,
-        checkInDate: checkInTimestamp,
-        checkOutDate: checkOutTimestamp,
-        adults: data.adults,
-        children: data.children,
-        rate: data.rate,
-        depositAmount: data.depositAmount || null,
-        depositStatus: data.depositAmount ? 'pending' : null,
-        source: data.source,
-        specialRequests: data.specialRequests || null,
-        createdBy: req.user!.id,
-        status: 'confirmed',
-        createdAt: now(),
-        updatedAt: now(),
-      };
-
-      await reservationRef.set(reservationData);
-
-      // Get room and creator data
-      const creatorDoc = await db.collection('users').doc(req.user!.id).get();
-      const creator = creatorDoc.exists ? {
-        id: creatorDoc.id,
-        firstName: creatorDoc.data()?.firstName || null,
-        lastName: creatorDoc.data()?.lastName || null,
-      } : null;
-
-      const reservation = {
-        id: reservationRef.id,
-        ...reservationData,
-        room: {
-          id: roomDoc.id,
-          ...roomData,
+      const reservation = await prisma.reservation.create({
+        data: {
+          tenantId,
+          roomId: data.roomId,
+          reservationNumber,
+          guestName: data.guestName,
+          guestEmail: data.guestEmail || null,
+          guestPhone: data.guestPhone || null,
+          guestIdNumber: data.guestIdNumber || null,
+          checkInDate: checkIn,
+          checkOutDate: checkOut,
+          adults: data.adults,
+          children: data.children,
+          rate: new Prisma.Decimal(data.rate),
+          depositAmount:
+            data.depositAmount !== undefined
+              ? new Prisma.Decimal(data.depositAmount)
+              : null,
+          depositStatus: data.depositAmount ? 'pending' : null,
+          depositRequired: data.depositAmount ? true : false,
+          source: data.source,
+          specialRequests: data.specialRequests || null,
+          createdBy: req.user!.id,
+          status: 'confirmed',
         },
-        creator,
-        checkInDate: checkIn,
-        checkOutDate: checkOut,
-        createdAt: toDate(reservationData.createdAt),
-        updatedAt: toDate(reservationData.updatedAt),
+        include: {
+          room: true,
+          creator: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      const serializedReservation = {
+        ...reservation,
+        rate: Number(reservation.rate),
+        depositAmount: reservation.depositAmount
+          ? Number(reservation.depositAmount)
+          : null,
       };
 
       await createAuditLog({
@@ -458,8 +469,8 @@ reservationRouter.post(
         userId: req.user!.id,
         action: 'create_reservation',
         entityType: 'reservation',
-        entityId: reservationRef.id,
-        afterState: reservation,
+        entityId: reservation.id,
+        afterState: serializedReservation,
         metadata: {
           reservationNumber,
         },
@@ -471,7 +482,7 @@ reservationRouter.post(
         type: 'reservation_created',
         summary: `Reservation ${reservationNumber} created for ${data.guestName}`,
         metadata: {
-          reservationId: reservationRef.id,
+          reservationId: reservation.id,
           reservationNumber,
           checkInDate: checkIn.toISOString(),
           checkOutDate: checkOut.toISOString(),
@@ -489,15 +500,14 @@ reservationRouter.post(
           try {
             const tenantSettings = await getTenantEmailSettings(tenantId);
             if (tenantSettings) {
-              const roomData = roomDoc.data();
               const emailData: ReservationEmailData = {
                 reservationNumber,
                 guestName: data.guestName,
                 guestEmail: data.guestEmail!,
                 checkInDate: checkIn,
                 checkOutDate: checkOut,
-                roomNumber: roomData?.roomNumber || 'N/A',
-                roomType: roomData?.roomType || undefined,
+                roomNumber: room.roomNumber || 'N/A',
+                roomType: room.roomType || undefined,
                 rate: data.rate,
                 adults: data.adults,
                 children: data.children,
@@ -524,7 +534,7 @@ reservationRouter.post(
 
       res.status(201).json({
         success: true,
-        data: reservation,
+        data: serializedReservation,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -552,87 +562,80 @@ reservationRouter.get(
     try {
       const tenantId = req.params.tenantId;
       const reservationId = req.params.id;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
 
-      const reservationDoc = await db.collection('reservations').doc(reservationId).get();
+      const reservation = await prisma.reservation.findFirst({
+        where: {
+          id: reservationId,
+          tenantId,
+        },
+        include: {
+          room: true,
+          creator: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          checkInStaff: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          checkOutStaff: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          folios: {
+            include: {
+              charges: true,
+              payments: true,
+            },
+          },
+        },
+      });
 
-      if (!reservationDoc.exists) {
+      if (!reservation) {
         throw new AppError('Reservation not found', 404);
       }
 
-      const reservationData = reservationDoc.data();
-      if (reservationData?.tenantId !== tenantId) {
-        throw new AppError('Reservation not found', 404);
-      }
-
-      // Get related data
-      const [roomDoc, creatorDoc, checkInStaffDoc, checkOutStaffDoc, foliosSnapshot] = await Promise.all([
-        db.collection('rooms').doc(reservationData.roomId).get(),
-        reservationData.createdBy ? db.collection('users').doc(reservationData.createdBy).get() : Promise.resolve(null),
-        reservationData.checkedInBy ? db.collection('users').doc(reservationData.checkedInBy).get() : Promise.resolve(null),
-        reservationData.checkedOutBy ? db.collection('users').doc(reservationData.checkedOutBy).get() : Promise.resolve(null),
-        db.collection('folios').where('reservationId', '==', reservationId).get(),
-      ]);
-
-      const room = roomDoc.exists ? {
-        id: roomDoc.id,
-        ...roomDoc.data(),
-      } : null;
-
-      const creator = creatorDoc?.exists ? {
-        id: creatorDoc.id,
-        firstName: creatorDoc.data()?.firstName || null,
-        lastName: creatorDoc.data()?.lastName || null,
-      } : null;
-
-      const checkInStaff = checkInStaffDoc?.exists ? {
-        id: checkInStaffDoc.id,
-        firstName: checkInStaffDoc.data()?.firstName || null,
-        lastName: checkInStaffDoc.data()?.lastName || null,
-      } : null;
-
-      const checkOutStaff = checkOutStaffDoc?.exists ? {
-        id: checkOutStaffDoc.id,
-        firstName: checkOutStaffDoc.data()?.firstName || null,
-        lastName: checkOutStaffDoc.data()?.lastName || null,
-      } : null;
-
-      // Get folios with charges and payments
-      const folios = await Promise.all(
-        foliosSnapshot.docs.map(async (folioDoc) => {
-          const folioData = folioDoc.data();
-          const [chargesSnapshot, paymentsSnapshot] = await Promise.all([
-            db.collection('folioCharges').where('folioId', '==', folioDoc.id).get(),
-            db.collection('payments').where('folioId', '==', folioDoc.id).get(),
-          ]);
-
-          return {
-            id: folioDoc.id,
-            ...folioData,
-            charges: chargesSnapshot.docs.map(c => ({ id: c.id, ...c.data() })),
-            payments: paymentsSnapshot.docs.map(p => ({ id: p.id, ...p.data() })),
-          };
-        })
-      );
-
-      const reservation = {
-        id: reservationDoc.id,
-        ...reservationData,
-        room,
-        creator,
-        checkInStaff,
-        checkOutStaff,
-        folios,
-        checkInDate: toDate(reservationData.checkInDate),
-        checkOutDate: toDate(reservationData.checkOutDate),
-        checkedInAt: toDate(reservationData.checkedInAt),
-        checkedOutAt: toDate(reservationData.checkedOutAt),
-        createdAt: toDate(reservationData.createdAt),
-        updatedAt: toDate(reservationData.updatedAt),
+      const serializedReservation = {
+        ...reservation,
+        rate: decimalToNumber(reservation.rate),
+        depositAmount: decimalToNumber(reservation.depositAmount),
+        folios: reservation.folios.map((folio) => ({
+          ...folio,
+          totalCharges: decimalToNumber(folio.totalCharges) ?? 0,
+          totalPayments: decimalToNumber(folio.totalPayments) ?? 0,
+          balance: decimalToNumber(folio.balance) ?? 0,
+          charges: folio.charges.map((charge) => ({
+            ...charge,
+            amount: decimalToNumber(charge.amount) ?? 0,
+            total: decimalToNumber(charge.total) ?? 0,
+            taxRate: decimalToNumber(charge.taxRate),
+            taxAmount: decimalToNumber(charge.taxAmount),
+          })),
+          payments: folio.payments.map((payment) => ({
+            ...payment,
+            amount: decimalToNumber(payment.amount) ?? 0,
+          })),
+        })),
       };
 
       res.json({
         success: true,
-        data: reservation,
+        data: serializedReservation,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -655,81 +658,78 @@ reservationRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
       const { status, roomId, startDate, endDate } = req.query;
 
       const { page, limit } = getPaginationParams(req);
 
-      // Build Firestore query
-      let query: admin.firestore.Query = db.collection('reservations')
-        .where('tenantId', '==', tenantId);
+      const where: Prisma.ReservationWhereInput = {
+        tenantId,
+        ...(status ? { status: status as string } : {}),
+        ...(roomId ? { roomId: roomId as string } : {}),
+      };
 
-      if (status) {
-        query = query.where('status', '==', status);
+      const dateFilters: Prisma.ReservationWhereInput[] = [];
+      if (startDate) {
+        const start = new Date(startDate as string);
+        if (Number.isNaN(start.getTime())) {
+          throw new AppError('Invalid start date', 400);
+        }
+        dateFilters.push({
+          checkInDate: {
+            gte: start,
+          },
+        });
       }
-      if (roomId) {
-        query = query.where('roomId', '==', roomId);
-      }
-
-      // Get all reservations first (Firestore doesn't support complex OR queries)
-      const allReservationsSnapshot = await query.get();
-      
-      // Filter by date range if provided
-      let filteredReservations = allReservationsSnapshot.docs;
-      if (startDate || endDate) {
-        const start = startDate ? new Date(startDate as string) : null;
-        const end = endDate ? new Date(endDate as string) : null;
-        
-        filteredReservations = filteredReservations.filter(doc => {
-          const resData = doc.data();
-          const checkIn = toDate(resData.checkInDate);
-          const checkOut = toDate(resData.checkOutDate);
-          
-          if (!checkIn || !checkOut) return false;
-          
-          if (start && checkIn < start) return false;
-          if (end && checkOut > end) return false;
-          
-          return true;
+      if (endDate) {
+        const end = new Date(endDate as string);
+        if (Number.isNaN(end.getTime())) {
+          throw new AppError('Invalid end date', 400);
+        }
+        dateFilters.push({
+          checkOutDate: {
+            lte: end,
+          },
         });
       }
 
-      const total = filteredReservations.length;
+      if (dateFilters.length > 0) {
+        where.AND = where.AND ? [...(Array.isArray(where.AND) ? where.AND : [where.AND]), ...dateFilters] : dateFilters;
+      }
 
-      // Apply pagination
       const skip = (page - 1) * limit;
-      const paginatedReservations = filteredReservations
-        .sort((a, b) => {
-          const aCheckIn = toDate(a.data().checkInDate);
-          const bCheckIn = toDate(b.data().checkInDate);
-          if (!aCheckIn || !bCheckIn) return 0;
-          return bCheckIn.getTime() - aCheckIn.getTime(); // Descending
-        })
-        .slice(skip, skip + limit);
 
-      // Enrich with room data
-      const reservations = await Promise.all(
-        paginatedReservations.map(async (doc) => {
-          const resData = doc.data();
-          const roomDoc = await db.collection('rooms').doc(resData.roomId).get();
-          const roomData = roomDoc.exists ? {
-            id: roomDoc.id,
-            roomNumber: roomDoc.data()?.roomNumber || null,
-            roomType: roomDoc.data()?.roomType || null,
-          } : null;
+      const [reservations, total] = await Promise.all([
+        prisma.reservation.findMany({
+          where,
+          include: {
+            room: {
+              select: {
+                id: true,
+                roomNumber: true,
+                roomType: true,
+              },
+            },
+          },
+          orderBy: {
+            checkInDate: 'desc',
+          },
+          take: limit,
+          skip,
+        }),
+        prisma.reservation.count({ where }),
+      ]);
 
-          return {
-            id: doc.id,
-            ...resData,
-            room: roomData,
-            checkInDate: toDate(resData.checkInDate),
-            checkOutDate: toDate(resData.checkOutDate),
-            createdAt: toDate(resData.createdAt),
-            updatedAt: toDate(resData.updatedAt),
-          };
-        })
-      );
+      const serializedReservations = reservations.map((reservation) => ({
+        ...reservation,
+        rate: decimalToNumber(reservation.rate),
+        depositAmount: decimalToNumber(reservation.depositAmount),
+      }));
 
-      const result = createPaginationResult(reservations, total, page, limit);
+      const result = createPaginationResult(serializedReservations, total, page, limit);
 
       res.json({
         success: true,
@@ -755,101 +755,122 @@ reservationRouter.post(
       const tenantId = req.params.tenantId;
       const reservationId = req.params.id;
       const { photo } = req.body;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
 
-      const reservationDoc = await db.collection('reservations').doc(reservationId).get();
-      if (!reservationDoc.exists) {
+      const reservation = await prisma.reservation.findFirst({
+        where: {
+          id: reservationId,
+          tenantId,
+        },
+        include: {
+          room: true,
+          folios: {
+            include: {
+              charges: true,
+              payments: true,
+            },
+          },
+        },
+      });
+
+      if (!reservation) {
         throw new AppError('Reservation not found', 404);
       }
 
-      const reservationData = reservationDoc.data();
-      if (reservationData?.tenantId !== tenantId) {
-        throw new AppError('Reservation not found', 404);
-      }
-
-      if (reservationData.status !== 'confirmed') {
+      if (reservation.status !== 'confirmed') {
         throw new AppError('Reservation is not in confirmed status', 400);
       }
 
-      // Get room data
-      const roomDoc = await db.collection('rooms').doc(reservationData.roomId).get();
-      if (!roomDoc.exists) {
-        throw new AppError('Room not found', 404);
+      if (!reservation.room) {
+        throw new AppError('Reservation is missing room information', 400);
       }
 
       const beforeState = {
-        id: reservationDoc.id,
-        ...reservationData,
-        room: { id: roomDoc.id, ...roomDoc.data() },
+        ...serializeReservation(reservation),
+        room: reservation.room,
+        folios: reservation.folios.map(serializeFolio),
       };
 
-      // Use Firestore batch for atomic operations
-      const batch = db.batch();
+      const checkInTime = new Date();
+      const rateNumber = decimalToNumber(reservation.rate) ?? 0;
 
-      // Update reservation
-      batch.update(reservationDoc.ref, {
-        status: 'checked_in',
-        checkedInAt: now(),
-        checkedInBy: req.user!.id,
-        updatedAt: now(),
+      await prisma.$transaction(async (tx) => {
+        await tx.reservation.update({
+          where: { id: reservation.id },
+          data: {
+            status: 'checked_in',
+            checkedInAt: checkInTime,
+            checkedInBy: req.user!.id,
+          },
+        });
+
+        await tx.room.update({
+          where: { id: reservation.roomId },
+          data: {
+            status: 'occupied',
+          },
+        });
+
+        const existingFolio = await tx.folio.findFirst({
+          where: {
+            reservationId,
+          },
+        });
+
+        if (!existingFolio) {
+          const folio = await tx.folio.create({
+            data: {
+              tenantId,
+              reservationId,
+              roomId: reservation.roomId,
+              guestName: reservation.guestName,
+              createdBy: req.user!.id,
+              status: 'open',
+              totalCharges: new Prisma.Decimal(rateNumber),
+              totalPayments: new Prisma.Decimal(0),
+              balance: new Prisma.Decimal(rateNumber),
+            },
+          });
+
+          await tx.folioCharge.create({
+            data: {
+              folioId: folio.id,
+              description: `Room rate - ${reservation.room.roomNumber || 'N/A'}`,
+              category: 'room_rate',
+              amount: new Prisma.Decimal(rateNumber),
+              quantity: 1,
+              total: new Prisma.Decimal(rateNumber),
+            },
+          });
+        }
       });
 
-      // Update room status
-      batch.update(roomDoc.ref, {
-        status: 'occupied',
-        updatedAt: now(),
-      });
-
-      // Check if folio exists
-      const existingFoliosSnapshot = await db.collection('folios')
-        .where('reservationId', '==', reservationId)
-        .where('tenantId', '==', tenantId)
-        .limit(1)
-        .get();
-
-      if (existingFoliosSnapshot.empty) {
-        // Create folio
-        const folioRef = db.collection('folios').doc();
-        batch.set(folioRef, {
+      const updatedReservation = await prisma.reservation.findFirst({
+        where: {
+          id: reservationId,
           tenantId,
-          reservationId,
-          roomId: reservationData.roomId,
-          guestName: reservationData.guestName,
-          createdBy: req.user!.id,
-          status: 'open',
-          totalCharges: reservationData.rate,
-          totalPayments: 0,
-          balance: reservationData.rate,
-          createdAt: now(),
-          updatedAt: now(),
-        });
+        },
+        include: {
+          room: true,
+          folios: {
+            include: {
+              charges: true,
+              payments: true,
+            },
+          },
+        },
+      });
 
-        // Add room rate charge
-        const chargeRef = db.collection('folioCharges').doc();
-        batch.set(chargeRef, {
-          folioId: folioRef.id,
-          description: `Room rate - ${roomDoc.data()?.roomNumber || 'N/A'}`,
-          category: 'room_rate',
-          amount: reservationData.rate,
-          quantity: 1,
-          total: reservationData.rate,
-          createdAt: now(),
-        });
+      if (!updatedReservation) {
+        throw new AppError('Reservation not found after check-in', 500);
       }
 
-      await batch.commit();
-
-      // Get updated reservation
-      const updatedDoc = await db.collection('reservations').doc(reservationId).get();
-      const updatedData = updatedDoc.data();
-
-      const updated = {
-        id: updatedDoc.id,
-        ...updatedData,
-        checkInDate: toDate(updatedData?.checkInDate),
-        checkOutDate: toDate(updatedData?.checkOutDate),
-        checkedInAt: toDate(updatedData?.checkedInAt),
-        createdAt: toDate(updatedData?.createdAt),
-        updatedAt: toDate(updatedData?.updatedAt),
+      const serializedReservation = {
+        ...serializeReservation(updatedReservation),
+        room: updatedReservation.room,
+        folios: updatedReservation.folios.map(serializeFolio),
       };
 
       await createAuditLog({
@@ -859,22 +880,22 @@ reservationRouter.post(
         entityType: 'reservation',
         entityId: reservationId,
         beforeState,
-        afterState: updated,
+        afterState: serializedReservation,
         metadata: {
           photo: photo || null,
-          roomId: reservationData.roomId,
+          roomId: reservation.roomId,
         },
       });
 
       await createRoomLog({
         tenantId,
-        roomId: reservationData.roomId,
+        roomId: reservation.roomId,
         type: 'check_in',
-        summary: `Guest checked in (Reservation ${reservationData.reservationNumber || reservationId})`,
+        summary: `Guest checked in (Reservation ${updatedReservation.reservationNumber || reservationId})`,
         metadata: {
           reservationId,
-          reservationNumber: reservationData.reservationNumber || null,
-          guestName: reservationData.guestName || null,
+          reservationNumber: updatedReservation.reservationNumber || null,
+          guestName: updatedReservation.guestName || null,
         },
         user: {
           id: req.user?.id || null,
@@ -883,24 +904,23 @@ reservationRouter.post(
       });
 
       // Send check-in confirmation email asynchronously
-      if (reservationData.guestEmail) {
+      if (updatedReservation.guestEmail) {
         (async () => {
           try {
             const tenantSettings = await getTenantEmailSettings(tenantId);
             if (tenantSettings) {
-              const roomData = roomDoc.data();
               const emailData: ReservationEmailData = {
-                reservationNumber: reservationData.reservationNumber || reservationId,
-                guestName: reservationData.guestName || 'Guest',
-                guestEmail: reservationData.guestEmail,
-                checkInDate: toDate(reservationData.checkInDate)!,
-                checkOutDate: toDate(reservationData.checkOutDate)!,
-                roomNumber: roomData?.roomNumber || 'N/A',
-                roomType: roomData?.roomType || undefined,
-                rate: Number(reservationData.rate || 0),
-                adults: Number(reservationData.adults || 1),
-                children: Number(reservationData.children || 0),
-                specialRequests: reservationData.specialRequests || undefined,
+                reservationNumber: updatedReservation.reservationNumber || reservationId,
+                guestName: updatedReservation.guestName || 'Guest',
+                guestEmail: updatedReservation.guestEmail,
+                checkInDate: updatedReservation.checkInDate,
+                checkOutDate: updatedReservation.checkOutDate,
+                roomNumber: updatedReservation.room?.roomNumber || 'N/A',
+                roomType: updatedReservation.room?.roomType || undefined,
+                rate: decimalToNumber(updatedReservation.rate) ?? 0,
+                adults: updatedReservation.adults,
+                children: updatedReservation.children,
+                specialRequests: updatedReservation.specialRequests || undefined,
                 propertyName: tenantSettings.propertyName,
                 propertyAddress: tenantSettings.propertyAddress || undefined,
                 propertyPhone: tenantSettings.propertyPhone || undefined,
@@ -909,7 +929,7 @@ reservationRouter.post(
 
               const emailHtml = generateCheckInReminderEmail(emailData);
               await sendEmail({
-                to: reservationData.guestEmail,
+                to: updatedReservation.guestEmail,
                 subject: `Welcome to ${tenantSettings.propertyName}!`,
                 html: emailHtml,
               });
@@ -923,7 +943,7 @@ reservationRouter.post(
 
       res.json({
         success: true,
-        data: updated,
+        data: serializedReservation,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -948,80 +968,97 @@ reservationRouter.post(
       const tenantId = req.params.tenantId;
       const reservationId = req.params.id;
       const { finalCharges, paymentInfo } = req.body;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
 
-      const reservationDoc = await db.collection('reservations').doc(reservationId).get();
-      if (!reservationDoc.exists) {
+      const reservation = await prisma.reservation.findFirst({
+        where: {
+          id: reservationId,
+          tenantId,
+        },
+        include: {
+          room: true,
+          folios: {
+            include: {
+              charges: true,
+              payments: true,
+            },
+          },
+        },
+      });
+
+      if (!reservation) {
         throw new AppError('Reservation not found', 404);
       }
 
-      const reservationData = reservationDoc.data();
-      if (reservationData?.tenantId !== tenantId) {
-        throw new AppError('Reservation not found', 404);
-      }
-
-      if (reservationData.status !== 'checked_in') {
+      if (reservation.status !== 'checked_in') {
         throw new AppError('Reservation is not checked in', 400);
       }
 
-      // Get room and folios
-      const [roomDoc, foliosSnapshot] = await Promise.all([
-        db.collection('rooms').doc(reservationData.roomId).get(),
-        db.collection('folios').where('reservationId', '==', reservationId).limit(1).get(),
-      ]);
-
-      if (!roomDoc.exists) {
-        throw new AppError('Room not found', 404);
+      if (!reservation.room) {
+        throw new AppError('Reservation is missing room information', 400);
       }
 
       const beforeState = {
-        id: reservationDoc.id,
-        ...reservationData,
-        room: { id: roomDoc.id, ...roomDoc.data() },
+        ...serializeReservation(reservation),
+        room: reservation.room,
+        folios: reservation.folios.map(serializeFolio),
       };
 
-      // Use Firestore batch for atomic operations
-      const batch = db.batch();
+      const checkOutTime = new Date();
 
-      // Update reservation
-      batch.update(reservationDoc.ref, {
-        status: 'checked_out',
-        checkedOutAt: now(),
-        checkedOutBy: req.user!.id,
-        updatedAt: now(),
-      });
-
-      // Update room status
-      batch.update(roomDoc.ref, {
-        status: 'dirty',
-        updatedAt: now(),
-      });
-
-      // Close folio if exists
-      if (!foliosSnapshot.empty) {
-        const folioDoc = foliosSnapshot.docs[0];
-        batch.update(folioDoc.ref, {
-          status: 'closed',
-          closedAt: now(),
-          closedBy: req.user!.id,
-          updatedAt: now(),
+      await prisma.$transaction(async (tx) => {
+        await tx.reservation.update({
+          where: { id: reservation.id },
+          data: {
+            status: 'checked_out',
+            checkedOutAt: checkOutTime,
+            checkedOutBy: req.user!.id,
+          },
         });
+
+        await tx.room.update({
+          where: { id: reservation.roomId },
+          data: {
+            status: 'dirty',
+          },
+        });
+
+        await tx.folio.updateMany({
+          where: { reservationId },
+          data: {
+            status: 'closed',
+            closedAt: checkOutTime,
+            closedBy: req.user!.id,
+          },
+        });
+      });
+
+      const updatedReservation = await prisma.reservation.findFirst({
+        where: {
+          id: reservationId,
+          tenantId,
+        },
+        include: {
+          room: true,
+          folios: {
+            include: {
+              charges: true,
+              payments: true,
+            },
+          },
+        },
+      });
+
+      if (!updatedReservation) {
+        throw new AppError('Reservation not found after checkout', 500);
       }
 
-      await batch.commit();
-
-      // Get updated reservation
-      const updatedDoc = await db.collection('reservations').doc(reservationId).get();
-      const updatedData = updatedDoc.data();
-
-      const updated = {
-        id: updatedDoc.id,
-        ...updatedData,
-        checkInDate: toDate(updatedData?.checkInDate),
-        checkOutDate: toDate(updatedData?.checkOutDate),
-        checkedInAt: toDate(updatedData?.checkedInAt),
-        checkedOutAt: toDate(updatedData?.checkedOutAt),
-        createdAt: toDate(updatedData?.createdAt),
-        updatedAt: toDate(updatedData?.updatedAt),
+      const serializedReservation = {
+        ...serializeReservation(updatedReservation),
+        room: updatedReservation.room,
+        folios: updatedReservation.folios.map(serializeFolio),
       };
 
       await createAuditLog({
@@ -1031,7 +1068,7 @@ reservationRouter.post(
         entityType: 'reservation',
         entityId: reservationId,
         beforeState,
-        afterState: updated,
+        afterState: serializedReservation,
         metadata: {
           finalCharges,
           paymentInfo,
@@ -1040,13 +1077,14 @@ reservationRouter.post(
 
       await createRoomLog({
         tenantId,
-        roomId: reservationData.roomId,
+        roomId: reservation.roomId,
         type: 'check_out',
-        summary: `Guest checked out (Reservation ${reservationData.reservationNumber || reservationId})`,
+        summary: `Guest checked out (Reservation ${updatedReservation.reservationNumber || reservationId})`,
         metadata: {
           reservationId,
-          reservationNumber: reservationData.reservationNumber || null,
+          reservationNumber: updatedReservation.reservationNumber || null,
           finalCharges: finalCharges || null,
+          paymentInfo: paymentInfo || null,
         },
         user: {
           id: req.user?.id || null,
@@ -1055,35 +1093,36 @@ reservationRouter.post(
       });
 
       // Send checkout thank you email asynchronously
-      if (reservationData.guestEmail) {
+      if (updatedReservation.guestEmail) {
         (async () => {
           try {
             const tenantSettings = await getTenantEmailSettings(tenantId);
             if (tenantSettings) {
-              const roomData = roomDoc.data();
-              const folioData = !foliosSnapshot.empty ? foliosSnapshot.docs[0].data() : null;
+              const folioData = updatedReservation.folios[0];
               const emailData: ReservationEmailData & { totalCharges?: number } = {
-                reservationNumber: reservationData.reservationNumber || reservationId,
-                guestName: reservationData.guestName || 'Guest',
-                guestEmail: reservationData.guestEmail,
-                checkInDate: toDate(reservationData.checkInDate)!,
-                checkOutDate: toDate(reservationData.checkOutDate)!,
-                roomNumber: roomData?.roomNumber || 'N/A',
-                roomType: roomData?.roomType || undefined,
-                rate: Number(reservationData.rate || 0),
-                adults: Number(reservationData.adults || 1),
-                children: Number(reservationData.children || 0),
-                specialRequests: reservationData.specialRequests || undefined,
+                reservationNumber: updatedReservation.reservationNumber || reservationId,
+                guestName: updatedReservation.guestName || 'Guest',
+                guestEmail: updatedReservation.guestEmail,
+                checkInDate: updatedReservation.checkInDate,
+                checkOutDate: updatedReservation.checkOutDate,
+                roomNumber: updatedReservation.room?.roomNumber || 'N/A',
+                roomType: updatedReservation.room?.roomType || undefined,
+                rate: decimalToNumber(updatedReservation.rate) ?? 0,
+                adults: updatedReservation.adults,
+                children: updatedReservation.children,
+                specialRequests: updatedReservation.specialRequests || undefined,
                 propertyName: tenantSettings.propertyName,
                 propertyAddress: tenantSettings.propertyAddress || undefined,
                 propertyPhone: tenantSettings.propertyPhone || undefined,
                 propertyEmail: tenantSettings.propertyEmail || undefined,
-                totalCharges: folioData ? Number(folioData.totalCharges || 0) : undefined,
+                totalCharges: folioData
+                  ? decimalToNumber(folioData.totalCharges) ?? undefined
+                  : undefined,
               };
 
               const emailHtml = generateCheckOutThankYouEmail(emailData);
               await sendEmail({
-                to: reservationData.guestEmail,
+                to: updatedReservation.guestEmail,
                 subject: `Thank you for staying at ${tenantSettings.propertyName}!`,
                 html: emailHtml,
               });
@@ -1097,7 +1136,7 @@ reservationRouter.post(
 
       res.json({
         success: true,
-        data: updated,
+        data: serializedReservation,
       });
     } catch (error: any) {
       if (error instanceof AppError) {

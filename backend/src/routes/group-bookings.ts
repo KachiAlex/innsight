@@ -1,11 +1,188 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
-import { db, toDate, toTimestamp, now } from '../utils/firestore';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import admin from 'firebase-admin';
+import { prisma, isPrismaAvailable } from '../utils/prisma';
 
 export const groupBookingRouter = Router({ mergeParams: true });
+
+type PrismaClientType = typeof prisma;
+
+const ensurePrismaClient = (): PrismaClientType => {
+  if (!isPrismaAvailable() || !prisma) {
+    throw new AppError('Relational database is not configured for this environment', 500);
+  }
+  return prisma;
+};
+
+const toPlainNumber = (value?: Prisma.Decimal | number | null) => (
+  value === null || value === undefined ? value : Number(value)
+);
+
+const toPlainDate = (value?: Date | null) => (value ? value.toISOString() : null);
+
+const includeConfig = {
+  roomBlocks: true,
+  hallReservations: {
+    include: {
+      hall: true,
+    },
+  },
+  reservations: {
+    include: {
+      room: {
+        select: {
+          id: true,
+          roomNumber: true,
+          roomType: true,
+        },
+      },
+    },
+  },
+};
+
+const serializeGroupBooking = (booking: any) => ({
+  id: booking.id,
+  tenantId: booking.tenantId,
+  groupBookingNumber: booking.groupBookingNumber,
+  groupName: booking.groupName,
+  groupType: booking.groupType,
+  contactPerson: booking.contactPerson,
+  contactEmail: booking.contactEmail,
+  contactPhone: booking.contactPhone,
+  expectedGuests: booking.expectedGuests,
+  confirmedGuests: booking.confirmedGuests,
+  checkInDate: toPlainDate(booking.checkInDate),
+  checkOutDate: toPlainDate(booking.checkOutDate),
+  totalRooms: booking.totalRooms,
+  totalRevenue: toPlainNumber(booking.totalRevenue) ?? 0,
+  depositAmount: toPlainNumber(booking.depositAmount),
+  depositPaid: booking.depositPaid,
+  status: booking.status,
+  bookingProgress: booking.bookingProgress,
+  specialRequests: booking.specialRequests,
+  dietaryRequirements: booking.dietaryRequirements,
+  setupRequirements: booking.setupRequirements,
+  assignedTo: booking.assignedTo,
+  createdBy: booking.createdBy,
+  createdAt: toPlainDate(booking.createdAt),
+  updatedAt: toPlainDate(booking.updatedAt),
+  roomBlocks: booking.roomBlocks?.map((block: any) => ({
+    id: block.id,
+    roomCategoryId: block.roomCategoryId,
+    roomType: block.roomType,
+    totalRooms: block.totalRooms,
+    allocatedRooms: block.allocatedRooms,
+    availableRooms: block.availableRooms,
+    negotiatedRate: toPlainNumber(block.negotiatedRate),
+    discountPercent: toPlainNumber(block.discountPercent),
+    checkInDate: toPlainDate(block.checkInDate),
+    checkOutDate: toPlainDate(block.checkOutDate),
+    createdAt: toPlainDate(block.createdAt),
+    updatedAt: toPlainDate(block.updatedAt),
+  })) ?? [],
+  hallReservations: booking.hallReservations?.map((reservation: any) => ({
+    id: reservation.id,
+    hallId: reservation.hallId,
+    eventName: reservation.eventName,
+    purpose: reservation.purpose,
+    setupType: reservation.setupType,
+    attendeeCount: reservation.attendeeCount,
+    startDateTime: toPlainDate(reservation.startDateTime),
+    endDateTime: toPlainDate(reservation.endDateTime),
+    cateringNotes: reservation.cateringNotes,
+    avRequirements: reservation.avRequirements,
+    status: reservation.status,
+    createdAt: toPlainDate(reservation.createdAt),
+    updatedAt: toPlainDate(reservation.updatedAt),
+    hall: reservation.hall
+      ? {
+          id: reservation.hall.id,
+          name: reservation.hall.name,
+          capacity: reservation.hall.capacity,
+          location: reservation.hall.location,
+        }
+      : null,
+  })) ?? [],
+  reservations: booking.reservations?.map((reservation: any) => ({
+    id: reservation.id,
+    reservationNumber: reservation.reservationNumber,
+    roomId: reservation.roomId,
+    checkInDate: toPlainDate(reservation.checkInDate),
+    checkOutDate: toPlainDate(reservation.checkOutDate),
+    status: reservation.status,
+    rate: toPlainNumber(reservation.rate),
+    room: reservation.room
+      ? {
+          id: reservation.room.id,
+          roomNumber: reservation.room.roomNumber,
+          roomType: reservation.room.roomType,
+        }
+      : null,
+  })) ?? [],
+});
+
+const generateGroupBookingNumber = () => {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `GB-${dateStr}-${randomStr}`;
+};
+
+const validateHallReservations = async (
+  tenantId: string,
+  hallReservations: any[],
+  client: PrismaClientType
+) => {
+  if (!hallReservations.length) return;
+
+  const hallIds = [...new Set(hallReservations.map((hr) => hr.hallId))];
+
+  const halls = await client.meetingHall.findMany({
+    where: {
+      tenantId,
+      id: { in: hallIds },
+      isActive: true,
+    },
+    select: { id: true },
+  });
+
+  const validHallIds = new Set(halls.map((hall) => hall.id));
+  hallReservations.forEach((reservation) => {
+    if (!reservation.hallId || !validHallIds.has(reservation.hallId)) {
+      throw new AppError(`Meeting hall ${reservation.hallId} is not available for this tenant`, 400);
+    }
+
+    if (!reservation.startDateTime || !reservation.endDateTime) {
+      throw new AppError('Hall reservations require start and end date/time', 400);
+    }
+
+    const start = new Date(reservation.startDateTime);
+    const end = new Date(reservation.endDateTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
+      throw new AppError('Invalid hall reservation date range', 400);
+    }
+  });
+
+  for (const reservation of hallReservations) {
+    const start = new Date(reservation.startDateTime);
+    const end = new Date(reservation.endDateTime);
+    const overlap = await client.groupBookingHallReservation.findFirst({
+      where: {
+        tenantId,
+        hallId: reservation.hallId,
+        startDateTime: { lt: end },
+        endDateTime: { gt: start },
+        status: { in: ['tentative', 'confirmed'] },
+      },
+      select: { id: true },
+    });
+
+    if (overlap) {
+      throw new AppError('Selected hall already has a booking for the requested schedule', 409);
+    }
+  }
+};
 
 // ============================================
 // GROUP BOOKING CRUD
@@ -13,43 +190,50 @@ export const groupBookingRouter = Router({ mergeParams: true });
 
 // GET /api/tenants/:tenantId/group-bookings - List group bookings
 groupBookingRouter.get('/', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const { skip, take, page, limit } = getPaginationParams(req);
+  const { status, startDate, endDate } = req.query;
+
+  const where: Prisma.GroupBookingWhereInput = {
+    tenantId,
+  };
+
+  if (status && typeof status === 'string' && status !== 'all') {
+    where.status = status;
+  }
+
+  if (startDate || endDate) {
+    const start = startDate ? new Date(startDate as string) : undefined;
+    const end = endDate ? new Date(endDate as string) : undefined;
+
+    if (start && Number.isNaN(start.getTime())) {
+      throw new AppError('Invalid startDate filter', 400);
+    }
+    if (end && Number.isNaN(end.getTime())) {
+      throw new AppError('Invalid endDate filter', 400);
+    }
+
+    where.checkInDate = {
+      gte: start,
+      lte: end,
+    };
+  }
+
   try {
-    const tenantId = req.params.tenantId;
-    const { page, limit } = getPaginationParams(req);
-    const { status, startDate, endDate } = req.query;
+    const [total, bookings] = await client.$transaction([
+      client.groupBooking.count({ where }),
+      client.groupBooking.findMany({
+        where,
+        orderBy: { checkInDate: 'desc' },
+        skip,
+        take,
+        include: includeConfig,
+      }),
+    ]);
 
-    let query: admin.firestore.Query = db.collection('group_bookings')
-      .where('tenantId', '==', tenantId);
-
-    if (status) {
-      query = query.where('status', '==', status);
-    }
-
-    if (startDate && endDate) {
-      query = query.where('checkInDate', '>=', toTimestamp(new Date(startDate as string)))
-                   .where('checkInDate', '<=', toTimestamp(new Date(endDate as string)));
-    }
-
-    const snapshot = await query
-      .orderBy('checkInDate', 'desc')
-      .get();
-
-    const groupBookings = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      checkInDate: toDate(doc.data().checkInDate),
-      checkOutDate: toDate(doc.data().checkOutDate),
-      createdAt: toDate(doc.data().createdAt),
-      updatedAt: toDate(doc.data().updatedAt),
-      totalRevenue: Number(doc.data().totalRevenue || 0),
-      depositAmount: doc.data().depositAmount ? Number(doc.data().depositAmount) : null,
-    }));
-
-    const total = groupBookings.length;
-    const skip = (page - 1) * limit;
-    const paginatedBookings = groupBookings.slice(skip, skip + limit);
-
-    const result = createPaginationResult(paginatedBookings, total, page, limit);
+    const serialized = bookings.map(serializeGroupBooking);
+    const result = createPaginationResult(serialized, total, page, limit);
 
     res.json({
       success: true,
@@ -66,13 +250,13 @@ groupBookingRouter.get('/', authenticate, requireTenantAccess, async (req: AuthR
 
 // POST /api/tenants/:tenantId/group-bookings - Create group booking
 groupBookingRouter.post('/', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
-  try {
-    const tenantId = req.params.tenantId;
-    const bookingData = req.body;
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingData = req.body;
 
-    // Validate required fields
+  try {
     if (!bookingData.groupName || !bookingData.contactPerson ||
-        !bookingData.contactEmail || !bookingData.contactPhone) {
+      !bookingData.contactEmail || !bookingData.contactPhone) {
       throw new AppError('Group name, contact person, email, and phone are required', 400);
     }
 
@@ -80,58 +264,86 @@ groupBookingRouter.post('/', authenticate, requireTenantAccess, async (req: Auth
       throw new AppError('Check-in and check-out dates are required', 400);
     }
 
-    const checkInDate = bookingData.checkInDate ? new Date(bookingData.checkInDate.toDate()) : new Date();
-    const checkOutDate = bookingData.checkOutDate ? new Date(bookingData.checkOutDate.toDate()) : new Date();
+    const checkInDate = new Date(bookingData.checkInDate);
+    const checkOutDate = new Date(bookingData.checkOutDate);
+
+    if (Number.isNaN(checkInDate.getTime()) || Number.isNaN(checkOutDate.getTime())) {
+      throw new AppError('Invalid check-in/check-out date format', 400);
+    }
 
     if (checkInDate >= checkOutDate) {
       throw new AppError('Check-out date must be after check-in date', 400);
     }
 
-    // Generate group booking number
-    const timestamp = now();
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const groupBookingNumber = `GB-${dateStr}-${randomStr}`;
+    const roomBlocks: any[] = Array.isArray(bookingData.roomBlocks) ? bookingData.roomBlocks : [];
+    const hallReservations: any[] = Array.isArray(bookingData.hallReservations) ? bookingData.hallReservations : [];
 
-    const bookingRecord = {
-      tenantId,
-      groupBookingNumber,
-      groupName: bookingData.groupName,
-      groupType: bookingData.groupType || 'other',
-      contactPerson: bookingData.contactPerson,
-      contactEmail: bookingData.contactEmail,
-      contactPhone: bookingData.contactPhone,
-      expectedGuests: bookingData.expectedGuests || 0,
-      confirmedGuests: 0,
-      checkInDate: toTimestamp(checkInDate),
-      checkOutDate: toTimestamp(checkOutDate),
-      totalRooms: bookingData.totalRooms || 0,
-      totalRevenue: 0,
-      depositAmount: bookingData.depositAmount || null,
-      depositPaid: false,
-      status: 'pending',
-      bookingProgress: 'initial_contact',
-      specialRequests: bookingData.specialRequests || null,
-      dietaryRequirements: bookingData.dietaryRequirements || null,
-      setupRequirements: bookingData.setupRequirements || null,
-      assignedTo: bookingData.assignedTo || null,
-      createdBy: req.user?.id || 'system',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+    await validateHallReservations(tenantId, hallReservations, client);
 
-    const docRef = await db.collection('group_bookings').add(bookingRecord);
+    const totalRoomsFromBlocks = roomBlocks.reduce((sum, block) => (
+      sum + (Number(block.totalRooms) || 0)
+    ), 0);
 
-    res.json({
-      success: true,
+    const groupBooking = await client.groupBooking.create({
       data: {
-        id: docRef.id,
-        ...bookingRecord,
-        checkInDate: toDate(bookingRecord.checkInDate),
-        checkOutDate: toDate(bookingRecord.checkOutDate),
-        createdAt: toDate(timestamp),
-        updatedAt: toDate(timestamp),
+        tenantId,
+        groupBookingNumber: generateGroupBookingNumber(),
+        groupName: bookingData.groupName,
+        groupType: bookingData.groupType || 'other',
+        contactPerson: bookingData.contactPerson,
+        contactEmail: bookingData.contactEmail,
+        contactPhone: bookingData.contactPhone,
+        expectedGuests: Number(bookingData.expectedGuests) || 0,
+        confirmedGuests: 0,
+        checkInDate,
+        checkOutDate,
+        totalRooms: bookingData.totalRooms || totalRoomsFromBlocks,
+        totalRevenue: bookingData.totalRevenue || 0,
+        depositAmount: bookingData.depositAmount ?? null,
+        depositPaid: bookingData.depositPaid ?? false,
+        status: bookingData.status || 'pending',
+        bookingProgress: bookingData.bookingProgress || 'initial_contact',
+        specialRequests: bookingData.specialRequests || null,
+        dietaryRequirements: bookingData.dietaryRequirements || null,
+        setupRequirements: bookingData.setupRequirements || null,
+        assignedTo: bookingData.assignedTo || null,
+        createdBy: req.user?.id || 'system',
+        roomBlocks: roomBlocks.length ? {
+          create: roomBlocks.map((block) => ({
+            tenantId,
+            roomCategoryId: block.roomCategoryId,
+            roomType: block.roomType || '',
+            totalRooms: Number(block.totalRooms) || 0,
+            allocatedRooms: Number(block.allocatedRooms) || 0,
+            availableRooms: Number(block.availableRooms ?? (Number(block.totalRooms) || 0)),
+            negotiatedRate: block.negotiatedRate ?? null,
+            discountPercent: block.discountPercent ?? null,
+            checkInDate,
+            checkOutDate,
+          })),
+        } : undefined,
+        hallReservations: hallReservations.length ? {
+          create: hallReservations.map((reservation) => ({
+            tenantId,
+            hallId: reservation.hallId,
+            eventName: reservation.eventName || null,
+            purpose: reservation.purpose || null,
+            setupType: reservation.setupType || null,
+            attendeeCount: reservation.attendeeCount ? Number(reservation.attendeeCount) : null,
+            startDateTime: new Date(reservation.startDateTime),
+            endDateTime: new Date(reservation.endDateTime),
+            cateringNotes: reservation.cateringNotes || null,
+            avRequirements: reservation.avRequirements || null,
+            status: reservation.status || 'tentative',
+          })),
+        } : undefined,
       },
+      include: includeConfig,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: serializeGroupBooking(groupBooking),
     });
   } catch (error: any) {
     if (error instanceof AppError) {
@@ -145,78 +357,62 @@ groupBookingRouter.post('/', authenticate, requireTenantAccess, async (req: Auth
   }
 });
 
-// GET /api/tenants/:tenantId/group-bookings/:bookingId - Get group booking details
-groupBookingRouter.get('/:bookingId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+// GET /api/tenants/:tenantId/group-bookings/meeting-halls - List available meeting halls
+groupBookingRouter.get('/meeting-halls', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+
   try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
-
-    const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists || bookingDoc.data()?.tenantId !== tenantId) {
-      throw new AppError('Group booking not found', 404);
-    }
-
-    // Get room blocks for this booking
-    const roomBlocksSnapshot = await db.collection('room_blocks')
-      .where('tenantId', '==', tenantId)
-      .where('groupBookingId', '==', bookingId)
-      .get();
-
-    const roomBlocks = roomBlocksSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      negotiatedRate: doc.data().negotiatedRate ? Number(doc.data().negotiatedRate) : null,
-      discountPercent: doc.data().discountPercent ? Number(doc.data().discountPercent) : null,
-      checkInDate: toDate(doc.data().checkInDate),
-      checkOutDate: toDate(doc.data().checkOutDate),
-      createdAt: toDate(doc.data().createdAt),
-      updatedAt: toDate(doc.data().updatedAt),
-    }));
-
-    // Get reservations linked to this group booking
-    const reservationsSnapshot = await db.collection('reservations')
-      .where('tenantId', '==', tenantId)
-      .where('groupBookingId', '==', bookingId)
-      .get();
-
-    const reservations = await Promise.all(
-      reservationsSnapshot.docs.map(async (doc) => {
-        const resData = doc.data();
-        const roomDoc = await db.collection('rooms').doc(resData.roomId).get();
-
-        return {
-          id: doc.id,
-          ...resData,
-          checkInDate: toDate(resData.checkInDate),
-          checkOutDate: toDate(resData.checkOutDate),
-          rate: Number(resData.rate || 0),
-          room: roomDoc.exists ? {
-            roomNumber: roomDoc.data()?.roomNumber,
-            roomType: roomDoc.data()?.roomType,
-          } : null,
-        };
-      })
-    );
-
-    const bookingData = bookingDoc.data();
-
-    const booking = {
-      id: bookingDoc.id,
-      ...bookingData,
-      checkInDate: toDate(bookingData?.checkInDate),
-      checkOutDate: toDate(bookingData?.checkOutDate),
-      createdAt: toDate(bookingData?.createdAt),
-      updatedAt: toDate(bookingData?.updatedAt),
-      totalRevenue: Number(bookingData?.totalRevenue || 0),
-      depositAmount: bookingData?.depositAmount ? Number(bookingData.depositAmount) : null,
-      roomBlocks,
-      reservations,
-    };
+    const halls = await client.meetingHall.findMany({
+      where: {
+        tenantId,
+        isActive: true,
+      },
+      orderBy: { name: 'asc' },
+    });
 
     res.json({
       success: true,
-      data: booking,
+      data: halls.map((hall) => ({
+        id: hall.id,
+        name: hall.name,
+        description: hall.description,
+        capacity: hall.capacity,
+        location: hall.location,
+        amenities: hall.amenities,
+      })),
+    });
+  } catch (error: any) {
+    console.error('Error fetching meeting halls:', error);
+    throw new AppError(
+      `Failed to fetch meeting halls: ${error.message || 'Unknown error'}`,
+      500
+    );
+  }
+});
+
+// GET /api/tenants/:tenantId/group-bookings/:bookingId - Get group booking details
+groupBookingRouter.get('/:bookingId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+
+  try {
+    const booking = await client.groupBooking.findFirst({
+      where: {
+        id: bookingId,
+        tenantId,
+      },
+      include: includeConfig,
+    });
+
+    if (!booking) {
+      throw new AppError('Group booking not found', 404);
+    }
+
+    res.json({
+      success: true,
+      data: serializeGroupBooking(booking),
     });
   } catch (error: any) {
     if (error instanceof AppError) {
@@ -232,48 +428,69 @@ groupBookingRouter.get('/:bookingId', authenticate, requireTenantAccess, async (
 
 // PUT /api/tenants/:tenantId/group-bookings/:bookingId - Update group booking
 groupBookingRouter.put('/:bookingId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+  const updates = req.body;
+
   try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
-    const updates = req.body;
+    const existing = await client.groupBooking.findFirst({
+      where: { id: bookingId, tenantId },
+    });
 
-    const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists || bookingDoc.data()?.tenantId !== tenantId) {
+    if (!existing) {
       throw new AppError('Group booking not found', 404);
     }
 
-    const timestamp = now();
-    const updatedData = {
-      ...updates,
-      updatedAt: timestamp,
+    const data: Prisma.GroupBookingUpdateInput = {
+      groupName: updates.groupName ?? existing.groupName,
+      groupType: updates.groupType ?? existing.groupType,
+      contactPerson: updates.contactPerson ?? existing.contactPerson,
+      contactEmail: updates.contactEmail ?? existing.contactEmail,
+      contactPhone: updates.contactPhone ?? existing.contactPhone,
+      expectedGuests: updates.expectedGuests ?? existing.expectedGuests,
+      confirmedGuests: updates.confirmedGuests ?? existing.confirmedGuests,
+      totalRooms: updates.totalRooms ?? existing.totalRooms,
+      totalRevenue: updates.totalRevenue ?? existing.totalRevenue,
+      depositAmount: updates.depositAmount ?? existing.depositAmount,
+      depositPaid: typeof updates.depositPaid === 'boolean' ? updates.depositPaid : existing.depositPaid,
+      status: updates.status ?? existing.status,
+      bookingProgress: updates.bookingProgress ?? existing.bookingProgress,
+      specialRequests: updates.specialRequests ?? existing.specialRequests,
+      dietaryRequirements: updates.dietaryRequirements ?? existing.dietaryRequirements,
+      setupRequirements: updates.setupRequirements ?? existing.setupRequirements,
+      assignedTo: updates.assignedTo ?? existing.assignedTo,
     };
 
-    // Handle date conversions
     if (updates.checkInDate) {
-      updatedData.checkInDate = toTimestamp(new Date(updates.checkInDate));
+      const date = new Date(updates.checkInDate);
+      if (Number.isNaN(date.getTime())) {
+        throw new AppError('Invalid check-in date', 400);
+      }
+      data.checkInDate = date;
     }
+
     if (updates.checkOutDate) {
-      updatedData.checkOutDate = toTimestamp(new Date(updates.checkOutDate));
+      const date = new Date(updates.checkOutDate);
+      if (Number.isNaN(date.getTime())) {
+        throw new AppError('Invalid check-out date', 400);
+      }
+      data.checkOutDate = date;
     }
 
-    await db.collection('group_bookings').doc(bookingId).update(updatedData);
+    if (data.checkInDate && data.checkOutDate && data.checkInDate >= data.checkOutDate) {
+      throw new AppError('Check-out date must be after check-in date', 400);
+    }
 
-    const updatedDoc = await db.collection('group_bookings').doc(bookingId).get();
-    const bookingData = updatedDoc.data();
+    const updated = await client.groupBooking.update({
+      where: { id: bookingId },
+      data,
+      include: includeConfig,
+    });
 
     res.json({
       success: true,
-      data: {
-        id: updatedDoc.id,
-        ...bookingData,
-        checkInDate: toDate(bookingData?.checkInDate),
-        checkOutDate: toDate(bookingData?.checkOutDate),
-        createdAt: toDate(bookingData?.createdAt),
-        updatedAt: toDate(bookingData?.updatedAt),
-        totalRevenue: Number(bookingData?.totalRevenue || 0),
-        depositAmount: bookingData?.depositAmount ? Number(bookingData?.depositAmount) : null,
-      },
+      data: serializeGroupBooking(updated),
     });
   } catch (error: any) {
     if (error instanceof AppError) {
@@ -289,42 +506,43 @@ groupBookingRouter.put('/:bookingId', authenticate, requireTenantAccess, async (
 
 // DELETE /api/tenants/:tenantId/group-bookings/:bookingId - Delete group booking
 groupBookingRouter.delete('/:bookingId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+
   try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
+    const booking = await client.groupBooking.findFirst({
+      where: { id: bookingId, tenantId },
+      select: { id: true },
+    });
 
-    const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-
-    if (!bookingDoc.exists || bookingDoc.data()?.tenantId !== tenantId) {
+    if (!booking) {
       throw new AppError('Group booking not found', 404);
     }
 
-    const bookingData = bookingDoc.data();
+    const hasReservations = await client.reservation.findFirst({
+      where: {
+        tenantId,
+        groupBookingId: bookingId,
+      },
+      select: { id: true },
+    });
 
-    // Check if there are any linked reservations
-    const reservationsSnapshot = await db.collection('reservations')
-      .where('tenantId', '==', tenantId)
-      .where('groupBookingId', '==', bookingId)
-      .limit(1)
-      .get();
-
-    if (!reservationsSnapshot.empty) {
+    if (hasReservations) {
       throw new AppError('Cannot delete group booking with existing reservations. Cancel reservations first.', 400);
     }
 
-    // Delete room blocks
-    const roomBlocksSnapshot = await db.collection('room_blocks')
-      .where('tenantId', '==', tenantId)
-      .where('groupBookingId', '==', bookingId)
-      .get();
-
-    const batch = db.batch();
-    roomBlocksSnapshot.docs.forEach(doc => {
-      batch.delete(doc.ref);
-    });
-    batch.delete(db.collection('group_bookings').doc(bookingId));
-
-    await batch.commit();
+    await client.$transaction([
+      client.groupBookingHallReservation.deleteMany({
+        where: { tenantId, groupBookingId: bookingId },
+      }),
+      client.roomBlock.deleteMany({
+        where: { tenantId, groupBookingId: bookingId },
+      }),
+      client.groupBooking.delete({
+        where: { id: bookingId },
+      }),
+    ]);
 
     res.json({
       success: true,
@@ -348,59 +566,69 @@ groupBookingRouter.delete('/:bookingId', authenticate, requireTenantAccess, asyn
 
 // POST /api/tenants/:tenantId/group-bookings/:bookingId/room-blocks - Create room block
 groupBookingRouter.post('/:bookingId/room-blocks', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
-  try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
-    const blockData = req.body;
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+  const blockData = req.body;
 
-    // Validate group booking exists
-    const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-    if (!bookingDoc.exists || bookingDoc.data()?.tenantId !== tenantId) {
+  try {
+    const booking = await client.groupBooking.findFirst({
+      where: { id: bookingId, tenantId },
+    });
+
+    if (!booking) {
       throw new AppError('Group booking not found', 404);
     }
 
-    // Validate required fields
     if (!blockData.roomCategoryId || !blockData.totalRooms) {
       throw new AppError('Room category and total rooms are required', 400);
     }
 
-    const bookingData = bookingDoc.data();
-    const blockRecord = {
-      tenantId,
-      groupBookingId: bookingId,
-      roomCategoryId: blockData.roomCategoryId,
-      roomType: blockData.roomType || '',
-      totalRooms: blockData.totalRooms,
-      allocatedRooms: 0,
-      availableRooms: blockData.totalRooms,
-      negotiatedRate: blockData.negotiatedRate || null,
-      discountPercent: blockData.discountPercent || null,
-      checkInDate: bookingData?.checkInDate,
-      checkOutDate: bookingData?.checkOutDate,
-      createdAt: now(),
-      updatedAt: now(),
-    };
+    const totalRooms = Number(blockData.totalRooms);
+    if (!Number.isFinite(totalRooms) || totalRooms <= 0) {
+      throw new AppError('Total rooms must be greater than zero', 400);
+    }
 
-    const docRef = await db.collection('room_blocks').add(blockRecord);
-
-    // Update group booking total rooms
-    const currentTotalRooms = bookingData?.totalRooms || 0;
-    await db.collection('group_bookings').doc(bookingId).update({
-      totalRooms: currentTotalRooms + blockData.totalRooms,
-      updatedAt: now(),
+    const roomBlock = await client.roomBlock.create({
+      data: {
+        tenantId,
+        groupBookingId: bookingId,
+        roomCategoryId: blockData.roomCategoryId,
+        roomType: blockData.roomType || '',
+        totalRooms,
+        allocatedRooms: 0,
+        availableRooms: totalRooms,
+        negotiatedRate: blockData.negotiatedRate ?? null,
+        discountPercent: blockData.discountPercent ?? null,
+        checkInDate: booking.checkInDate,
+        checkOutDate: booking.checkOutDate,
+      },
     });
 
-    res.json({
+    await client.groupBooking.update({
+      where: { id: bookingId },
+      data: {
+        totalRooms: {
+          increment: totalRooms,
+        },
+      },
+    });
+
+    res.status(201).json({
       success: true,
       data: {
-        id: docRef.id,
-        ...blockRecord,
-        negotiatedRate: blockRecord.negotiatedRate ? Number(blockRecord.negotiatedRate) : null,
-        discountPercent: blockRecord.discountPercent ? Number(blockRecord.discountPercent) : null,
-        checkInDate: toDate(blockRecord.checkInDate),
-        checkOutDate: toDate(blockRecord.checkOutDate),
-        createdAt: toDate(blockRecord.createdAt),
-        updatedAt: toDate(blockRecord.updatedAt),
+        id: roomBlock.id,
+        roomCategoryId: roomBlock.roomCategoryId,
+        roomType: roomBlock.roomType,
+        totalRooms: roomBlock.totalRooms,
+        allocatedRooms: roomBlock.allocatedRooms,
+        availableRooms: roomBlock.availableRooms,
+        negotiatedRate: toPlainNumber(roomBlock.negotiatedRate),
+        discountPercent: toPlainNumber(roomBlock.discountPercent),
+        checkInDate: toPlainDate(roomBlock.checkInDate),
+        checkOutDate: toPlainDate(roomBlock.checkOutDate),
+        createdAt: toPlainDate(roomBlock.createdAt),
+        updatedAt: toPlainDate(roomBlock.updatedAt),
       },
     });
   } catch (error: any) {
@@ -417,62 +645,65 @@ groupBookingRouter.post('/:bookingId/room-blocks', authenticate, requireTenantAc
 
 // PUT /api/tenants/:tenantId/group-bookings/:bookingId/room-blocks/:blockId - Update room block
 groupBookingRouter.put('/:bookingId/room-blocks/:blockId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+  const blockId = req.params.blockId;
+  const updates = req.body;
+
   try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
-    const blockId = req.params.blockId;
-    const updates = req.body;
+    const block = await client.roomBlock.findFirst({
+      where: { id: blockId, tenantId, groupBookingId: bookingId },
+    });
 
-    const blockDoc = await db.collection('room_blocks').doc(blockId).get();
-
-    if (!blockDoc.exists || blockDoc.data()?.tenantId !== tenantId || blockDoc.data()?.groupBookingId !== bookingId) {
+    if (!block) {
       throw new AppError('Room block not found', 404);
     }
 
-    const blockData = blockDoc.data();
-    const oldTotalRooms = blockData?.totalRooms || 0;
-    const newTotalRooms = updates.totalRooms || oldTotalRooms;
-    const allocatedRooms = blockData?.allocatedRooms || 0;
+    const newTotalRooms = updates.totalRooms !== undefined ? Number(updates.totalRooms) : block.totalRooms;
 
-    if (newTotalRooms < allocatedRooms) {
+    if (newTotalRooms < block.allocatedRooms) {
       throw new AppError('Cannot reduce total rooms below allocated rooms', 400);
     }
 
-    const updatedData = {
-      ...updates,
-      availableRooms: newTotalRooms - allocatedRooms,
-      updatedAt: now(),
-    };
+    const updated = await client.roomBlock.update({
+      where: { id: blockId },
+      data: {
+        roomType: updates.roomType ?? block.roomType,
+        roomCategoryId: updates.roomCategoryId ?? block.roomCategoryId,
+        totalRooms: newTotalRooms,
+        availableRooms: newTotalRooms - block.allocatedRooms,
+        negotiatedRate: updates.negotiatedRate ?? block.negotiatedRate,
+        discountPercent: updates.discountPercent ?? block.discountPercent,
+      },
+    });
 
-    await db.collection('room_blocks').doc(blockId).update(updatedData);
-
-    // Update group booking total rooms if necessary
-    if (oldTotalRooms !== newTotalRooms) {
-      const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-      const bookingData = bookingDoc.data();
-      const currentTotalRooms = bookingData?.totalRooms || 0;
-      const newBookingTotalRooms = currentTotalRooms - oldTotalRooms + newTotalRooms;
-
-      await db.collection('group_bookings').doc(bookingId).update({
-        totalRooms: newBookingTotalRooms,
-        updatedAt: now(),
+    if (newTotalRooms !== block.totalRooms) {
+      await client.groupBooking.update({
+        where: { id: bookingId },
+        data: {
+          totalRooms: {
+            increment: newTotalRooms - block.totalRooms,
+          },
+        },
       });
     }
-
-    const updatedDoc = await db.collection('room_blocks').doc(blockId).get();
-    const finalBlockData = updatedDoc.data();
 
     res.json({
       success: true,
       data: {
-        id: updatedDoc.id,
-        ...finalBlockData,
-        negotiatedRate: finalBlockData?.negotiatedRate ? Number(finalBlockData.negotiatedRate) : null,
-        discountPercent: finalBlockData?.discountPercent ? Number(finalBlockData.discountPercent) : null,
-        checkInDate: toDate(finalBlockData?.checkInDate),
-        checkOutDate: toDate(finalBlockData?.checkOutDate),
-        createdAt: toDate(finalBlockData?.createdAt),
-        updatedAt: toDate(finalBlockData?.updatedAt),
+        id: updated.id,
+        roomCategoryId: updated.roomCategoryId,
+        roomType: updated.roomType,
+        totalRooms: updated.totalRooms,
+        allocatedRooms: updated.allocatedRooms,
+        availableRooms: updated.availableRooms,
+        negotiatedRate: toPlainNumber(updated.negotiatedRate),
+        discountPercent: toPlainNumber(updated.discountPercent),
+        checkInDate: toPlainDate(updated.checkInDate),
+        checkOutDate: toPlainDate(updated.checkOutDate),
+        createdAt: toPlainDate(updated.createdAt),
+        updatedAt: toPlainDate(updated.updatedAt),
       },
     });
   } catch (error: any) {
@@ -489,36 +720,37 @@ groupBookingRouter.put('/:bookingId/room-blocks/:blockId', authenticate, require
 
 // DELETE /api/tenants/:tenantId/group-bookings/:bookingId/room-blocks/:blockId - Delete room block
 groupBookingRouter.delete('/:bookingId/room-blocks/:blockId', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+  const blockId = req.params.blockId;
+
   try {
-    const tenantId = req.params.tenantId;
-    const bookingId = req.params.bookingId;
-    const blockId = req.params.blockId;
+    const block = await client.roomBlock.findFirst({
+      where: { id: blockId, tenantId, groupBookingId: bookingId },
+    });
 
-    const blockDoc = await db.collection('room_blocks').doc(blockId).get();
-
-    if (!blockDoc.exists || blockDoc.data()?.tenantId !== tenantId || blockDoc.data()?.groupBookingId !== bookingId) {
+    if (!block) {
       throw new AppError('Room block not found', 404);
     }
 
-    const blockData = blockDoc.data();
-
-    // Check if rooms are allocated
-    if ((blockData?.allocatedRooms || 0) > 0) {
+    if (block.allocatedRooms > 0) {
       throw new AppError('Cannot delete room block with allocated rooms. Deallocate rooms first.', 400);
     }
 
-    // Update group booking total rooms
-    const bookingDoc = await db.collection('group_bookings').doc(bookingId).get();
-    const bookingData = bookingDoc.data();
-    const currentTotalRooms = bookingData?.totalRooms || 0;
-    const blockTotalRooms = blockData?.totalRooms || 0;
-
-    await db.collection('group_bookings').doc(bookingId).update({
-      totalRooms: Math.max(0, currentTotalRooms - blockTotalRooms),
-      updatedAt: now(),
-    });
-
-    await db.collection('room_blocks').doc(blockId).delete();
+    await client.$transaction([
+      client.roomBlock.delete({
+        where: { id: blockId },
+      }),
+      client.groupBooking.update({
+        where: { id: bookingId },
+        data: {
+          totalRooms: {
+            decrement: block.totalRooms,
+          },
+        },
+      }),
+    ]);
 
     res.json({
       success: true,
@@ -542,40 +774,49 @@ groupBookingRouter.delete('/:bookingId/room-blocks/:blockId', authenticate, requ
 
 // GET /api/tenants/:tenantId/group-bookings/stats - Get group booking statistics
 groupBookingRouter.get('/stats/overview', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+
   try {
-    const tenantId = req.params.tenantId;
-
-    const bookingsSnapshot = await db.collection('group_bookings')
-      .where('tenantId', '==', tenantId)
-      .get();
-
-    let stats = {
-      totalBookings: 0,
-      confirmedBookings: 0,
-      pendingBookings: 0,
-      totalRevenue: 0,
-      totalRooms: 0,
-      upcomingBookings: 0,
-    };
-
     const now = new Date();
-    bookingsSnapshot.docs.forEach(doc => {
-      const data = doc.data();
-      stats.totalBookings++;
 
-      if (data.status === 'confirmed') stats.confirmedBookings++;
-      if (data.status === 'pending') stats.pendingBookings++;
-
-      stats.totalRevenue += Number(data.totalRevenue || 0);
-      stats.totalRooms += Number(data.totalRooms || 0);
-
-      const checkInDate = toDate(data.checkInDate);
-      if (checkInDate && checkInDate > now) stats.upcomingBookings++;
-    });
+    const [
+      totalBookings,
+      confirmedBookings,
+      pendingBookings,
+      revenueAggregate,
+      roomsAggregate,
+      upcomingBookings,
+    ] = await Promise.all([
+      client.groupBooking.count({ where: { tenantId } }),
+      client.groupBooking.count({ where: { tenantId, status: 'confirmed' } }),
+      client.groupBooking.count({ where: { tenantId, status: 'pending' } }),
+      client.groupBooking.aggregate({
+        where: { tenantId },
+        _sum: { totalRevenue: true },
+      }),
+      client.groupBooking.aggregate({
+        where: { tenantId },
+        _sum: { totalRooms: true },
+      }),
+      client.groupBooking.count({
+        where: {
+          tenantId,
+          checkInDate: { gt: now },
+        },
+      }),
+    ]);
 
     res.json({
       success: true,
-      data: stats,
+      data: {
+        totalBookings,
+        confirmedBookings,
+        pendingBookings,
+        totalRevenue: toPlainNumber(revenueAggregate._sum.totalRevenue) ?? 0,
+        totalRooms: roomsAggregate._sum.totalRooms ?? 0,
+        upcomingBookings,
+      },
     });
   } catch (error: any) {
     console.error('Error fetching group booking stats:', error);
