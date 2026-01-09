@@ -23,24 +23,32 @@ interface Reservation {
   };
 }
 
-type RoomFilterState = {
-  roomType: string;
-  categoryId: string;
-  ratePlanId: string;
-  floor: string;
-  includeOutOfOrder: boolean;
-  minRate: string;
-  maxRate: string;
+type HallReservationForm = {
+  id: string;
+  hallId: string;
+  eventName: string;
+  purpose: string;
+  setupType: string;
+  attendeeCount: string;
+  startDateTime: string;
+  endDateTime: string;
+  cateringNotes: string;
+  avRequirements: string;
+  rate: string;
 };
 
-const DEFAULT_ROOM_FILTERS: RoomFilterState = {
-  roomType: '',
-  categoryId: '',
-  ratePlanId: '',
-  floor: '',
-  includeOutOfOrder: false,
-  minRate: '',
-  maxRate: '',
+const getRoomEffectiveRate = (room: any): number | null => {
+  if (!room) return null;
+  if (room.effectiveRate !== undefined && room.effectiveRate !== null) {
+    return Number(room.effectiveRate);
+  }
+  if (room.customRate !== undefined && room.customRate !== null) {
+    return Number(room.customRate);
+  }
+  if (room.ratePlan?.baseRate !== undefined && room.ratePlan?.baseRate !== null) {
+    return Number(room.ratePlan.baseRate);
+  }
+  return null;
 };
 
 export default function ReservationsPage() {
@@ -730,31 +738,68 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const [allRooms, setAllRooms] = useState<any[]>([]);
   const [availableRooms, setAvailableRooms] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [ratePlans, setRatePlans] = useState<any[]>([]);
-  const [roomFilters, setRoomFilters] = useState<RoomFilterState>({ ...DEFAULT_ROOM_FILTERS });
+  const [meetingHalls, setMeetingHalls] = useState<any[]>([]);
   const [hasAvailabilityRun, setHasAvailabilityRun] = useState(false);
-  const [recommendedRooms, setRecommendedRooms] = useState<any[]>([]);
+  const [roomSearch, setRoomSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [bulkSelectionInput, setBulkSelectionInput] = useState('');
+  const [bulkSelectionError, setBulkSelectionError] = useState<string | null>(null);
+  const [unavailableRooms, setUnavailableRooms] = useState<Set<string>>(new Set());
+  const [roomRates, setRoomRates] = useState<Record<string, number>>({});
   const [formData, setFormData] = useState({
-    roomId: '',
     guestName: '',
     guestEmail: '',
     guestPhone: '',
+    guestAddress: '',
     checkInDate: '',
     checkOutDate: '',
     adults: 1,
     children: 0,
-    rate: '',
+    specialRequests: '',
   });
-  const [loading, setLoading] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [availabilitySummary, setAvailabilitySummary] = useState<{ total: number; available: number } | null>(null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [selectedRoomIds, setSelectedRoomIds] = useState<Set<string>>(new Set());
+  const [includeHall, setIncludeHall] = useState(false);
+  const [hallReservations, setHallReservations] = useState<HallReservationForm[]>([]);
+
+  useEffect(() => {
+    if (includeHall) {
+      setHallReservations((prev) => {
+        if (prev.length > 0) return prev;
+        const defaultHallId = meetingHalls[0]?.id || '';
+        return [
+          {
+            id: generateTempId(),
+            hallId: defaultHallId,
+            eventName: '',
+            purpose: '',
+            setupType: '',
+            attendeeCount: '',
+            startDateTime: '',
+            endDateTime: '',
+            cateringNotes: '',
+            avRequirements: '',
+            rate: '',
+          },
+        ];
+      });
+    } else {
+      setHallReservations([]);
+    }
+  }, [includeHall, meetingHalls]);
+
+  const steps = ['Guest Information', 'Stay Details', 'Rooms', 'Hall Booking', 'Invoice'];
+  const generateTempId = () => Math.random().toString(36).substring(2, 9);
 
   useEffect(() => {
     if (!user?.tenantId) return;
     fetchRooms();
     fetchCategories();
-    fetchRatePlans();
+    fetchMeetingHalls();
   }, [user?.tenantId]);
 
   const fetchRooms = async () => {
@@ -777,36 +822,19 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
     }
   };
 
-  const fetchRatePlans = async () => {
+  const fetchMeetingHalls = async () => {
     if (!user?.tenantId) return;
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/rate-plans`);
-      setRatePlans(response.data.data || []);
+      const response = await api.get(`/tenants/${user?.tenantId}/group-bookings/meeting-halls`);
+      setMeetingHalls(response.data.data || []);
     } catch (error) {
-      console.error('Failed to fetch rate plans:', error);
+      console.error('Failed to fetch meeting halls:', error);
+      toast.error('Unable to load meeting halls');
     }
-  };
-
-  const updateRoomFilter = <K extends keyof RoomFilterState>(field: K, value: RoomFilterState[K]) => {
-    setRoomFilters((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
   };
 
   const fetchAvailability = async (checkIn: Date, checkOut: Date, minGuests: number) => {
     if (!user?.tenantId) return;
-
-    if (
-      roomFilters.minRate &&
-      roomFilters.maxRate &&
-      Number(roomFilters.minRate) > Number(roomFilters.maxRate)
-    ) {
-      setAvailabilityError('Minimum rate cannot be greater than maximum rate');
-      setAvailableRooms([]);
-      setAvailabilitySummary(null);
-      return;
-    }
 
     setCheckingAvailability(true);
     setAvailabilityError(null);
@@ -816,37 +844,6 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       endDate: checkOut.toISOString(),
       minOccupancy: Math.max(1, minGuests),
     };
-
-    if (roomFilters.roomType) {
-      params.roomType = roomFilters.roomType;
-    }
-    if (roomFilters.categoryId) {
-      params.categoryId = roomFilters.categoryId;
-    }
-    if (roomFilters.ratePlanId) {
-      params.ratePlanId = roomFilters.ratePlanId;
-    }
-    if (roomFilters.includeOutOfOrder) {
-      params.includeOutOfOrder = true;
-    }
-    if (roomFilters.floor) {
-      const floorValue = parseInt(roomFilters.floor, 10);
-      if (!Number.isNaN(floorValue)) {
-        params.floor = floorValue;
-      }
-    }
-    if (roomFilters.minRate) {
-      const minRateValue = Number(roomFilters.minRate);
-      if (!Number.isNaN(minRateValue)) {
-        params.minRate = minRateValue;
-      }
-    }
-    if (roomFilters.maxRate) {
-      const maxRateValue = Number(roomFilters.maxRate);
-      if (!Number.isNaN(maxRateValue)) {
-        params.maxRate = maxRateValue;
-      }
-    }
 
     try {
       const response = await api.get(`/tenants/${user?.tenantId}/reservations/availability`, {
@@ -860,21 +857,12 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         total: data.totalRooms ?? rooms.length,
         available: data.availableCount ?? rooms.length,
       });
-      setRecommendedRooms(data.recommendedRooms || []);
       setHasAvailabilityRun(true);
-
-      setFormData((prev) => {
-        if (!rooms.find((room: any) => room.id === prev.roomId)) {
-          return { ...prev, roomId: '' };
-        }
-        return prev;
-      });
     } catch (error) {
       console.error('Failed to fetch availability:', error);
       setAvailabilityError('Unable to load availability. Please try again.');
       setAvailableRooms([]);
       setAvailabilitySummary(null);
-      setRecommendedRooms([]);
       setHasAvailabilityRun(true);
     } finally {
       setCheckingAvailability(false);
@@ -887,7 +875,6 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       setAvailabilitySummary(null);
       setAvailabilityError(null);
       setHasAvailabilityRun(false);
-      setRecommendedRooms([]);
       return;
     }
 
@@ -906,37 +893,267 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
 
     const minGuests = Number(formData.adults || 0) + Number(formData.children || 0);
     fetchAvailability(checkIn, checkOut, minGuests);
-  }, [formData.checkInDate, formData.checkOutDate, formData.adults, formData.children, roomFilters]);
-
-  const roomTypeOptions = Array.from(
-    new Set(
-      (allRooms || [])
-        .map((room) => room?.roomType)
-        .filter((value): value is string => Boolean(value))
-    )
-  );
-
-  const hasActiveRoomFilters = Boolean(
-    roomFilters.roomType ||
-      roomFilters.categoryId ||
-      roomFilters.ratePlanId ||
-      roomFilters.floor ||
-      roomFilters.includeOutOfOrder ||
-      roomFilters.minRate ||
-      roomFilters.maxRate
-  );
+  }, [formData.checkInDate, formData.checkOutDate, formData.adults, formData.children]);
 
   const roomOptions = hasAvailabilityRun ? availableRooms : allRooms;
+  useEffect(() => {
+    setSelectedRoomIds((prev) => {
+      if (!prev.size) return prev;
+      const validIds = new Set(roomOptions.map((room) => room.id));
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [roomOptions]);
 
-  const hasValidDates = Boolean(formData.checkInDate && formData.checkOutDate && !availabilityError);
-  const hasAvailableRoomSelection = Boolean(formData.roomId && (hasAvailabilityRun ? availableRooms.length > 0 : true));
-  const hasValidRate = Number(formData.rate) > 0;
-  const isSubmitDisabled =
-    loading ||
-    !formData.guestName.trim() ||
-    !hasValidDates ||
-    !hasAvailableRoomSelection ||
-    !hasValidRate;
+  useEffect(() => {
+    setRoomRates((prev) => {
+      const next = { ...prev };
+      roomOptions.forEach((room) => {
+        if (next[room.id] === undefined) {
+          const effectiveRate = getRoomEffectiveRate(room);
+          if (effectiveRate !== null) {
+            next[room.id] = effectiveRate;
+          }
+        }
+      });
+      return next;
+    });
+  }, [roomOptions]);
+
+  const filteredRooms = roomOptions.filter((room) => {
+    const matchesCategory =
+      categoryFilter === 'all'
+        ? true
+        : categoryFilter === 'none'
+          ? !room.category?.id
+          : room.category?.id === categoryFilter;
+    if (!matchesCategory) return false;
+    if (roomSearch.trim()) {
+      const query = roomSearch.toLowerCase();
+      const matchesQuery =
+        (room.roomNumber || '').toLowerCase().includes(query) ||
+        (room.roomType || '').toLowerCase().includes(query) ||
+        (room.category?.name || '').toLowerCase().includes(query);
+      if (!matchesQuery) return false;
+    }
+    return true;
+  });
+
+  const roomsByCategory = Object.values(
+    filteredRooms.reduce<Record<string, { id: string; name: string; rooms: any[] }>>((acc, room) => {
+      const key = room.category?.id || 'uncategorized';
+      if (!acc[key]) {
+        acc[key] = {
+          id: key,
+          name: room.category?.name || 'Uncategorized',
+          rooms: [],
+        };
+      }
+      acc[key].rooms.push(room);
+      return acc;
+    }, {})
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const selectedRoomDetails = Array.from(selectedRoomIds)
+    .map((roomId) => roomOptions.find((room) => room.id === roomId) || allRooms.find((room) => room.id === roomId))
+    .filter(Boolean);
+
+  const getNights = () => {
+    if (!formData.checkInDate || !formData.checkOutDate) return 0;
+    const start = new Date(formData.checkInDate);
+    const end = new Date(formData.checkOutDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+    const diff = end.getTime() - start.getTime();
+    if (diff <= 0) return 0;
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  };
+
+  const nights = getNights();
+  const nightMultiplier = Math.max(nights, 1);
+  const roomSubtotal = selectedRoomDetails.reduce((sum, room: any) => {
+    const nightly = roomRates[room.id] ?? getRoomEffectiveRate(room) ?? 0;
+    return sum + nightly * nightMultiplier;
+  }, 0);
+  const hallTotal = hallReservations.reduce((sum, hall) => sum + (Number(hall.rate) || 0), 0);
+  const invoiceTotal = roomSubtotal + (includeHall ? hallTotal : 0);
+
+  const formatCurrency = (value: number) => `₦${Number(value).toLocaleString()}`;
+
+  const validateHallReservations = () => {
+    if (!includeHall) return true;
+    if (hallReservations.length === 0) return false;
+    return hallReservations.every((reservation) => {
+      if (!reservation.hallId || !reservation.startDateTime || !reservation.endDateTime) return false;
+      const start = new Date(reservation.startDateTime);
+      const end = new Date(reservation.endDateTime);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+      if (end <= start) return false;
+      return Number(reservation.rate) > 0;
+    });
+  };
+
+  const parseBulkSelection = (input: string): string[] => {
+    const roomNumbers: string[] = [];
+    const parts = input
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    parts.forEach((part) => {
+      if (part.includes('-')) {
+        const [startRaw, endRaw] = part.split('-');
+        const start = parseInt(startRaw.trim(), 10);
+        const end = parseInt(endRaw.trim(), 10);
+        if (Number.isNaN(start) || Number.isNaN(end)) {
+          throw new Error(`Invalid range "${part}"`);
+        }
+        if (start > end) {
+          throw new Error(`Range start (${start}) must be <= end (${end})`);
+        }
+        for (let i = start; i <= end; i += 1) {
+          roomNumbers.push(String(i));
+        }
+      } else {
+        const num = parseInt(part, 10);
+        if (Number.isNaN(num)) {
+          throw new Error(`Invalid room number "${part}"`);
+        }
+        roomNumbers.push(String(num));
+      }
+    });
+
+    return roomNumbers;
+  };
+
+  const handleBulkSelection = () => {
+    if (!bulkSelectionInput.trim()) {
+      setBulkSelectionError('Enter room numbers to add');
+      return;
+    }
+
+    try {
+      const numbers = parseBulkSelection(bulkSelectionInput);
+      const nextSelected = new Set(selectedRoomIds);
+      const notFound = new Set<string>();
+      numbers.forEach((roomNumber) => {
+        const match = roomOptions.find(
+          (room: any) => (room.roomNumber || '').toString() === roomNumber.toString()
+        );
+        if (match) {
+          nextSelected.add(match.id);
+        } else {
+          notFound.add(roomNumber);
+        }
+      });
+      setSelectedRoomIds(nextSelected);
+      setUnavailableRooms(notFound);
+      if (notFound.size > 0) {
+        setBulkSelectionError(`Rooms unavailable: ${Array.from(notFound).join(', ')}`);
+      } else {
+        setBulkSelectionError(null);
+        setBulkSelectionInput('');
+        toast.success(`Added ${numbers.length} room${numbers.length === 1 ? '' : 's'}`);
+      }
+    } catch (error: any) {
+      setBulkSelectionError(error.message || 'Invalid format');
+    }
+  };
+
+  const handleHallChange = (index: number, field: keyof HallReservationForm, value: string) => {
+    setHallReservations((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const addHallReservation = () => {
+    setHallReservations((prev) => [
+      ...prev,
+      {
+        id: generateTempId(),
+        hallId: meetingHalls[0]?.id || '',
+        eventName: '',
+        purpose: '',
+        setupType: '',
+        attendeeCount: '',
+        startDateTime: '',
+        endDateTime: '',
+        cateringNotes: '',
+        avRequirements: '',
+        rate: '',
+      },
+    ]);
+  };
+
+  const removeHallReservation = (id: string) => {
+    setHallReservations((prev) => prev.filter((reservation) => reservation.id !== id));
+  };
+
+  const validateStep = (stepIndex: number) => {
+    switch (stepIndex) {
+      case 0:
+        return (
+          formData.guestName.trim().length > 1 &&
+          formData.guestEmail.trim().length > 3 &&
+          formData.guestPhone.trim().length > 3 &&
+          formData.guestAddress.trim().length > 3
+        );
+      case 1: {
+        if (!formData.checkInDate || !formData.checkOutDate) return false;
+        const start = new Date(formData.checkInDate);
+        const end = new Date(formData.checkOutDate);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+        if (end <= start) return false;
+        return !availabilityError;
+      }
+      case 2:
+        return selectedRoomIds.size > 0 && !availabilityError;
+      case 3:
+        return !includeHall || validateHallReservations();
+      case 4:
+        return selectedRoomIds.size > 0 && (!includeHall || validateHallReservations());
+      default:
+        return true;
+    }
+  };
+
+  const canProceed = validateStep(currentStep);
+
+  const handleRoomToggle = (roomId: string) => {
+    setSelectedRoomIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(roomId)) {
+        next.delete(roomId);
+      } else {
+        next.add(roomId);
+      }
+      return next;
+    });
+  };
+
+  const handleCategorySelectAll = (rooms: any[]) => {
+    setSelectedRoomIds((prev) => {
+      const next = new Set(prev);
+      rooms.forEach((room) => next.add(room.id));
+      return next;
+    });
+  };
+
+  const handleCategoryClear = (rooms: any[]) => {
+    setSelectedRoomIds((prev) => {
+      const next = new Set(prev);
+      rooms.forEach((room) => next.delete(room.id));
+      return next;
+    });
+  };
+
+  const clearAllRooms = () => setSelectedRoomIds(new Set());
 
   const toIsoString = (value: string) => {
     if (!value) return '';
@@ -947,31 +1164,75 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
     return date.toISOString();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  const handleSubmit = async () => {
+    if (!validateStep(steps.length - 1)) {
+      toast.error('Please complete all required details before creating reservations.');
+      return;
+    }
 
+    const checkInIso = toIsoString(formData.checkInDate);
+    const checkOutIso = toIsoString(formData.checkOutDate);
+
+    if (!checkInIso || !checkOutIso) {
+      toast.error('Please select valid check-in and check-out dates.');
+      return;
+    }
+
+    if (selectedRoomIds.size === 0) {
+      toast.error('Select at least one room to continue.');
+      return;
+    }
+
+    const email = formData.guestEmail.trim();
+    const phone = formData.guestPhone.trim();
+    const specialRequestsNote = formData.specialRequests.trim();
+    const combinedSpecialRequests = [
+      formData.guestAddress ? `Guest address: ${formData.guestAddress.trim()}` : null,
+      specialRequestsNote || null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const roomsPayload = Array.from(selectedRoomIds)
+      .map((roomId) => {
+        const room =
+          availableRooms.find((r) => r.id === roomId) || allRooms.find((r) => r.id === roomId);
+        const nightly = roomRates[roomId] ?? getRoomEffectiveRate(room) ?? 0;
+        return {
+          room,
+          roomId,
+          nightly,
+        };
+      })
+      .filter((entry) => entry.room);
+
+    const invalidRates = roomsPayload
+      .filter((entry) => !entry.nightly || entry.nightly <= 0)
+      .map((entry) => entry.room?.roomNumber || entry.roomId);
+
+    if (invalidRates.length > 0) {
+      toast.error(`Please provide valid nightly rates for: ${invalidRates.join(', ')}`);
+      return;
+    }
+
+    const hallReservationsPayload = includeHall
+      ? hallReservations.map((reservation) => ({
+          hallId: reservation.hallId,
+          eventName: reservation.eventName || undefined,
+          purpose: reservation.purpose || undefined,
+          setupType: reservation.setupType || undefined,
+          attendeeCount: reservation.attendeeCount || undefined,
+          startDateTime: new Date(reservation.startDateTime).toISOString(),
+          endDateTime: new Date(reservation.endDateTime).toISOString(),
+          cateringNotes: reservation.cateringNotes || undefined,
+          avRequirements: reservation.avRequirements || undefined,
+          rate: reservation.rate || undefined,
+        }))
+      : undefined;
+
+    setModalLoading(true);
     try {
-      const checkInIso = toIsoString(formData.checkInDate);
-      const checkOutIso = toIsoString(formData.checkOutDate);
-
-      if (!formData.roomId || !checkInIso || !checkOutIso) {
-        toast.error('Please select a valid room and check-in/check-out dates.');
-        setLoading(false);
-        return;
-      }
-
-      if (!hasValidRate) {
-        toast.error('Rate must be greater than 0.');
-        setLoading(false);
-        return;
-      }
-
-      const email = formData.guestEmail.trim();
-      const phone = formData.guestPhone.trim();
-
-      await api.post(`/tenants/${user?.tenantId}/reservations`, {
-        roomId: formData.roomId,
+      const response = await api.post(`/tenants/${user?.tenantId}/reservations/batch`, {
         guestName: formData.guestName.trim(),
         guestEmail: email === '' ? undefined : email,
         guestPhone: phone === '' ? undefined : phone,
@@ -979,14 +1240,886 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         checkOutDate: checkOutIso,
         adults: formData.adults,
         children: formData.children,
-        rate: Number(formData.rate),
+        specialRequests: combinedSpecialRequests || undefined,
+        rooms: roomsPayload.map((entry) => ({
+          roomId: entry.roomId,
+          rate: Number(entry.nightly),
+        })),
+        hallReservations: hallReservationsPayload,
       });
+
+      const createdCount = response?.data?.data?.reservations?.length || roomsPayload.length;
+      toast.success(`Created ${createdCount} reservation${createdCount > 1 ? 's' : ''}`);
       onSuccess();
-      toast.success('Reservation created successfully');
     } catch (error: any) {
       // Error handled by API interceptor
+      toast.error('Unable to create reservations. Please try again.');
     } finally {
-      setLoading(false);
+      setModalLoading(false);
+    }
+  };
+
+  const goToNextStep = () => {
+    if (!canProceed) {
+      toast.error('Please complete the required fields before continuing');
+      return;
+    }
+    if (currentStep === steps.length - 1) return;
+    setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
+  };
+
+  const goToPreviousStep = () => {
+    if (currentStep === 0) return;
+    setCurrentStep((prev) => prev - 1);
+  };
+
+  const renderGuestStep = () => (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div>
+        <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+          Guest Name *
+        </label>
+        <input
+          type="text"
+          value={formData.guestName}
+          onChange={(e) => setFormData({ ...formData, guestName: e.target.value })}
+          required
+          style={{
+            width: '100%',
+            padding: '0.75rem',
+            border: '1px solid #cbd5e1',
+            borderRadius: '8px',
+          }}
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+            Email *
+          </label>
+          <input
+            type="email"
+            value={formData.guestEmail}
+            onChange={(e) => setFormData({ ...formData, guestEmail: e.target.value })}
+            required
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+            Phone *
+          </label>
+          <input
+            type="tel"
+            value={formData.guestPhone}
+            onChange={(e) => setFormData({ ...formData, guestPhone: e.target.value })}
+            required
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+          Address *
+        </label>
+        <textarea
+          rows={3}
+          value={formData.guestAddress}
+          onChange={(e) => setFormData({ ...formData, guestAddress: e.target.value })}
+          required
+          style={{
+            width: '100%',
+            padding: '0.75rem',
+            border: '1px solid #cbd5e1',
+            borderRadius: '8px',
+            resize: 'vertical',
+          }}
+        />
+      </div>
+      <div>
+        <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>Notes</label>
+        <textarea
+          rows={3}
+          value={formData.specialRequests}
+          onChange={(e) => setFormData({ ...formData, specialRequests: e.target.value })}
+          placeholder="Optional requests or remarks"
+          style={{
+            width: '100%',
+            padding: '0.75rem',
+            border: '1px solid #cbd5e1',
+            borderRadius: '8px',
+            resize: 'vertical',
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  const renderStayStep = () => (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+            Check-in *
+          </label>
+          <input
+            type="date"
+            value={formData.checkInDate}
+            onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>
+            Check-out *
+          </label>
+          <input
+            type="date"
+            value={formData.checkOutDate}
+            onChange={(e) => setFormData({ ...formData, checkOutDate: e.target.value })}
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>Adults *</label>
+          <input
+            type="number"
+            min={1}
+            value={formData.adults}
+            onChange={(e) =>
+              setFormData({ ...formData, adults: Math.max(1, parseInt(e.target.value || '0', 10) || 1) })
+            }
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+        <div>
+          <label style={{ display: 'block', marginBottom: '0.45rem', color: '#475569', fontWeight: 600 }}>Children</label>
+          <input
+            type="number"
+            min={0}
+            value={formData.children}
+            onChange={(e) =>
+              setFormData({ ...formData, children: Math.max(0, parseInt(e.target.value || '0', 10) || 0) })
+            }
+            style={{
+              width: '100%',
+              padding: '0.75rem',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+            }}
+          />
+        </div>
+      </div>
+      <div
+        style={{
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '1rem',
+          background: '#f8fafc',
+        }}
+      >
+        {checkingAvailability ? (
+          <p style={{ margin: 0, color: '#64748b' }}>Checking availability...</p>
+        ) : availabilityError ? (
+          <p style={{ margin: 0, color: '#ef4444' }}>{availabilityError}</p>
+        ) : availabilitySummary ? (
+          <p style={{ margin: 0, color: '#0f172a' }}>
+            {availabilitySummary.available} of {availabilitySummary.total} rooms available for {getNights()} night
+            {getNights() === 1 ? '' : 's'}.
+          </p>
+        ) : (
+          <p style={{ margin: 0, color: '#64748b' }}>Select dates to view availability.</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderRoomsStep = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+            Search rooms
+          </label>
+          <input
+            type="text"
+            value={roomSearch}
+            onChange={(e) => setRoomSearch(e.target.value)}
+            placeholder="Search by room #, type, category"
+            style={{
+              width: '100%',
+              padding: '0.7rem',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+            }}
+          />
+        </div>
+        <div style={{ minWidth: '220px' }}>
+          <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>Category</label>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '0.7rem',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+            }}
+          >
+            <option value="all">All categories</option>
+            <option value="none">Uncategorized</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: '1rem',
+          borderRadius: '10px',
+          border: '1px solid #e2e8f0',
+          background: '#f8fafc',
+        }}
+      >
+        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: 600 }}>
+          Bulk select (e.g. "101-105" or "201,203")
+        </label>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            value={bulkSelectionInput}
+            onChange={(e) => {
+              setBulkSelectionInput(e.target.value);
+              setBulkSelectionError(null);
+            }}
+            placeholder="101-105, 210"
+            style={{
+              flex: 1,
+              minWidth: '220px',
+              padding: '0.75rem',
+              borderRadius: '8px',
+              border: `1px solid ${bulkSelectionError ? '#ef4444' : '#cbd5e1'}`,
+            }}
+          />
+          <button
+            type="button"
+            onClick={handleBulkSelection}
+            style={{
+              padding: '0.8rem 1.5rem',
+              borderRadius: '8px',
+              border: 'none',
+              background: '#2563eb',
+              color: 'white',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Add Rooms
+          </button>
+          {selectedRoomIds.size > 0 && (
+            <button
+              type="button"
+              onClick={clearAllRooms}
+              style={{
+                padding: '0.8rem 1.5rem',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0',
+                background: '#fff',
+                color: '#475569',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              Clear Selection
+            </button>
+          )}
+        </div>
+        {bulkSelectionError && (
+          <p style={{ marginTop: '0.4rem', color: '#ef4444', fontSize: '0.85rem' }}>{bulkSelectionError}</p>
+        )}
+        {unavailableRooms.size > 0 && (
+          <p style={{ marginTop: '0.4rem', color: '#f97316', fontSize: '0.85rem' }}>
+            Unavailable: {Array.from(unavailableRooms).join(', ')}
+          </p>
+        )}
+      </div>
+
+      {roomsByCategory.length === 0 ? (
+        <p style={{ color: '#94a3b8', textAlign: 'center' }}>
+          {formData.checkInDate && formData.checkOutDate
+            ? 'No rooms available for the selected filters'
+            : 'Select stay details first to load rooms'}
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '320px', overflowY: 'auto' }}>
+          {roomsByCategory.map((group) => {
+            const selectedCount = group.rooms.filter((room) => selectedRoomIds.has(room.id)).length;
+            return (
+              <div
+                key={group.id}
+                style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '1rem',
+                  background: '#fff',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '0.75rem',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>{group.name}</p>
+                    <p style={{ margin: '0.2rem 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+                      {selectedCount}/{group.rooms.length} selected
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleCategorySelectAll(group.rooms)}
+                      style={{
+                        padding: '0.35rem 0.9rem',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        background: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      Select all
+                    </button>
+                    {selectedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleCategoryClear(group.rooms)}
+                        style={{
+                          padding: '0.35rem 0.9rem',
+                          borderRadius: '6px',
+                          border: '1px solid #fecaca',
+                          background: '#fee2e2',
+                          color: '#b91c1c',
+                          cursor: 'pointer',
+                          fontSize: '0.8rem',
+                        }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {group.rooms.map((room) => {
+                    const isSelected = selectedRoomIds.has(room.id);
+                    const rate = roomRates[room.id] ?? getRoomEffectiveRate(room) ?? 0;
+                    const hasCustomRate = room.customRate !== undefined && room.customRate !== null;
+                    return (
+                      <div
+                        key={room.id}
+                        onClick={() => handleRoomToggle(room.id)}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '0.85rem',
+                          border: `2px solid ${isSelected ? '#2563eb' : '#e2e8f0'}`,
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          background: isSelected ? '#eff6ff' : '#fff',
+                        }}
+                      >
+                        <div>
+                          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>
+                            Room {room.roomNumber} • {room.roomType}
+                          </p>
+                          <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.85rem' }}>
+                            {hasCustomRate ? 'Custom rate' : room.ratePlan?.name || 'Category rate'}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <input
+                            type="number"
+                            value={rate}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) =>
+                              setRoomRates({ ...roomRates, [room.id]: Number(e.target.value) || 0 })
+                            }
+                            style={{
+                              width: '110px',
+                              padding: '0.45rem',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              textAlign: 'right',
+                            }}
+                          />
+                          <p style={{ margin: '0.2rem 0 0', color: '#64748b', fontSize: '0.75rem' }}>per night</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {selectedRoomIds.size > 0 && (
+        <div
+          style={{
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '1rem',
+            background: '#f8fafc',
+          }}
+        >
+          <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>Selected</p>
+          <p style={{ margin: '0.25rem 0', fontWeight: 700, color: '#0f172a', fontSize: '1.25rem' }}>
+            {selectedRoomIds.size} room{selectedRoomIds.size === 1 ? '' : 's'} • {formatCurrency(roomSubtotal)}
+          </p>
+          <p style={{ margin: 0, color: '#475569', fontSize: '0.85rem' }}>
+            {selectedRoomDetails
+              .map((room: any) => `${room.roomNumber} (${formatCurrency(roomRates[room.id] || 0)}/night)`)
+              .join(', ')}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderHallStep = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div
+        style={{
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '1rem',
+          background: '#f8fafc',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '0.5rem',
+        }}
+      >
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Add hall or event space</p>
+          <p style={{ margin: '0.2rem 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+            Attach meeting halls to this reservation
+          </p>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={includeHall} onChange={(e) => setIncludeHall(e.target.checked)} />
+          Include hall booking
+        </label>
+      </div>
+
+      {includeHall && meetingHalls.length === 0 && (
+        <p style={{ color: '#ef4444' }}>No meeting halls configured for this property yet.</p>
+      )}
+
+      {includeHall && meetingHalls.length > 0 && (
+        <>
+          {hallReservations.map((reservation, index) => (
+            <div
+              key={reservation.id}
+              style={{
+                border: '1px solid #e2e8f0',
+                borderRadius: '10px',
+                padding: '1rem',
+                background: '#fff',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.8rem',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Hall Reservation #{index + 1}</p>
+                {hallReservations.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeHallReservation(reservation.id)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Hall *
+                  </label>
+                  <select
+                    value={reservation.hallId}
+                    onChange={(e) => handleHallChange(index, 'hallId', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  >
+                    <option value="">Select hall</option>
+                    {meetingHalls.map((hall) => (
+                      <option key={hall.id} value={hall.id}>
+                        {hall.name} (cap. {hall.capacity})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Event Name
+                  </label>
+                  <input
+                    type="text"
+                    value={reservation.eventName}
+                    onChange={(e) => handleHallChange(index, 'eventName', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Rate (flat) *
+                  </label>
+                  <input
+                    type="number"
+                    value={reservation.rate}
+                    onChange={(e) => handleHallChange(index, 'rate', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Start *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={reservation.startDateTime}
+                    onChange={(e) => handleHallChange(index, 'startDateTime', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    End *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={reservation.endDateTime}
+                    onChange={(e) => handleHallChange(index, 'endDateTime', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Attendees
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={reservation.attendeeCount}
+                    onChange={(e) => handleHallChange(index, 'attendeeCount', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Purpose
+                  </label>
+                  <input
+                    type="text"
+                    value={reservation.purpose}
+                    onChange={(e) => handleHallChange(index, 'purpose', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
+                    Setup Type
+                  </label>
+                  <input
+                    type="text"
+                    value={reservation.setupType}
+                    onChange={(e) => handleHallChange(index, 'setupType', e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.7rem',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  />
+                </div>
+              </div>
+              <textarea
+                value={reservation.cateringNotes}
+                onChange={(e) => handleHallChange(index, 'cateringNotes', e.target.value)}
+                placeholder="Catering notes"
+                rows={2}
+                style={{
+                  width: '100%',
+                  padding: '0.7rem',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  resize: 'vertical',
+                }}
+              />
+              <textarea
+                value={reservation.avRequirements}
+                onChange={(e) => handleHallChange(index, 'avRequirements', e.target.value)}
+                placeholder="A/V requirements"
+                rows={2}
+                style={{
+                  width: '100%',
+                  padding: '0.7rem',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addHallReservation}
+            style={{
+              padding: '0.75rem 1rem',
+              borderRadius: '8px',
+              border: '1px dashed #94a3b8',
+              background: '#fff',
+              cursor: 'pointer',
+              fontWeight: 600,
+              color: '#2563eb',
+            }}
+          >
+            + Add another hall
+          </button>
+        </>
+      )}
+    </div>
+  );
+
+  const renderInvoiceStep = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div
+        style={{
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '1rem',
+          background: '#fff',
+        }}
+      >
+        <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Guest</p>
+        <p style={{ margin: '0.2rem 0 0', color: '#475569' }}>{formData.guestName}</p>
+        <p style={{ margin: '0.2rem 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+          {formData.guestEmail} • {formData.guestPhone}
+        </p>
+        <p style={{ margin: '0.2rem 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>{formData.guestAddress}</p>
+      </div>
+      <div
+        style={{
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '1rem',
+          background: '#fff',
+        }}
+      >
+        <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Stay</p>
+        <p style={{ margin: '0.2rem 0 0', color: '#475569' }}>
+          {formData.checkInDate || '—'} → {formData.checkOutDate || '—'} • {nightMultiplier} night
+          {nightMultiplier === 1 ? '' : 's'}
+        </p>
+        <p style={{ margin: '0.2rem 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+          {formData.adults} adult{formData.adults === 1 ? '' : 's'}
+          {formData.children ? ` • ${formData.children} child${formData.children === 1 ? '' : 'ren'}` : ''}
+        </p>
+      </div>
+      <div
+        style={{
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '1rem',
+          background: '#fff',
+        }}
+      >
+        <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Rooms ({selectedRoomIds.size})</p>
+        <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+          {selectedRoomDetails.map((room: any) => {
+            const nightly = roomRates[room.id] || 0;
+            return (
+              <div
+                key={room.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  color: '#475569',
+                }}
+              >
+                <span>
+                  Room {room.roomNumber} • {room.roomType}
+                </span>
+                <span>
+                  {formatCurrency(nightly)} × {nightMultiplier} = {formatCurrency(nightly * nightMultiplier)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <p style={{ marginTop: '0.8rem', fontWeight: 600, color: '#0f172a' }}>
+          Subtotal: {formatCurrency(roomSubtotal)}
+        </p>
+      </div>
+      {includeHall && hallReservations.length > 0 && (
+        <div
+          style={{
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '1rem',
+            background: '#fff',
+          }}
+        >
+          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Hall bookings</p>
+          <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            {hallReservations.map((reservation, index) => {
+              const hallName = meetingHalls.find((hall) => hall.id === reservation.hallId)?.name || `Hall ${index + 1}`;
+              return (
+                <div
+                  key={reservation.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    color: '#475569',
+                  }}
+                >
+                  <span>
+                    {hallName} • {reservation.startDateTime || 'TBD'}
+                  </span>
+                  <span>{formatCurrency(Number(reservation.rate) || 0)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ marginTop: '0.8rem', fontWeight: 600, color: '#0f172a' }}>
+            Hall total: {formatCurrency(hallTotal)}
+          </p>
+        </div>
+      )}
+      <div
+        style={{
+          border: '1px solid #cbd5e1',
+          borderRadius: '12px',
+          padding: '1.25rem',
+          background: '#0f172a',
+          color: '#fff',
+        }}
+      >
+        <p style={{ margin: 0, fontSize: '0.9rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Invoice total</p>
+        <p style={{ margin: '0.25rem 0 0', fontSize: '2rem', fontWeight: 700 }}>{formatCurrency(invoiceTotal)}</p>
+        <p style={{ margin: '0.25rem 0 0', color: '#cbd5f5' }}>
+          Rooms: {formatCurrency(roomSubtotal)} • Halls: {formatCurrency(includeHall ? hallTotal : 0)}
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderStep = () => {
+    switch (currentStep) {
+      case 0:
+        return renderGuestStep();
+      case 1:
+        return renderStayStep();
+      case 2:
+        return renderRoomsStep();
+      case 3:
+        return renderHallStep();
+      case 4:
+        return renderInvoiceStep();
+      default:
+        return null;
     }
   };
 
@@ -998,453 +2131,162 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'rgba(15, 23, 42, 0.45)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 1000,
+        padding: '1rem',
       }}
       onClick={onClose}
     >
       <div
         style={{
-          background: 'white',
-          borderRadius: '8px',
+          width: '95%',
+          maxWidth: '960px',
+          background: '#fff',
+          borderRadius: '18px',
           padding: '2rem',
-          width: '90%',
-          maxWidth: '600px',
           maxHeight: '90vh',
-          overflow: 'auto',
+          overflowY: 'auto',
+          boxShadow: '0 25px 70px rgba(15, 23, 42, 0.18)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>Create New Reservation</h2>
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Room *
-              </label>
-              <select
-                value={formData.roomId}
-                onChange={(e) => setFormData({ ...formData, roomId: e.target.value })}
-                required
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.75rem', color: '#0f172a' }}>New Reservation</h2>
+            <p style={{ margin: '0.3rem 0 0', color: '#64748b' }}>
+              Capture guest info, stay, rooms, optional halls, and review invoice
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8' }}
+          >
+            <XCircle size={28} />
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))`,
+            gap: '0.35rem',
+            marginBottom: '1.5rem',
+          }}
+        >
+          {steps.map((label, index) => {
+            const isActive = index === currentStep;
+            const isComplete = index < currentStep;
+            return (
+              <div
+                key={label}
                 style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
+                  padding: '0.55rem 0.4rem',
+                  borderRadius: '999px',
+                  textAlign: 'center',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  background: isComplete ? '#dbeafe' : isActive ? '#2563eb' : '#f1f5f9',
+                  color: isActive ? '#fff' : isComplete ? '#1d4ed8' : '#94a3b8',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
                 }}
               >
-                <option value="">Select a room</option>
-                {roomOptions.map((room) => (
-                  <option key={room.id} value={room.id}>
-                    {room.roomNumber} - {room.roomType} (₦{Number(room.ratePlan?.baseRate || 0).toLocaleString()})
-                  </option>
-                ))}
-              </select>
-              {formData.checkInDate && formData.checkOutDate && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.875rem' }}>
-                  {checkingAvailability ? (
-                    <span style={{ color: '#64748b' }}>Checking availability...</span>
-                  ) : availabilityError ? (
-                    <span style={{ color: '#ef4444' }}>{availabilityError}</span>
-                  ) : availabilitySummary ? (
-                    <span style={{ color: availableRooms.length > 0 ? '#15803d' : '#b91c1c' }}>
-                      {availableRooms.length > 0
-                        ? `${availableRooms.length} room${availableRooms.length !== 1 ? 's' : ''} available`
-                        : 'No rooms available for the selected dates'}
-                    </span>
-                  ) : (
-                    <span style={{ color: '#64748b' }}>
-                      Select dates to see available rooms.
-                    </span>
-                  )}
-                  {availableRooms.length === 0 && recommendedRooms.length > 0 && (
-                    <div
-                      style={{
-                        marginTop: '0.75rem',
-                        borderRadius: '8px',
-                        border: '1px solid #fde68a',
-                        background: '#fffbeb',
-                        padding: '0.75rem',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.5rem',
-                      }}
-                    >
-                      <strong style={{ color: '#92400e', fontSize: '0.9rem' }}>Recommended rooms</strong>
-                      <p style={{ margin: 0, color: '#92400e', fontSize: '0.8rem' }}>
-                        No rooms currently available—offer one of these nearly-ready rooms as an upgrade.
-                      </p>
-                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        {recommendedRooms.map((room) => (
-                          <button
-                            key={room.id}
-                            type="button"
-                            onClick={() => {
-                              setFormData((prev) => ({ ...prev, roomId: room.id }));
-                              toast.success(`Selected Room ${room.roomNumber}`);
-                            }}
-                            style={{
-                              borderRadius: '8px',
-                              border: '1px solid #fde68a',
-                              background: '#fff7ed',
-                              padding: '0.4rem 0.8rem',
-                              cursor: 'pointer',
-                              fontSize: '0.8rem',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.2rem',
-                              minWidth: '160px',
-                              alignItems: 'flex-start',
-                            }}
-                          >
-                            <span style={{ fontWeight: 600, color: '#92400e' }}>
-                              Room {room.roomNumber} • {room.roomType}
-                            </span>
-                            <span style={{ fontSize: '0.75rem', color: '#92400e' }}>
-                              {room.rate ? `₦${Number(room.rate).toLocaleString()}` : 'Rate TBD'}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                {label}
+              </div>
+            );
+          })}
+        </div>
 
-            <div
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>{renderStep()}</div>
+
+        <div
+          style={{
+            marginTop: '2rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            flexWrap: 'wrap',
+          }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.9rem 1.5rem',
+              borderRadius: '999px',
+              border: '1px solid #e2e8f0',
+              background: '#fff',
+              color: '#475569',
+              fontWeight: 600,
+              flex: 1,
+              maxWidth: '160px',
+            }}
+          >
+            Cancel
+          </button>
+          {currentStep > 0 && (
+            <button
+              type="button"
+              onClick={goToPreviousStep}
               style={{
-                padding: '1rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px',
-                background: '#f8fafc',
+                padding: '0.9rem 1.5rem',
+                borderRadius: '999px',
+                border: '1px solid #cbd5e1',
+                background: '#fff',
+                color: '#0f172a',
+                fontWeight: 600,
+                flex: 1,
+                maxWidth: '160px',
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: '0.75rem',
-                }}
-              >
-                <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#0f172a' }}>Room Filters</h3>
-                <button
-                  type="button"
-                  onClick={() => setRoomFilters({ ...DEFAULT_ROOM_FILTERS })}
-                  disabled={!hasActiveRoomFilters}
-                  style={{
-                    padding: '0.35rem 0.75rem',
-                    borderRadius: '4px',
-                    border: '1px solid #cbd5e1',
-                    background: hasActiveRoomFilters ? '#fff' : '#f8fafc',
-                    color: hasActiveRoomFilters ? '#0f172a' : '#94a3b8',
-                    cursor: hasActiveRoomFilters ? 'pointer' : 'not-allowed',
-                    fontSize: '0.8rem',
-                  }}
-                >
-                  Clear Filters
-                </button>
-              </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                  gap: '0.75rem',
-                }}
-              >
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Room Type
-                  </label>
-                  <select
-                    value={roomFilters.roomType}
-                    onChange={(e) => updateRoomFilter('roomType', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <option value="">Any</option>
-                    {roomTypeOptions.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Category
-                  </label>
-                  <select
-                    value={roomFilters.categoryId}
-                    onChange={(e) => updateRoomFilter('categoryId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <option value="">Any</option>
-                    <option value="none">No Category</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Rate Plan
-                  </label>
-                  <select
-                    value={roomFilters.ratePlanId}
-                    onChange={(e) => updateRoomFilter('ratePlanId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <option value="">Any</option>
-                    {ratePlans.map((plan) => (
-                      <option key={plan.id} value={plan.id}>
-                        {plan.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Floor
-                  </label>
-                  <input
-                    type="number"
-                    value={roomFilters.floor}
-                    onChange={(e) => updateRoomFilter('floor', e.target.value)}
-                    placeholder="Any"
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Min Rate (₦)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={roomFilters.minRate}
-                    onChange={(e) => updateRoomFilter('minRate', e.target.value)}
-                    placeholder="Any"
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontSize: '0.85rem' }}>
-                    Max Rate (₦)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={roomFilters.maxRate}
-                    onChange={(e) => updateRoomFilter('maxRate', e.target.value)}
-                    placeholder="Any"
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '6px',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-              </div>
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  marginTop: '0.75rem',
-                  fontSize: '0.85rem',
-                  color: '#475569',
-                  cursor: 'pointer',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={roomFilters.includeOutOfOrder}
-                  onChange={(e) => updateRoomFilter('includeOutOfOrder', e.target.checked)}
-                />
-                Include rooms marked as out-of-order / maintenance
-              </label>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Guest Name *
-              </label>
-              <input
-                type="text"
-                value={formData.guestName}
-                onChange={(e) => setFormData({ ...formData, guestName: e.target.value })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Check-in Date *
-                </label>
-                <input
-                  type="datetime-local"
-                  value={formData.checkInDate}
-                  onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Check-out Date *
-                </label>
-                <input
-                  type="datetime-local"
-                  value={formData.checkOutDate}
-                  onChange={(e) => setFormData({ ...formData, checkOutDate: e.target.value })}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Rate (₦) *
-                </label>
-                <input
-                  type="number"
-                  value={formData.rate}
-                  onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Adults
-                </label>
-                <input
-                  type="number"
-                  value={formData.adults}
-                  onChange={(e) => setFormData({ ...formData, adults: parseInt(e.target.value) })}
-                  min="1"
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Children
-                </label>
-                <input
-                  type="number"
-                  value={formData.children}
-                  onChange={(e) => setFormData({ ...formData, children: parseInt(e.target.value) })}
-                  min="0"
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitDisabled}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  background: '#3b82f6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
-                  opacity: isSubmitDisabled ? 0.6 : 1,
-                }}
-              >
-                {loading ? 'Creating...' : 'Create Reservation'}
-              </button>
-            </div>
-          </div>
-        </form>
+              Back
+            </button>
+          )}
+          {currentStep < steps.length - 1 && (
+            <button
+              type="button"
+              onClick={goToNextStep}
+              disabled={!canProceed}
+              style={{
+                padding: '0.9rem 1.5rem',
+                borderRadius: '999px',
+                border: 'none',
+                background: canProceed ? '#2563eb' : '#cbd5e1',
+                color: '#fff',
+                fontWeight: 600,
+                flex: 1,
+                maxWidth: '200px',
+                cursor: canProceed ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Next
+            </button>
+          )}
+          {currentStep === steps.length - 1 && (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={modalLoading}
+              style={{
+                padding: '0.9rem 1.5rem',
+                borderRadius: '999px',
+                border: 'none',
+                background: modalLoading ? '#cbd5e1' : '#16a34a',
+                color: '#fff',
+                fontWeight: 600,
+                flex: 1,
+                maxWidth: '220px',
+                cursor: modalLoading ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {modalLoading ? 'Saving...' : 'Create Reservation'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

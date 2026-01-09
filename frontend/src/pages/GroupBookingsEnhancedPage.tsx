@@ -123,7 +123,11 @@ export default function GroupBookingsEnhancedPage() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [meetingHalls, setMeetingHalls] = useState<MeetingHall[]>([]);
+  const [roomCategories, setRoomCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [roomInventory, setRoomInventory] = useState<Array<{ id: string; roomNumber?: string; roomType?: string; categoryId?: string }>>([]);
+  const [roomTypes, setRoomTypes] = useState<string[]>([]);
   const [loadingHalls, setLoadingHalls] = useState(false);
+  const [loadingRoomMeta, setLoadingRoomMeta] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [formData, setFormData] = useState<{
@@ -169,6 +173,19 @@ export default function GroupBookingsEnhancedPage() {
     hallReservations: [],
   });
 
+  const getCategoryName = (categoryId: string) => {
+    if (!categoryId) return 'Unassigned';
+    return roomCategories.find((category) => category.id === categoryId)?.name ?? 'Unassigned';
+  };
+
+  const getInventoryCount = (categoryId: string, roomType: string) => {
+    return roomInventory.filter((room) => {
+      const matchesCategory = categoryId ? room.categoryId === categoryId : true;
+      const matchesRoomType = roomType ? room.roomType === roomType : true;
+      return matchesCategory && matchesRoomType;
+    }).length;
+  };
+
   useEffect(() => {
     loadBookings();
     loadStats();
@@ -177,6 +194,7 @@ export default function GroupBookingsEnhancedPage() {
   useEffect(() => {
     if (showCreateModal) {
       loadMeetingHalls();
+      loadRoomMeta();
     }
   }, [showCreateModal, user?.tenantId]);
 
@@ -194,6 +212,47 @@ export default function GroupBookingsEnhancedPage() {
       toast.error('Failed to load group bookings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRoomMeta = async () => {
+    if (!user?.tenantId) return;
+    setLoadingRoomMeta(true);
+    try {
+      const [categoriesResponse, roomsResponse] = await Promise.all([
+        api.get(`/tenants/${user.tenantId}/room-categories`),
+        api.get(`/tenants/${user.tenantId}/rooms`),
+      ]);
+
+      const categories = categoriesResponse.data?.data ?? [];
+      const rooms = roomsResponse.data?.data ?? [];
+      setRoomCategories(
+        categories.map((category: any) => ({
+          id: category.id,
+          name: category.name,
+        })),
+      );
+      setRoomInventory(
+        rooms.map((room: any) => ({
+          id: room.id,
+          roomNumber: room.roomNumber,
+          roomType: room.roomType,
+          categoryId: room.category?.id ?? room.categoryId ?? null,
+        })),
+      );
+      const types = Array.from(
+        new Set(
+          rooms
+            .map((room: any) => room.roomType)
+            .filter((value: string | undefined) => Boolean(value)),
+        ),
+      ) as string[];
+      setRoomTypes(types);
+    } catch (error) {
+      console.error('Error loading room metadata:', error);
+      toast.error('Failed to load room categories/rooms');
+    } finally {
+      setLoadingRoomMeta(false);
     }
   };
 
@@ -320,10 +379,6 @@ export default function GroupBookingsEnhancedPage() {
     background: field && getFieldError(field) ? '#fef2f2' : '#fff'
   });
   const createDisabled = saving || validationErrors.hasErrors;
-  const getRoomBlockErrors = (index: number) =>
-    shouldShowErrors ? validationErrors.roomBlocks[index] : [];
-  const getHallReservationErrors = (index: number) =>
-    shouldShowErrors ? validationErrors.hallReservations[index] : [];
   const roomBlockInputStyle = (index: number, field: keyof RoomBlockValidationErrors) => {
     const error = shouldShowErrors ? validationErrors.roomBlocks[index]?.[field] : undefined;
     return {
@@ -1432,10 +1487,17 @@ export default function GroupBookingsEnhancedPage() {
               <section style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '1.25rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                   <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Room Blocks</h3>
-                  <Button onClick={handleAddRoomBlock} style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}>
+                  <Button
+                    onClick={handleAddRoomBlock}
+                    disabled={loadingRoomMeta}
+                    style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem', opacity: loadingRoomMeta ? 0.6 : 1 }}
+                  >
                     + Add Block
                   </Button>
                 </div>
+                {loadingRoomMeta && (
+                  <div style={{ color: '#64748b', marginBottom: '0.75rem' }}>Loading room categories and inventory...</div>
+                )}
                 <div style={{ display: 'grid', gap: '1rem' }}>
                   {shouldShowErrors && validationErrors.fields.roomBlocks && (
                     <div style={{ color: '#dc2626', fontSize: '0.85rem' }}>
@@ -1444,27 +1506,41 @@ export default function GroupBookingsEnhancedPage() {
                   )}
                   {formData.roomBlocks.map((block, index) => (
                     <div key={block.id} style={{ border: '1px solid #cbd5f5', borderRadius: '10px', padding: '1rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-                        <input
-                          type="text"
-                          placeholder="Room Category ID"
-                          value={block.roomCategoryId}
-                          onChange={(e) => handleUpdateRoomBlock(index, 'roomCategoryId', e.target.value)}
-                          style={roomBlockInputStyle(index, 'roomCategoryId')}
-                        />
-                        {shouldShowErrors && validationErrors.roomBlocks[index]?.roomCategoryId && (
-                          <span style={errorTextStyle}>{validationErrors.roomBlocks[index]?.roomCategoryId}</span>
-                        )}
-                        <input
-                          type="text"
-                          placeholder="Room Type"
-                          value={block.roomType}
-                          onChange={(e) => handleUpdateRoomBlock(index, 'roomType', e.target.value)}
-                          style={roomBlockInputStyle(index, 'roomType')}
-                        />
-                        {shouldShowErrors && validationErrors.roomBlocks[index]?.roomType && (
-                          <span style={errorTextStyle}>{validationErrors.roomBlocks[index]?.roomType}</span>
-                        )}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <select
+                            value={block.roomCategoryId}
+                            onChange={(e) => handleUpdateRoomBlock(index, 'roomCategoryId', e.target.value)}
+                            style={roomBlockInputStyle(index, 'roomCategoryId')}
+                          >
+                            <option value="">Select category</option>
+                            {roomCategories.map((category) => (
+                              <option key={category.id} value={category.id}>
+                                {category.name}
+                              </option>
+                            ))}
+                          </select>
+                          {shouldShowErrors && validationErrors.roomBlocks[index]?.roomCategoryId && (
+                            <span style={errorTextStyle}>{validationErrors.roomBlocks[index]?.roomCategoryId}</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <select
+                            value={block.roomType}
+                            onChange={(e) => handleUpdateRoomBlock(index, 'roomType', e.target.value)}
+                            style={roomBlockInputStyle(index, 'roomType')}
+                          >
+                            <option value="">Select room type</option>
+                            {roomTypes.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                          {shouldShowErrors && validationErrors.roomBlocks[index]?.roomType && (
+                            <span style={errorTextStyle}>{validationErrors.roomBlocks[index]?.roomType}</span>
+                          )}
+                        </div>
                         <input
                           type="number"
                           min={1}
@@ -1490,6 +1566,19 @@ export default function GroupBookingsEnhancedPage() {
                           onChange={(e) => handleUpdateRoomBlock(index, 'discountPercent', e.target.value)}
                           style={{ padding: '0.6rem', borderRadius: '8px', border: '1px solid #cbd5f5' }}
                         />
+                      </div>
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#475569' }}>
+                        <span style={{ color: '#0f172a', fontWeight: 600 }}>
+                          Inventory:&nbsp;
+                          {getInventoryCount(block.roomCategoryId, block.roomType)}
+                        </span>
+                        &nbsp;rooms
+                        {block.roomCategoryId && (
+                          <>
+                            &nbsp;in {getCategoryName(block.roomCategoryId)}
+                            {block.roomType ? ` (${block.roomType})` : ''}
+                          </>
+                        )}
                       </div>
                       {formData.roomBlocks.length > 1 && (
                         <button
@@ -1640,15 +1729,15 @@ export default function GroupBookingsEnhancedPage() {
                 </button>
                 <button
                   onClick={handleCreateBooking}
-                  disabled={saving}
+                  disabled={createDisabled}
                   style={{
                     border: 'none',
-                    background: '#0f172a',
+                    background: createDisabled ? '#475569' : '#0f172a',
                     color: '#fff',
                     padding: '0.75rem 1.5rem',
                     borderRadius: '999px',
                     cursor: 'pointer',
-                    opacity: saving ? 0.7 : 1,
+                    opacity: createDisabled ? 0.7 : 1,
                   }}
                 >
                   {saving ? 'Saving...' : 'Create Booking'}

@@ -32,6 +32,18 @@ const getUserDisplayName = (user?: {
 const decimalToNumber = (value?: Prisma.Decimal | null) =>
   value !== null && value !== undefined ? Number(value) : null;
 
+const resolveRoomEffectiveRate = (room: {
+  customRate?: Prisma.Decimal | number | null;
+  ratePlan?: { baseRate?: Prisma.Decimal | number | null } | null;
+}) => {
+  const customRate = decimalToNumber(room.customRate as Prisma.Decimal | null);
+  if (customRate !== null) {
+    return customRate;
+  }
+  const baseRate = decimalToNumber(room.ratePlan?.baseRate as Prisma.Decimal | null);
+  return baseRate;
+};
+
 const serializeReservation = (reservation: any) => {
   if (!reservation) return reservation;
   return {
@@ -83,6 +95,109 @@ const availabilityQuerySchema = z.object({
   maxRate: z.coerce.number().nonnegative().optional(),
   includeOutOfOrder: z.coerce.boolean().optional(),
 });
+
+const createReservationBatchSchema = z.object({
+  guestName: z.string().min(1),
+  guestEmail: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().email().optional()
+  ),
+  guestPhone: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
+  guestIdNumber: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
+  checkInDate: z.string().datetime(),
+  checkOutDate: z.string().datetime(),
+  adults: z.number().int().min(1).default(1),
+  children: z.number().int().min(0).default(0),
+  depositAmount: z.number().nonnegative().optional(),
+  source: z.enum(['manual', 'web', 'ota', 'channel_manager']).default('manual'),
+  specialRequests: z.preprocess(
+    (val) => (val === '' || val === null || val === undefined ? undefined : val),
+    z.string().optional()
+  ),
+  rooms: z.array(
+    z.object({
+      roomId: z.string().uuid(),
+      rate: z.number().positive(),
+    })
+  ).min(1),
+  hallReservations: z
+    .array(
+      z.object({
+        hallId: z.string().uuid(),
+        eventName: z.string().optional(),
+        purpose: z.string().optional(),
+        setupType: z.string().optional(),
+        attendeeCount: z.union([z.number().int().min(0), z.string()]).optional(),
+        startDateTime: z.string().datetime(),
+        endDateTime: z.string().datetime(),
+        cateringNotes: z.string().optional(),
+        avRequirements: z.string().optional(),
+        rate: z.union([z.number().nonnegative(), z.string()]).optional(),
+        status: z.string().optional(),
+      })
+    )
+    .optional(),
+});
+
+const validateHallReservationsForBatch = async (
+  tenantId: string,
+  hallReservations: any[],
+  client: any
+) => {
+  if (!Array.isArray(hallReservations) || hallReservations.length === 0) return;
+
+  const hallIds = [...new Set(hallReservations.map((hr) => hr.hallId))];
+  const halls = await client.meetingHall.findMany({
+    where: {
+      tenantId,
+      id: { in: hallIds },
+      isActive: true,
+    },
+    select: { id: true },
+  });
+
+  const validHallIds = new Set(halls.map((hall: any) => hall.id));
+  hallReservations.forEach((reservation) => {
+    if (!reservation.hallId || !validHallIds.has(reservation.hallId)) {
+      throw new AppError(`Meeting hall ${reservation.hallId} is not available for this tenant`, 400);
+    }
+
+    if (!reservation.startDateTime || !reservation.endDateTime) {
+      throw new AppError('Hall reservations require start and end date/time', 400);
+    }
+
+    const start = new Date(reservation.startDateTime);
+    const end = new Date(reservation.endDateTime);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
+      throw new AppError('Invalid hall reservation date range', 400);
+    }
+  });
+
+  for (const reservation of hallReservations) {
+    const start = new Date(reservation.startDateTime);
+    const end = new Date(reservation.endDateTime);
+    const overlap = await client.groupBookingHallReservation.findFirst({
+      where: {
+        tenantId,
+        hallId: reservation.hallId,
+        startDateTime: { lt: end },
+        endDateTime: { gt: start },
+        status: { in: ['tentative', 'confirmed'] },
+      },
+      select: { id: true },
+    });
+
+    if (overlap) {
+      throw new AppError('Selected hall already has a booking for the requested schedule', 409);
+    }
+  }
+};
 
 const createReservationSchema = z.object({
   roomId: z.string().uuid(),
@@ -280,21 +395,20 @@ reservationRouter.get(
             name: room.category.name,
           }
           : null,
+        customRate: decimalToNumber(room.customRate as Prisma.Decimal | null),
+        effectiveRate: resolveRoomEffectiveRate(room),
       }));
 
       const availableRooms = availableRoomsWithRates.filter((room) => {
-        const baseRate =
-          room.ratePlan?.baseRate !== undefined && room.ratePlan?.baseRate !== null
-            ? Number(room.ratePlan?.baseRate)
-            : null;
+        const effectiveRate = room.effectiveRate ?? null;
 
         if (minRate !== undefined) {
-          if (baseRate === null || baseRate < Number(minRate)) {
+          if (effectiveRate === null || effectiveRate < Number(minRate)) {
             return false;
           }
         }
         if (maxRate !== undefined) {
-          if (baseRate === null || baseRate > Number(maxRate)) {
+          if (effectiveRate === null || effectiveRate > Number(maxRate)) {
             return false;
           }
         }
@@ -315,17 +429,14 @@ reservationRouter.get(
       const recommendedRooms = availableRoomsWithRates
         .filter((room) => room.status !== 'available')
         .map((room) => {
-          const baseRate =
-            room.ratePlan?.baseRate !== undefined && room.ratePlan?.baseRate !== null
-              ? Number(room.ratePlan?.baseRate)
-              : null;
+          const effectiveRate = room.effectiveRate ?? null;
 
           return {
             id: room.id,
             roomNumber: room.roomNumber,
             roomType: room.roomType,
             status: room.status,
-            rate: baseRate,
+            rate: effectiveRate,
             categoryId: room.categoryId,
             ratePlan: room.ratePlan,
           };
@@ -547,6 +658,251 @@ reservationRouter.post(
       console.error('Error creating reservation:', error);
       throw new AppError(
         `Failed to create reservation: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+reservationRouter.post(
+  '/batch',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
+      const data = createReservationBatchSchema.parse(req.body);
+
+      const checkIn = new Date(data.checkInDate);
+      const checkOut = new Date(data.checkOutDate);
+      if (checkOut <= checkIn) {
+        throw new AppError('Check-out date must be after check-in date', 400);
+      }
+
+      const roomIds = data.rooms.map((room) => room.roomId);
+      const uniqueRoomIds = [...new Set(roomIds)];
+      if (uniqueRoomIds.length !== roomIds.length) {
+        throw new AppError('Duplicate rooms are not allowed in a batch reservation', 400);
+      }
+
+      const halls = Array.isArray(data.hallReservations) ? data.hallReservations : [];
+
+      const result = await prisma.$transaction(async (tx) => {
+        const rooms = await tx.room.findMany({
+          where: {
+            tenantId,
+            id: { in: uniqueRoomIds },
+          },
+          select: {
+            id: true,
+            roomNumber: true,
+            roomType: true,
+          },
+        });
+
+        if (rooms.length !== uniqueRoomIds.length) {
+          throw new AppError('One or more rooms were not found for this tenant', 404);
+        }
+
+        const overlaps = await tx.reservation.findMany({
+          where: {
+            tenantId,
+            roomId: { in: uniqueRoomIds },
+            status: { in: ['confirmed', 'checked_in'] },
+            checkInDate: { lt: checkOut },
+            checkOutDate: { gt: checkIn },
+          },
+          select: {
+            id: true,
+            roomId: true,
+          },
+        });
+
+        if (overlaps.length > 0) {
+          const blockedRoomIds = [...new Set(overlaps.map((r) => r.roomId))];
+          const blockedNumbers = rooms
+            .filter((room) => blockedRoomIds.includes(room.id))
+            .map((room) => room.roomNumber || room.id);
+          throw new AppError(
+            `Some rooms are not available for the selected dates: ${blockedNumbers.join(', ')}`,
+            400
+          );
+        }
+
+        await validateHallReservationsForBatch(tenantId, halls, tx);
+
+        const nights = Math.max(
+          1,
+          Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24))
+        );
+
+        const roomSubtotal = data.rooms.reduce((sum, room) => sum + Number(room.rate) * nights, 0);
+        const hallSubtotal = halls.reduce((sum, hall) => sum + (Number((hall as any).rate) || 0), 0);
+        const totalRevenue = roomSubtotal + hallSubtotal;
+
+        const groupBookingNumber = `GB-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math
+          .random()
+          .toString(36)
+          .substring(2, 6)
+          .toUpperCase()}`;
+
+        const groupBooking = await tx.groupBooking.create({
+          data: {
+            tenantId,
+            groupBookingNumber,
+            groupName: `Reservation - ${data.guestName}`,
+            groupType: 'other',
+            contactPerson: data.guestName,
+            contactEmail: data.guestEmail || 'unknown@example.com',
+            contactPhone: data.guestPhone || 'N/A',
+            expectedGuests: Number(data.adults) + Number(data.children),
+            confirmedGuests: 0,
+            checkInDate: checkIn,
+            checkOutDate: checkOut,
+            totalRooms: data.rooms.length,
+            totalRevenue: new Prisma.Decimal(totalRevenue),
+            depositAmount:
+              data.depositAmount !== undefined ? new Prisma.Decimal(data.depositAmount) : null,
+            depositPaid: false,
+            status: 'confirmed',
+            bookingProgress: 'confirmed',
+            specialRequests: data.specialRequests || null,
+            dietaryRequirements: null,
+            setupRequirements: null,
+            assignedTo: null,
+            createdBy: req.user!.id,
+            hallReservations: halls.length
+              ? {
+                  create: halls.map((reservation) => ({
+                    tenantId,
+                    hallId: reservation.hallId,
+                    eventName: reservation.eventName || null,
+                    purpose: reservation.purpose || null,
+                    setupType: reservation.setupType || null,
+                    attendeeCount:
+                      reservation.attendeeCount !== undefined && reservation.attendeeCount !== null
+                        ? Number(reservation.attendeeCount) || null
+                        : null,
+                    startDateTime: new Date(reservation.startDateTime),
+                    endDateTime: new Date(reservation.endDateTime),
+                    cateringNotes: reservation.cateringNotes || null,
+                    avRequirements: reservation.avRequirements || null,
+                    status: reservation.status || 'tentative',
+                  })),
+                }
+              : undefined,
+          },
+        });
+
+        const createdReservations = await Promise.all(
+          data.rooms.map(async (room) => {
+            const reservationNumber = `RES-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
+            return tx.reservation.create({
+              data: {
+                tenantId,
+                roomId: room.roomId,
+                groupBookingId: groupBooking.id,
+                reservationNumber,
+                guestName: data.guestName,
+                guestEmail: data.guestEmail || null,
+                guestPhone: data.guestPhone || null,
+                guestIdNumber: data.guestIdNumber || null,
+                checkInDate: checkIn,
+                checkOutDate: checkOut,
+                adults: data.adults,
+                children: data.children,
+                rate: new Prisma.Decimal(room.rate),
+                depositAmount:
+                  data.depositAmount !== undefined ? new Prisma.Decimal(data.depositAmount) : null,
+                depositStatus: data.depositAmount ? 'pending' : null,
+                depositRequired: data.depositAmount ? true : false,
+                source: data.source,
+                specialRequests: data.specialRequests || null,
+                createdBy: req.user!.id,
+                status: 'confirmed',
+              },
+              include: {
+                room: true,
+              },
+            });
+          })
+        );
+
+        return {
+          groupBookingId: groupBooking.id,
+          reservationIds: createdReservations.map((r) => r.id),
+          reservations: createdReservations,
+        };
+      });
+
+      await Promise.all(
+        result.reservations.map(async (reservation: any) => {
+          const serializedReservation = {
+            ...reservation,
+            rate: decimalToNumber(reservation.rate),
+            depositAmount: decimalToNumber(reservation.depositAmount),
+          };
+
+          await createAuditLog({
+            tenantId,
+            userId: req.user!.id,
+            action: 'create_reservation',
+            entityType: 'reservation',
+            entityId: reservation.id,
+            afterState: serializedReservation,
+            metadata: {
+              reservationNumber: reservation.reservationNumber,
+              groupBookingId: result.groupBookingId,
+              batch: true,
+            },
+          });
+
+          await createRoomLog({
+            tenantId,
+            roomId: reservation.roomId,
+            type: 'reservation_created',
+            summary: `Reservation ${reservation.reservationNumber} created for ${data.guestName}`,
+            metadata: {
+              reservationId: reservation.id,
+              reservationNumber: reservation.reservationNumber,
+              checkInDate: checkIn.toISOString(),
+              checkOutDate: checkOut.toISOString(),
+              guestName: data.guestName,
+              groupBookingId: result.groupBookingId,
+            },
+            user: {
+              id: req.user?.id || null,
+              name: getUserDisplayName(req.user),
+            },
+          });
+        })
+      );
+
+      res.status(201).json({
+        success: true,
+        data: {
+          groupBookingId: result.groupBookingId,
+          reservationIds: result.reservationIds,
+          reservations: result.reservations.map((reservation: any) => serializeReservation(reservation)),
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (error instanceof z.ZodError) {
+        const message =
+          error.errors?.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ') ||
+          'Invalid reservation data';
+        throw new AppError(message, 400);
+      }
+      console.error('Error creating batch reservations:', error);
+      throw new AppError(
+        `Failed to create reservations: ${error.message || 'Database connection error'}`,
         500
       );
     }

@@ -34,6 +34,7 @@ const createRoomSchema = z.object({
   ratePlanId: z.string().uuid().optional(),
   categoryId: z.string().optional(),
   description: z.string().optional(),
+  customRate: z.number().positive().optional(),
 });
 
 // GET /api/tenants/:tenantId/rooms
@@ -128,7 +129,7 @@ roomRouter.get(
             const roomId = doc.id;
 
             // Get rate plan if exists (don't fail if lookup fails)
-            let ratePlan: { id: string; name: any; baseRate: any } | null = null;
+            let ratePlan: { id: string; name: any; baseRate: number | null } | null = null;
             try {
               if (roomData.ratePlanId) {
                 const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
@@ -137,7 +138,9 @@ roomRouter.get(
                   ratePlan = {
                     id: ratePlanDoc.id,
                     name: ratePlanData?.name || null,
-                    baseRate: ratePlanData?.baseRate || null,
+                    baseRate: ratePlanData?.baseRate !== undefined && ratePlanData?.baseRate !== null
+                      ? Number(ratePlanData.baseRate)
+                      : null,
                   };
                 }
               }
@@ -179,6 +182,7 @@ roomRouter.get(
             return {
               id: roomId,
               ...roomData,
+              customRate: roomData.customRate ?? null,
               ratePlan,
               category,
               _count: {
@@ -190,6 +194,7 @@ roomRouter.get(
               lastLogSummary: roomData.lastLogSummary || null,
               lastLogUserName: roomData.lastLogUserName || null,
               lastLogAt: toDate(roomData.lastLogAt) || null,
+              effectiveRate: roomData.customRate ?? ratePlan?.baseRate ?? null,
             };
           } catch (error: any) {
             console.error(`Error processing room ${doc.id}:`, error);
@@ -387,11 +392,13 @@ roomRouter.get(
       const room = {
         id: roomDoc.id,
         ...roomData,
+        customRate: roomData.customRate ?? null,
         ratePlan,
         category,
         reservations,
         createdAt: toDate(roomData?.createdAt),
         updatedAt: toDate(roomData?.updatedAt),
+        effectiveRate: roomData.customRate ?? ratePlan?.baseRate ?? null,
       };
 
       res.json({
@@ -551,6 +558,7 @@ roomRouter.post(
         ratePlanId: data.ratePlanId || null,
         categoryId: data.categoryId || null,
         description: data.description || null,
+        customRate: data.customRate ?? null,
         status: 'available',
         createdAt: now(),
         updatedAt: now(),
@@ -590,6 +598,7 @@ roomRouter.post(
         category,
         createdAt: toDate(roomData.createdAt),
         updatedAt: toDate(roomData.updatedAt),
+        effectiveRate: roomData.customRate ?? ratePlan?.baseRate ?? null,
       };
 
       await createAuditLog({
@@ -686,6 +695,7 @@ roomRouter.post(
           ratePlanId: ratePlanId || null,
           categoryId: categoryId || null,
           description: categoryDescription,
+          customRate: null,
           status: 'available',
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -783,6 +793,14 @@ roomRouter.patch(
       // Handle null values properly
       if (updateData.categoryId === '') updateData.categoryId = null;
       if (updateData.description === '') updateData.description = null;
+      if (updateData.customRate === '') updateData.customRate = null;
+      if (updateData.customRate !== undefined && updateData.customRate !== null) {
+        const parsedRate = Number(updateData.customRate);
+        if (isNaN(parsedRate) || parsedRate <= 0) {
+          throw new AppError('customRate must be a positive number', 400);
+        }
+        updateData.customRate = parsedRate;
+      }
 
       await roomDoc.ref.update(updateData);
 
@@ -822,6 +840,7 @@ roomRouter.patch(
         category,
         createdAt: toDate(updatedData?.createdAt),
         updatedAt: toDate(updatedData?.updatedAt),
+        effectiveRate: updatedData?.customRate ?? ratePlan?.baseRate ?? null,
       };
 
       if (req.body.status !== undefined && req.body.status !== roomData?.status) {

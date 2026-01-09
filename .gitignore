@@ -35,6 +35,9 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 
+# Service account keys
+backend/serviceAccount*.json
+
 # Uploads
 backend/uploads/
 frontend/dist/

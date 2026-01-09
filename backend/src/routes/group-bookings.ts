@@ -459,7 +459,6 @@ groupBookingRouter.put('/:bookingId', authenticate, requireTenantAccess, async (
       specialRequests: updates.specialRequests ?? existing.specialRequests,
       dietaryRequirements: updates.dietaryRequirements ?? existing.dietaryRequirements,
       setupRequirements: updates.setupRequirements ?? existing.setupRequirements,
-      assignedTo: updates.assignedTo ?? existing.assignedTo,
     };
 
     if (updates.checkInDate) {

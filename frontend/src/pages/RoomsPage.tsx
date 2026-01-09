@@ -29,15 +29,19 @@ interface Room {
   status: string;
   maxOccupancy: number;
   description?: string;
-  categoryId?: string;
+  categoryId?: string | null;
   category?: {
     id: string;
     name: string;
   };
   ratePlan?: {
+    id: string;
     name: string;
-    baseRate: number;
-  };
+    baseRate: number | null;
+  } | null;
+  ratePlanId?: string | null;
+  customRate?: number | null;
+  effectiveRate?: number | null;
   lastLogType?: string | null;
   lastLogSummary?: string | null;
   lastLogUserName?: string | null;
@@ -63,7 +67,9 @@ export default function RoomsPage() {
   const [categories, setCategories] = useState<RoomCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [ratePlans, setRatePlans] = useState<Array<{ id: string; name: string; baseRate: number | null }>>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [rateEditRoom, setRateEditRoom] = useState<Room | null>(null);
   const [editingCategory, setEditingCategory] = useState<RoomCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
@@ -183,6 +189,7 @@ export default function RoomsPage() {
           fetchRooms(1, pagination.limit, true), // showLoading = true for initial load
           fetchCategories(),
           fetchLatestReport(),
+          fetchRatePlans(),
         ]);
       } catch (error) {
         console.error('Failed to load initial data:', error);
@@ -192,6 +199,22 @@ export default function RoomsPage() {
     
     loadInitialData();
   }, [user?.tenantId]);
+
+  const fetchRatePlans = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const response = await api.get(`/tenants/${user.tenantId}/rate-plans`);
+      setRatePlans(
+        (response.data.data || []).map((plan: any) => ({
+          id: plan.id,
+          name: plan.name,
+          baseRate: plan.baseRate !== undefined && plan.baseRate !== null ? Number(plan.baseRate) : null,
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to fetch rate plans:', error);
+    }
+  };
   
   // Refetch when filters change (without showing loading skeleton)
   useEffect(() => {
@@ -1125,16 +1148,36 @@ export default function RoomsPage() {
                   <span style={{ color: '#64748b' }}>Rate Plan</span>
                   <span style={{ fontWeight: '500', color: '#1e293b' }}>{room.ratePlan?.name || 'N/A'}</span>
                 </div>
-                {room.ratePlan?.baseRate && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#64748b' }}>Custom Rate</span>
+                  <span style={{ fontWeight: '500', color: room.customRate ? '#0f172a' : '#94a3b8' }}>
+                    {room.customRate ? `₦${Number(room.customRate).toLocaleString()}` : 'Not set'}
+                  </span>
+                </div>
+                {room.effectiveRate && (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#64748b' }}>Base Rate</span>
-                    <span style={{ fontWeight: '500', color: '#1e293b' }}>
-                      ₦{Number(room.ratePlan.baseRate).toLocaleString()}
+                    <span style={{ color: '#64748b' }}>Effective Rate</span>
+                    <span style={{ fontWeight: '600', color: '#0f172a' }}>
+                      ₦{Number(room.effectiveRate).toLocaleString()}
                     </span>
                   </div>
                 )}
               </div>
-              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setRateEditRoom(room)}
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    background: '#f8fafc',
+                    color: '#0f172a',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  Edit Rate
+                </button>
                 <button
                   onClick={() => handleViewActivity(room)}
                   style={{
@@ -1202,6 +1245,20 @@ export default function RoomsPage() {
               setShowCreateModal(false);
               fetchRooms(pagination.page);
             }}
+            ratePlans={ratePlans}
+          />
+        )}
+
+        {rateEditRoom && (
+          <EditRoomRateModal
+            room={rateEditRoom}
+            categories={categories}
+            ratePlans={ratePlans}
+            onClose={() => setRateEditRoom(null)}
+            onSuccess={() => {
+              setRateEditRoom(null);
+              fetchRooms(pagination.page);
+            }}
           />
         )}
 
@@ -1236,12 +1293,22 @@ export default function RoomsPage() {
   );
 }
 
+interface EditRoomModalProps {
+  room: Room;
+  categories: RoomCategory[];
+  ratePlans: Array<{ id: string; name: string; baseRate: number | null }>;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
 function CreateRoomModal({
   categories,
+  ratePlans,
   onClose,
   onSuccess,
 }: {
   categories: RoomCategory[];
+  ratePlans: Array<{ id: string; name: string; baseRate: number | null }>;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -1257,6 +1324,7 @@ function CreateRoomModal({
     categoryId: '',
     description: '',
     overrideDescription: false,
+    customRate: '',
   });
   const [loading, setLoading] = useState(false);
   const [parsedRoomNumbers, setParsedRoomNumbers] = useState<string[]>([]);
@@ -1344,6 +1412,7 @@ function CreateRoomModal({
           ratePlanId: formData.ratePlanId || null,
           categoryId: formData.categoryId || null,
           description: formData.description || null,
+          customRate: formData.customRate ? Number(formData.customRate) : null,
         });
         onSuccess();
         toast.success('Room created successfully');
@@ -1368,6 +1437,7 @@ function CreateRoomModal({
             ratePlanId: formData.ratePlanId || null,
             categoryId: formData.categoryId || null,
             description: formData.overrideDescription ? formData.description : null,
+            customRate: formData.customRate ? Number(formData.customRate) : null,
           });
 
           const created = response.data.data?.created || 0;
@@ -1622,6 +1692,66 @@ function CreateRoomModal({
             </div>
 
             <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                Rate Plan
+              </label>
+              <select
+                value={formData.ratePlanId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setFormData((prev) => ({
+                    ...prev,
+                    ratePlanId: value,
+                    customRate: prev.customRate || value === '' ? prev.customRate : '',
+                  }));
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                }}
+              >
+                <option value="">No Rate Plan</option>
+                {ratePlans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name} {plan.baseRate ? `• ₦${plan.baseRate.toLocaleString()}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <label style={{ color: '#475569', fontWeight: '500' }}>Custom Rate (optional)</label>
+                {formData.ratePlanId && (
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    Overrides {ratePlans.find((plan) => plan.id === formData.ratePlanId)?.name || 'selected plan'}
+                  </span>
+                )}
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={formData.customRate}
+                onChange={(e) => setFormData({ ...formData, customRate: e.target.value })}
+                placeholder="Enter a custom rate (e.g., 45000)"
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                }}
+              />
+              {formData.customRate && (
+                <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: '#0f172a' }}>
+                  Effective rate will be ₦{Number(formData.customRate).toLocaleString()}
+                </div>
+              )}
+            </div>
+
+            <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <label style={{ color: '#475569', fontWeight: '500' }}>
                   Description
@@ -1723,6 +1853,198 @@ function CreateRoomModal({
                   : `Create ${parsedRoomNumbers.length || 0} Room${parsedRoomNumbers.length !== 1 ? 's' : ''}`}
               </button>
             </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditRoomRateModal({ room, categories, ratePlans, onClose, onSuccess }: EditRoomModalProps) {
+  const { user } = useAuthStore();
+  const [formData, setFormData] = useState({
+    ratePlanId: room.ratePlanId || room.ratePlan?.id || '',
+    customRate: room.customRate ? String(room.customRate) : '',
+  });
+  const [loading, setLoading] = useState(false);
+  const selectedPlan = ratePlans.find((plan) => plan.id === formData.ratePlanId);
+  const category = room.categoryId
+    ? categories.find((cat) => cat.id === room.categoryId)
+    : null;
+  const effectiveRate =
+    formData.customRate !== ''
+      ? Number(formData.customRate)
+      : selectedPlan?.baseRate ?? null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.patch(`/tenants/${user?.tenantId}/rooms/${room.id}`, {
+        ratePlanId: formData.ratePlanId || null,
+        customRate: formData.customRate ? Number(formData.customRate) : null,
+      });
+      toast.success('Room rate updated');
+      onSuccess();
+    } catch (error: any) {
+      // handled globally
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '8px',
+          padding: '2rem',
+          width: '90%',
+          maxWidth: '480px',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Edit Room Rate</h2>
+        <p style={{ margin: 0, color: '#64748b' }}>
+          Room {room.roomNumber} • {room.roomType}
+        </p>
+        {category && (
+          <p style={{ marginTop: '0.25rem', color: '#94a3b8', fontSize: '0.85rem' }}>
+            Category: {category.name}
+          </p>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ marginTop: '1.5rem', display: 'grid', gap: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+              Rate Plan
+            </label>
+            <select
+              value={formData.ratePlanId}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  ratePlanId: e.target.value,
+                  customRate: prev.customRate,
+                }))
+              }
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+              }}
+            >
+              <option value="">No Rate Plan</option>
+              {ratePlans.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.name} {plan.baseRate ? `• ₦${plan.baseRate.toLocaleString()}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <label style={{ color: '#475569', fontWeight: '500' }}>Custom Rate (optional)</label>
+              {selectedPlan?.baseRate !== undefined && selectedPlan?.baseRate !== null && (
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                  Plan base ₦{Number(selectedPlan.baseRate).toLocaleString()}
+                </span>
+              )}
+            </div>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={formData.customRate}
+              onChange={(e) => setFormData({ ...formData, customRate: e.target.value })}
+              placeholder="Leave blank to use plan rate"
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                border: '1px solid #cbd5e1',
+                borderRadius: '6px',
+              }}
+            />
+            {formData.customRate && (
+              <button
+                type="button"
+                onClick={() => setFormData((prev) => ({ ...prev, customRate: '' }))}
+                style={{
+                  marginTop: '0.5rem',
+                  background: 'none',
+                  border: 'none',
+                  color: '#ef4444',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                }}
+              >
+                Remove custom rate
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              marginTop: '0.5rem',
+              padding: '0.75rem',
+              borderRadius: '6px',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              fontSize: '0.9rem',
+              color: '#0f172a',
+            }}
+          >
+            <strong>Effective nightly rate:</strong>{' '}
+            {effectiveRate !== null ? `₦${Number(effectiveRate).toLocaleString()}` : 'Not set'}
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: '0.65rem 1.25rem',
+                background: '#f1f5f9',
+                color: '#475569',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                padding: '0.65rem 1.25rem',
+                background: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {loading ? 'Saving...' : 'Save Changes'}
+            </button>
           </div>
         </form>
       </div>

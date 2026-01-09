@@ -129,6 +129,7 @@ model Room {
   ratePlanId   String?
   categoryId   String?
   description  String?
+  customRate   Decimal? @db.Decimal(10, 2)
   lastLogType     String?
   lastLogSummary  String?
   lastLogUserName String?

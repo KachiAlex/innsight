@@ -150,8 +150,11 @@ groupBookingRouter.post(
       for (const roomId of data.roomIds) {
         const roomData = roomDocs.find((_, i) => data.roomIds[i] === roomId)?.data();
         
-        // Get rate for this room (from rates mapping or room's rate plan)
+        // Get rate for this room (custom override, provided mapping, then rate plan)
         let roomRate = data.rates?.[roomId];
+        if (!roomRate && roomData?.customRate) {
+          roomRate = Number(roomData.customRate);
+        }
         if (!roomRate && roomData?.ratePlanId) {
           const ratePlanDoc = await db.collection('ratePlans').doc(roomData.ratePlanId).get();
           if (ratePlanDoc.exists) {
