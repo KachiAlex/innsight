@@ -911,18 +911,14 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   }, [roomOptions]);
 
   useEffect(() => {
-    setRoomRates((prev) => {
-      const next = { ...prev };
-      roomOptions.forEach((room) => {
-        if (next[room.id] === undefined) {
-          const effectiveRate = getRoomEffectiveRate(room);
-          if (effectiveRate !== null) {
-            next[room.id] = effectiveRate;
-          }
-        }
-      });
-      return next;
+    const next: Record<string, number> = {};
+    roomOptions.forEach((room) => {
+      const effectiveRate = getRoomEffectiveRate(room);
+      if (effectiveRate !== null) {
+        next[room.id] = effectiveRate;
+      }
     });
+    setRoomRates(next);
   }, [roomOptions]);
 
   const filteredRooms = roomOptions.filter((room) => {
@@ -963,6 +959,11 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
     .map((roomId) => roomOptions.find((room) => room.id === roomId) || allRooms.find((room) => room.id === roomId))
     .filter(Boolean);
 
+  const resolveRoomRate = (room: any) => {
+    if (!room) return 0;
+    return roomRates[room.id] ?? getRoomEffectiveRate(room) ?? 0;
+  };
+
   const getNights = () => {
     if (!formData.checkInDate || !formData.checkOutDate) return 0;
     const start = new Date(formData.checkInDate);
@@ -975,10 +976,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
 
   const nights = getNights();
   const nightMultiplier = Math.max(nights, 1);
-  const roomSubtotal = selectedRoomDetails.reduce((sum, room: any) => {
-    const nightly = roomRates[room.id] ?? getRoomEffectiveRate(room) ?? 0;
-    return sum + nightly * nightMultiplier;
-  }, 0);
+  const roomSubtotal = selectedRoomDetails.reduce((sum, room: any) => sum + resolveRoomRate(room) * nightMultiplier, 0);
   const hallTotal = hallReservations.reduce((sum, hall) => sum + (Number(hall.rate) || 0), 0);
   const invoiceTotal = roomSubtotal + (includeHall ? hallTotal : 0);
 
@@ -1197,7 +1195,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       .map((roomId) => {
         const room =
           availableRooms.find((r) => r.id === roomId) || allRooms.find((r) => r.id === roomId);
-        const nightly = roomRates[roomId] ?? getRoomEffectiveRate(room) ?? 0;
+        const nightly = resolveRoomRate(room);
         return {
           room,
           roomId,
@@ -1461,52 +1459,78 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
 
   const renderRoomsStep = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '1rem',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div style={{ flex: 1 }}>
-          <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>
-            Search rooms
-          </label>
-          <input
-            type="text"
-            value={roomSearch}
-            onChange={(e) => setRoomSearch(e.target.value)}
-            placeholder="Search by room #, type, category"
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+        <label style={{ color: '#475569', fontWeight: 600 }}>Room filters</label>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.85rem',
+            alignItems: 'stretch',
+            border: '1px solid #cbd5e1',
+            borderRadius: '10px',
+            padding: '0.25rem',
+            background: '#fff',
+          }}
+        >
+          <div
             style={{
-              width: '100%',
-              padding: '0.7rem',
-              borderRadius: '8px',
-              border: '1px solid #cbd5e1',
-            }}
-          />
-        </div>
-        <div style={{ minWidth: '220px' }}>
-          <label style={{ display: 'block', marginBottom: '0.35rem', color: '#475569', fontWeight: 600 }}>Category</label>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '0.7rem',
-              borderRadius: '8px',
-              border: '1px solid #cbd5e1',
+              flex: 1,
+              minWidth: '220px',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '0 0.75rem',
             }}
           >
-            <option value="all">All categories</option>
-            <option value="none">Uncategorized</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
+            <input
+              type="text"
+              value={roomSearch}
+              onChange={(e) => setRoomSearch(e.target.value)}
+              placeholder="Search by room #, type, category"
+              style={{
+                width: '100%',
+                border: 'none',
+                outline: 'none',
+                fontSize: '0.95rem',
+                color: '#0f172a',
+              }}
+            />
+          </div>
+          <div
+            style={{
+              minWidth: '220px',
+              borderLeft: '1px solid #e2e8f0',
+              display: 'flex',
+              alignItems: 'stretch',
+            }}
+          >
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              style={{
+                width: '100%',
+                border: 'none',
+                outline: 'none',
+                borderRadius: '0 8px 8px 0',
+                padding: '0.7rem',
+                background: '#f8fafc',
+                color: '#0f172a',
+                fontWeight: 500,
+              }}
+            >
+              <option value="all" style={{ color: '#0f172a' }}>
+                All categories
               </option>
-            ))}
-          </select>
+              <option value="none" style={{ color: '#0f172a' }}>
+                Uncategorized
+              </option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id} style={{ color: '#0f172a' }}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -1654,7 +1678,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                   {group.rooms.map((room) => {
                     const isSelected = selectedRoomIds.has(room.id);
-                    const rate = roomRates[room.id] ?? getRoomEffectiveRate(room) ?? 0;
+                    const rate = resolveRoomRate(room);
                     const hasCustomRate = room.customRate !== undefined && room.customRate !== null;
                     return (
                       <div
@@ -1681,18 +1705,20 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <input
-                            type="number"
-                            value={rate}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) =>
-                              setRoomRates({ ...roomRates, [room.id]: Number(e.target.value) || 0 })
-                            }
+                            type="text"
+                            value={formatCurrency(rate)}
+                            readOnly
+                            tabIndex={-1}
                             style={{
-                              width: '110px',
+                              width: '130px',
                               padding: '0.45rem',
                               borderRadius: '6px',
                               border: '1px solid #cbd5e1',
                               textAlign: 'right',
+                              background: '#f1f5f9',
+                              color: '#0f172a',
+                              fontWeight: 600,
+                              cursor: 'not-allowed',
                             }}
                           />
                           <p style={{ margin: '0.2rem 0 0', color: '#64748b', fontSize: '0.75rem' }}>per night</p>
@@ -1722,7 +1748,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
           </p>
           <p style={{ margin: 0, color: '#475569', fontSize: '0.85rem' }}>
             {selectedRoomDetails
-              .map((room: any) => `${room.roomNumber} (${formatCurrency(roomRates[room.id] || 0)}/night)`)
+              .map((room: any) => `${room.roomNumber} (${formatCurrency(resolveRoomRate(room))}/night)`)
               .join(', ')}
           </p>
         </div>

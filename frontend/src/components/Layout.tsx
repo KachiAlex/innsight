@@ -217,6 +217,33 @@ export default function Layout({ children }: LayoutProps) {
             <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
               {user?.role.replace('_', ' ').toUpperCase()}
             </span>
+            <Link
+              to="/dashboard"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 1rem',
+                background: 'transparent',
+                border: '1px solid #e2e8f0',
+                color: '#2563eb',
+                cursor: 'pointer',
+                borderRadius: '4px',
+                fontSize: '0.875rem',
+                textDecoration: 'none',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#eff6ff';
+                e.currentTarget.style.borderColor = '#bfdbfe';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.borderColor = '#e2e8f0';
+              }}
+            >
+              ← Back to Dashboard
+            </Link>
             <button
               onClick={handleLogout}
               style={{
