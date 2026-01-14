@@ -12,7 +12,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
-    "create-admin": "tsx scripts/create-admin-firestore.ts"
+    "create-admin": "tsx scripts/create-admin-firestore.ts",
+    "backfill:order-journals": "tsx scripts/backfill-order-journals.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

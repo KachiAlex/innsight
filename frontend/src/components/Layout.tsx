@@ -23,7 +23,8 @@ import {
   MessageSquare,
   ChefHat,
   Package,
-  BarChart3
+  BarChart3,
+  Globe,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -53,6 +54,7 @@ const menuItems = [
   { path: '/staff', icon: UserCog, label: 'Staff' },
   { path: '/wage-plans', icon: Wallet, label: 'Wage Plans' },
   { path: '/settings', icon: Settings, label: 'Settings' },
+  { path: '/integrations', icon: Globe, label: 'Integrations' },
   { path: '/alerts', icon: AlertCircle, label: 'Alerts' },
 ];
 

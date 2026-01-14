@@ -1,10 +1,27 @@
 import { prismaTestClient } from './prismaTestClient';
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __JEST_GLOBAL_CONFIG__:
+    | {
+        testDatabaseUrl: string;
+      }
+    | undefined;
+}
+
+const shouldSkipDbSetup = process.env.SKIP_DB_SETUP === 'true';
+const hasTestDatabaseUrl = Boolean(global.__JEST_GLOBAL_CONFIG__?.testDatabaseUrl);
+const canUseDatabase = !shouldSkipDbSetup && hasTestDatabaseUrl;
+
 interface TableRecord {
   tablename: string;
 }
 
 export const truncateAllTables = async () => {
+  if (!canUseDatabase) {
+    return;
+  }
+
   const tables = await prismaTestClient.$queryRaw<TableRecord[]>`
     SELECT tablename
     FROM pg_tables
@@ -26,5 +43,8 @@ export const truncateAllTables = async () => {
 };
 
 export const disconnectPrisma = async () => {
+  if (!canUseDatabase) {
+    return;
+  }
   await prismaTestClient.$disconnect();
 };

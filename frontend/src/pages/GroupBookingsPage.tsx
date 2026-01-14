@@ -533,6 +533,7 @@ function GroupBookingDetailsModal({
 
   return (
     <div
+      className="group-booking-modal-overlay"
       style={{
         position: 'fixed',
         top: 0,
@@ -2058,7 +2059,40 @@ function CreateGroupBookingModal({
       }}
       onClick={onClose}
     >
+      <style>
+        {`
+          .group-booking-modal input,
+          .group-booking-modal select,
+          .group-booking-modal textarea {
+            color: #0f172a !important;
+            background-color: #ffffff !important;
+            caret-color: #0f172a;
+          }
+
+          .group-booking-modal input::placeholder,
+          .group-booking-modal select::placeholder,
+          .group-booking-modal textarea::placeholder {
+            color: #475569 !important;
+            opacity: 1;
+          }
+
+          .group-booking-modal input:-webkit-autofill,
+          .group-booking-modal input:-webkit-autofill:hover,
+          .group-booking-modal input:-webkit-autofill:focus,
+          .group-booking-modal textarea:-webkit-autofill,
+          .group-booking-modal textarea:-webkit-autofill:hover,
+          .group-booking-modal textarea:-webkit-autofill:focus,
+          .group-booking-modal select:-webkit-autofill,
+          .group-booking-modal select:-webkit-autofill:hover,
+          .group-booking-modal select:-webkit-autofill:focus {
+            -webkit-text-fill-color: #0f172a;
+            box-shadow: 0 0 0px 1000px #ffffff inset;
+            transition: background-color 5000s ease-in-out 0s;
+          }
+        `}
+      </style>
       <div
+        className="group-booking-modal"
         style={{
           width: '95%',
           maxWidth: '960px',

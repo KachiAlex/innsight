@@ -765,7 +765,6 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const [selectedRoomIds, setSelectedRoomIds] = useState<Set<string>>(new Set());
   const [includeHall, setIncludeHall] = useState(false);
   const [hallReservations, setHallReservations] = useState<HallReservationForm[]>([]);
-
   useEffect(() => {
     if (includeHall) {
       setHallReservations((prev) => {
@@ -825,7 +824,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const fetchMeetingHalls = async () => {
     if (!user?.tenantId) return;
     try {
-      const response = await api.get(`/tenants/${user?.tenantId}/group-bookings/meeting-halls`);
+      const response = await api.get(`/tenants/${user?.tenantId}/halls`);
       setMeetingHalls(response.data.data || []);
     } catch (error) {
       console.error('Failed to fetch meeting halls:', error);

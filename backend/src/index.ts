@@ -36,7 +36,11 @@ import { calendarRouter } from './routes/calendar';
 import { roomCategoryRouter } from './routes/roomCategories';
 import { staffRouter } from './routes/staff';
 import { settingsRouter } from './routes/settings';
+import { webhooksRouter } from './routes/webhooks';
 import { wagePlanRouter } from './routes/wagePlans';
+import { meetingHallRouter } from './routes/halls';
+import { publicPortalRouter } from './routes/public-portal';
+import { publicPaymentsRouter } from './routes/public-payments';
 
 dotenv.config();
 
@@ -57,6 +61,9 @@ const limiter = rateLimit({
   max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use('/api/', limiter);
+
+// Webhook routes that require raw body (must run before JSON parsing middleware)
+app.use('/api/public/payments', publicPaymentsRouter);
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -90,6 +97,7 @@ app.use('/api/tenants/:tenantId/guests-enhanced', guestEnhancedRouter); // Enhan
 app.use('/api/tenants/:tenantId/deposits', depositRouter); // Deposit management
 app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter); // Group bookings
 app.use('/api/tenants/:tenantId/overbooking', overbookingRouter); // Overbooking management
+app.use('/api/tenants/:tenantId/halls', meetingHallRouter); // Meeting hall management
 app.use('/api/tenants/:tenantId/guest-requests', guestRequestsRouter); // Guest requests
 app.use('/api/tenants/:tenantId/lost-found', lostFoundRouter); // Lost & found
 app.use('/api/tenants/:tenantId/room-service', roomServiceRouter); // Room service
@@ -100,10 +108,12 @@ app.use('/api/tenants/:tenantId/room-categories', roomCategoryRouter);
 app.use('/api/tenants/:tenantId/group-bookings', groupBookingRouter);
 app.use('/api/tenants/:tenantId/staff', staffRouter);
 app.use('/api/tenants/:tenantId/settings', settingsRouter);
+app.use('/api/tenants/:tenantId/webhooks', webhooksRouter);
 app.use('/api/tenants/:tenantId/wage-plans', wagePlanRouter);
 app.use('/api/iot', iotRouter);
 app.use('/api/tenants/:tenantId/iot', iotRouter);
 app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);
+app.use('/api/public/portal', publicPortalRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);

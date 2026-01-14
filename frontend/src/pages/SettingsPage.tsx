@@ -21,6 +21,11 @@ interface TenantSettings {
   autoCheckout: boolean;
   autoCheckoutTime: string;
   otherSettings: Record<string, any>;
+  branding: {
+    primaryColor: string;
+    accentColor: string;
+    logoUrl?: string | null;
+  };
 }
 
 const currencies = [
@@ -59,6 +64,11 @@ export default function SettingsPage() {
     autoCheckout: false,
     autoCheckoutTime: '11:00',
     otherSettings: {},
+    branding: {
+      primaryColor: '#0f172a',
+      accentColor: '#7c3aed',
+      logoUrl: null,
+    },
   });
 
   const fetchSettings = useCallback(async () => {
@@ -95,7 +105,7 @@ export default function SettingsPage() {
   };
 
   const handleCurrencyChange = (currencyCode: string) => {
-    const currency = currencies.find(c => c.code === currencyCode);
+    const currency = currencies.find((c) => c.code === currencyCode);
     setSettings({
       ...settings,
       currency: currencyCode,
@@ -426,6 +436,7 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+
         </div>
       </div>
     </Layout>

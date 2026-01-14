@@ -2,7 +2,7 @@ import Paystack from 'paystack';
 import Flutterwave from 'flutterwave-node-v3';
 import { AppError } from '../middleware/errorHandler';
 
-export type PaymentGateway = 'paystack' | 'flutterwave' | 'stripe' | 'manual';
+export type PaymentGateway = 'paystack' | 'flutterwave' | 'monnify' | 'stripe' | 'manual';
 
 export interface InitializePaymentParams {
   gateway: PaymentGateway;
@@ -93,6 +93,9 @@ class PaymentGatewayService {
           customerName,
           customerPhone,
         });
+
+      case 'monnify':
+        throw new AppError('Monnify integration not yet implemented', 501);
 
       case 'stripe':
         throw new AppError('Stripe integration not yet implemented', 501);
@@ -309,6 +312,8 @@ class PaymentGatewayService {
         return !!this.paystackClient;
       case 'flutterwave':
         return !!this.flutterwaveClient;
+      case 'monnify':
+        return false;
       case 'stripe':
         return false; // Not implemented yet
       case 'manual':

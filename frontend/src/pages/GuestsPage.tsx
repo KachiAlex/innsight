@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { User, Mail, Phone, Search, Plus, Star, Filter } from 'lucide-react';
+import { User, Mail, Phone, Search, Star, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import { useDebounce } from '../hooks/useDebounce';
@@ -11,7 +11,6 @@ import EmptyState from '../components/EmptyState';
 import Pagination from '../components/Pagination';
 import Button from '../components/Button';
 import LoyaltyBadge from '../components/LoyaltyBadge';
-import GuestFormModal from '../components/GuestFormModal';
 
 export default function GuestsPage() {
   const navigate = useNavigate();
@@ -27,7 +26,6 @@ export default function GuestsPage() {
     total: 0,
     totalPages: 0,
   });
-  const [showGuestForm, setShowGuestForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     loyaltyTier: '',
@@ -60,7 +58,7 @@ export default function GuestsPage() {
         params.isVIP = filters.isVIP;
       }
 
-      const response = await api.get(`/tenants/${user.tenantId}/guests`, { params });
+      const response = await api.get(`/tenants/${user.tenantId}/guests-enhanced`, { params });
       setGuests(response.data.data || []);
       
       if (response.data.pagination) {
@@ -100,18 +98,6 @@ export default function GuestsPage() {
     setPagination(prev => ({ ...prev, page }));
   }, []);
 
-  const handleCreateGuest = async (data: any) => {
-    try {
-      await api.post(`/tenants/${user?.tenantId}/guests`, data);
-      toast.success('Guest created successfully');
-      setShowGuestForm(false);
-      fetchGuests();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to create guest');
-      throw error;
-    }
-  };
-
   if (loading) {
     return (
       <Layout>
@@ -126,13 +112,12 @@ export default function GuestsPage() {
   return (
     <Layout>
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '1rem' }}>
           <h1 style={{ color: '#1e293b', margin: 0 }}>Guests</h1>
-          <Button onClick={() => setShowGuestForm(true)}>
-            <Plus size={16} />
-            Add Guest
-          </Button>
         </div>
+        <p style={{ color: '#64748b', marginBottom: '1.5rem' }}>
+          Guests are automatically synced from reservations, group bookings, and the DIY portal.
+        </p>
 
         <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: '300px' }}>
@@ -272,7 +257,7 @@ export default function GuestsPage() {
           <EmptyState
             icon={User}
             title={isSearching ? 'No guests found' : 'No guests yet'}
-            description={isSearching ? 'Try adjusting your search terms' : 'Guests will appear here once they make a reservation'}
+            description={isSearching ? 'Try adjusting your search terms' : 'Guests will show up automatically once they book through any channel'}
           />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.5rem' }}>
@@ -377,14 +362,6 @@ export default function GuestsPage() {
           </div>
         )}
       </div>
-
-      {/* Guest Form Modal */}
-      <GuestFormModal
-        isOpen={showGuestForm}
-        onClose={() => setShowGuestForm(false)}
-        onSubmit={handleCreateGuest}
-        isLoading={loading}
-      />
     </Layout>
   );
 }

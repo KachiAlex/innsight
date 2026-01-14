@@ -73,6 +73,8 @@ const AnalyticsDashboardPage = lazy(() => import('./pages/AnalyticsDashboardPage
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
+const IntegrationPage = lazy(() => import('./pages/IntegrationPage'));
+const PublicCheckoutPage = lazy(() => import('./pages/PublicCheckoutPage'));
 
 function App() {
   const PageLoader = () => (
@@ -259,6 +261,22 @@ function App() {
               }
             />
             <Route
+              path="/portal/:tenantSlug/checkout"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <PublicCheckoutPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/:tenantSlug"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <PublicCheckoutPage />
+                </Suspense>
+              }
+            />
+            <Route
               path="/rate-plans"
               element={
                 <ProtectedRoute>
@@ -344,6 +362,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <SettingsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/integrations"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <IntegrationPage />
                   </Suspense>
                 </ProtectedRoute>
               }

@@ -7,6 +7,24 @@ import { db, now, toDate } from '../utils/firestore';
 
 export const settingsRouter = Router({ mergeParams: true });
 
+const brandingSchema = z
+  .object({
+    primaryColor: z
+      .string()
+      .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, {
+        message: 'primaryColor must be a valid hex color (e.g. #0f172a)',
+      })
+      .optional(),
+    accentColor: z
+      .string()
+      .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, {
+        message: 'accentColor must be a valid hex color (e.g. #7c3aed)',
+      })
+      .optional(),
+    logoUrl: z.string().url().optional(),
+  })
+  .strict();
+
 const updateSettingsSchema = z.object({
   currency: z.string().min(3).max(3).optional(), // ISO 4217 currency code
   currencySymbol: z.string().optional(),
@@ -23,6 +41,7 @@ const updateSettingsSchema = z.object({
   autoCheckout: z.boolean().optional(),
   autoCheckoutTime: z.string().optional(), // HH:mm format
   otherSettings: z.record(z.any()).optional(), // For any other custom settings
+  branding: brandingSchema.optional(),
 });
 
 // GET /api/tenants/:tenantId/settings
@@ -43,6 +62,13 @@ settingsRouter.get(
       const tenantData = tenantDoc.data();
       
       // Get settings from tenant document or return defaults
+      const branding =
+        tenantData?.branding ||
+        tenantData?.settings?.branding || {
+          primaryColor: '#0f172a',
+          accentColor: '#7c3aed',
+          logoUrl: null,
+        };
       const settings = {
         currency: tenantData?.settings?.currency || 'NGN',
         currencySymbol: tenantData?.settings?.currencySymbol || '₦',
@@ -60,6 +86,7 @@ settingsRouter.get(
         autoCheckoutTime: tenantData?.settings?.autoCheckoutTime || '11:00',
         otherSettings: tenantData?.settings?.otherSettings || {},
         updatedAt: tenantData?.settings?.updatedAt ? toDate(tenantData.settings.updatedAt) : null,
+        branding,
       };
 
       res.json({
@@ -101,14 +128,26 @@ settingsRouter.patch(
 
       // Update settings
       const currentSettings = tenantData?.settings || {};
+      const currentBranding =
+        (currentSettings?.branding as Record<string, any>) ||
+        tenantData?.branding ||
+        {};
+      const mergedBranding = data.branding
+        ? {
+            ...currentBranding,
+            ...data.branding,
+          }
+        : currentBranding;
       const updatedSettings = {
         ...currentSettings,
         ...data,
+        branding: mergedBranding,
         updatedAt: now(),
       };
 
       await tenantDoc.ref.update({
         settings: updatedSettings,
+        branding: Object.keys(mergedBranding).length ? mergedBranding : null,
         updatedAt: now(),
       });
 

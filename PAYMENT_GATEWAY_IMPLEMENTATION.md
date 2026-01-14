@@ -129,20 +129,33 @@ Content-Type: application/json
 }
 ```
 
-### Webhook Endpoint
+### Webhook Endpoints
+
+#### Legacy tenant-authenticated webhooks
 
 ```http
 POST /api/tenants/:tenantId/payments/webhook/:gateway
 Content-Type: application/json
-
-{
-  // Gateway-specific webhook payload
-}
 ```
 
-**Note:** Webhook URLs should be configured in your gateway dashboard:
-- Paystack: Settings > API Keys & Webhooks
-- Flutterwave: Settings > Webhooks
+> **Note:** This route remains for back-office payments recorded directly on folios. New DIY portal flows should prefer the public webhook endpoints below.
+
+#### Public DIY portal webhooks
+
+```http
+POST /api/public/payments/webhook/paystack
+POST /api/public/payments/webhook/flutterwave
+Content-Type: application/json (raw body required for signature verification)
+```
+
+These routes accept unsigned requests from the gateways and apply HMAC validation using each tenant’s configured secret key (fallbacks to env vars). The webhook payload must include `tenantId` in the metadata object for multi-tenant routing.
+
+**Configuration Checklist**
+1. Set the webhook URL per tenant in the Paystack/Flutterwave dashboard, pointing to the public route.
+2. Ensure tenant payment settings in Firestore include the correct public & secret keys (or rely on global env defaults).
+3. For Paystack, signatures are validated with SHA512 HMAC using the secret key and UTF-8 raw request body. Header: `x-paystack-signature`.
+4. For Flutterwave, signatures use SHA256 HMAC with header `verif-hash`.
+5. The webhook handler reconciles checkout intents, finalizes reservations, and creates folios/payments automatically.
 
 ## 🔄 Payment Flow
 
@@ -239,6 +252,17 @@ if (hash !== req.headers['verif-hash']) {
 - ⏳ **Webhook Signature Verification** (Critical for production)
 - ⏳ **Stripe Integration** (for international payments)
 - ⏳ **Payment Retry Logic** (for failed payments)
+
+## ✅ Test Coverage
+
+- `tests/publicPayments/publicPaymentsWebhook.test.ts` mocks Firestore intent lookups, tenant payment settings, and gateway verification to exercise:
+  1. Successful Paystack webhook reconciliation with valid signatures.
+  2. Signature rejection paths to ensure invalid requests are discarded before touching persistence.
+  3. Flutterwave amount-mismatch handling, verifying that intents are marked failed when verification data diverges.
+
+All tests rely on Jest and Supertest to hit the Express router with raw payloads so HMAC hashing is exercised end-to-end.
+- Structured webhook logs (@scope `public_payments_webhook`) include gateway, tenantId, reference, processing duration, and failure reason to aid observability dashboards/alerts.
+- DIY portal frontend (`/portal/:tenantSlug/checkout`) now consumes these APIs end-to-end: guests search availability, create checkout intents, open the Paystack/Flutterwave authorization URL, and confirm payment status without operator intervention.
 - ⏳ **Refund Support** (via gateway APIs)
 - ⏳ **Payment Method Selection UI** (frontend)
 - ⏳ **Payment Status Polling** (frontend)

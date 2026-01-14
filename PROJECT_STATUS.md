@@ -23,6 +23,7 @@
 10. ✅ **ReportsPage** - Analytics and reports with PDF export
 11. ✅ **AlertsPage** - System alerts and notifications
 12. ✅ **TenantsPage** - Multi-tenant management (IITECH admin only)
+13. ✅ **PublicPortalPage** - Tenant-branded public portal
 
 #### **Features:**
 - ✅ **Code Splitting** - Lazy loading for all pages
@@ -101,6 +102,12 @@
 14. ✅ **Upload** (`/api/tenants/:tenantId/upload`)
     - File upload handling
 
+15. ✅ **Public Portal** (`/api/public/portal`)
+    - Tenant-branded summary endpoint (slug-based)
+    - Catalog exposure for room categories, rate plans, halls
+    - Availability lookup for anonymous guest flows
+    - ⚠️ **Uses Prisma (needs DATABASE_URL)**
+
 #### **Backend Features:**
 - ✅ **Firebase Functions** - Deployed and working
 - ✅ **Error Handling** - Comprehensive error middleware
@@ -145,6 +152,14 @@
 
 ## ⚠️ What Needs to Be Done
 
+### ✅ Newly Added
+- DIY customer portal roadmap created (`DIY_PORTAL_TODO.md`) outlining phased rollout (public APIs, payments, guest services, frontend experience, observability).
+- Tenant slug resolver utility (`resolveTenantBySlug`) ensures multi-tenant safety for public endpoints.
+- Initial anonymous APIs shipped (summary, catalog, availability, booking creation, service requests) enabling customer self-service groundwork.
+- Tenant slug cache with TTL + invalidation keeps public portal lookups fast while preserving branding data integrity.
+- Guest session model (Prisma + helper utilities) now tracks anonymous carts/service requests; booking/service endpoints issue session tokens via cookie/header for continuity.
+- Slug-aware customer login flow added (reservation-based login, OTP request/verify, `/me` profile) with customer JWTs and guest-session reuse.
+
 ### 🔴 High Priority
 
 #### **1. Database Configuration**
@@ -174,7 +189,7 @@
   - Audits
 
 #### **3. Testing**
-- [ ] Unit tests for backend routes
+- [ ] Unit tests for backend routes (🔸 newly added public portal + customer login endpoints currently untested)
 - [ ] Integration tests for API endpoints
 - [ ] Frontend component tests
 - [ ] E2E tests for critical flows

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
-import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
+import { authenticate, requireTenantAccess, requireRole, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { createAlert } from '../utils/alerts';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
@@ -12,11 +12,16 @@ import {
   getTenantEmailSettings,
   type PaymentReceiptData,
 } from '../utils/email';
-import { 
-  paymentGatewayService, 
+import {
+  paymentGatewayService,
   type PaymentGateway,
   type InitializePaymentParams,
 } from '../utils/paymentGateway';
+import {
+  getTenantPaymentSettings,
+  upsertTenantPaymentSettings,
+  type TenantPaymentSettings,
+} from '../utils/publicPayments';
 import { v4 as uuidv4 } from 'uuid';
 import admin from 'firebase-admin';
 export const paymentRouter = Router({ mergeParams: true });
@@ -41,6 +46,165 @@ const verifyPaymentSchema = z.object({
   reference: z.string().min(1),
   gateway: z.enum(['paystack', 'flutterwave']),
 });
+
+const updateGatewaySettingsSchema = z
+  .object({
+    defaultGateway: z.enum(['paystack', 'flutterwave', 'monnify']).optional(),
+    currency: z.string().min(3).max(3).optional(),
+    callbackUrl: z.string().url().optional(),
+    paystackPublicKey: z.string().min(10).optional(),
+    paystackSecretKey: z.string().min(10).optional(),
+    flutterwavePublicKey: z.string().min(10).optional(),
+    flutterwaveSecretKey: z.string().min(10).optional(),
+    monnifyApiKey: z.string().min(8).optional(),
+    monnifySecretKey: z.string().min(8).optional(),
+    monnifyContractCode: z.string().min(4).optional(),
+    monnifyCollectionAccount: z.string().min(4).optional(),
+    monnifyBaseUrl: z.string().url().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'Provide at least one payment setting to update',
+  });
+
+const maskSecretFlag = (value?: string | null) => Boolean(value);
+
+const assertGatewayCredentials = (settings: TenantPaymentSettings) => {
+  const { defaultGateway } = settings;
+  if (defaultGateway === 'paystack') {
+    if (!settings.paystackPublicKey || !settings.paystackSecretKey) {
+      throw new AppError(
+        'Paystack is selected as default but missing public/secret keys. Provide both keys to continue.',
+        400
+      );
+    }
+  }
+
+  if (defaultGateway === 'flutterwave') {
+    if (!settings.flutterwavePublicKey || !settings.flutterwaveSecretKey) {
+      throw new AppError(
+        'Flutterwave is selected as default but missing public/secret keys. Provide both keys to continue.',
+        400
+      );
+    }
+  }
+
+  if (defaultGateway === 'monnify') {
+    if (
+      !settings.monnifyApiKey ||
+      !settings.monnifySecretKey ||
+      !settings.monnifyContractCode ||
+      !settings.monnifyCollectionAccount
+    ) {
+      throw new AppError(
+        'Monnify is selected as default but missing API credentials. Provide API key, secret key, contract code, and collection account.',
+        400
+      );
+    }
+  }
+};
+
+const sanitizePaymentSettings = (settings: TenantPaymentSettings) => ({
+  defaultGateway: settings.defaultGateway,
+  currency: settings.currency,
+  callbackUrl: settings.callbackUrl || null,
+  paystack: {
+    publicKey: settings.paystackPublicKey || null,
+    secretConfigured: maskSecretFlag(settings.paystackSecretKey),
+  },
+  flutterwave: {
+    publicKey: settings.flutterwavePublicKey || null,
+    secretConfigured: maskSecretFlag(settings.flutterwaveSecretKey),
+  },
+  monnify: {
+    apiKeyConfigured: maskSecretFlag(settings.monnifyApiKey),
+    secretConfigured: maskSecretFlag(settings.monnifySecretKey),
+    contractCode: settings.monnifyContractCode || null,
+    collectionAccount: settings.monnifyCollectionAccount || null,
+    baseUrl: settings.monnifyBaseUrl || null,
+  },
+});
+
+// GET /api/tenants/:tenantId/payments/gateway-settings
+paymentRouter.get(
+  '/gateway-settings',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const settings = await getTenantPaymentSettings(tenantId);
+      assertGatewayCredentials(settings);
+
+      res.json({
+        success: true,
+        data: sanitizePaymentSettings(settings),
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error fetching gateway settings:', error);
+      throw new AppError(
+        `Failed to fetch gateway settings: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// PATCH /api/tenants/:tenantId/payments/gateway-settings
+paymentRouter.patch(
+  '/gateway-settings',
+  authenticate,
+  requireTenantAccess,
+  requireRole('owner', 'general_manager'),
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const updates = updateGatewaySettingsSchema.parse(req.body);
+
+      const currentSettings = await getTenantPaymentSettings(tenantId);
+      const mergedSettings: TenantPaymentSettings = {
+        ...currentSettings,
+        ...updates,
+      };
+
+      assertGatewayCredentials(mergedSettings);
+
+      const updatedSettings = await upsertTenantPaymentSettings(tenantId, updates);
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'update_gateway_settings',
+        entityType: 'payment_settings',
+        entityId: tenantId,
+        beforeState: sanitizePaymentSettings(currentSettings),
+        afterState: sanitizePaymentSettings(updatedSettings),
+      });
+
+      res.json({
+        success: true,
+        data: sanitizePaymentSettings(updatedSettings),
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      if (error instanceof z.ZodError) {
+        const message =
+          error.errors?.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ') ||
+          'Invalid gateway settings';
+        throw new AppError(message, 400);
+      }
+      console.error('Error updating gateway settings:', error);
+      throw new AppError(
+        `Failed to update gateway settings: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
 
 // GET /api/tenants/:tenantId/payments
 paymentRouter.get(

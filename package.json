@@ -20,7 +20,8 @@
     "test:frontend": "cd frontend && npm test",
     "deploy": "npm run build && firebase deploy",
     "deploy:hosting": "npm run build:frontend && firebase deploy --only hosting",
-    "deploy:functions": "npm run build:backend && firebase deploy --only functions"
+    "deploy:functions": "npm run build:backend && firebase deploy --only functions",
+    "backfill:order-journals": "npm run backfill:order-journals --workspace backend"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
