@@ -39,6 +39,7 @@ import {
 } from '../../src/utils/checkoutIntents';
 import { issueCustomerToken } from '../../src/utils/customerAuth';
 import { prisma } from '../../src/utils/prisma';
+import { createBatchReservations, resolveTenantUserId } from '../../src/utils/reservationBatch';
 
 jest.mock('firebase-admin', () => ({
   firestore: {
@@ -81,8 +82,8 @@ jest.mock('../../src/utils/firestore', () => {
   };
 });
 
-jest.mock('../../src/utils/prisma', () => ({
-  prisma: {
+jest.mock('../../src/utils/prisma', () => {
+  const prismaMock: any = {
     reservation: {
       create: jest.fn(),
       findFirst: jest.fn(),
@@ -95,8 +96,12 @@ jest.mock('../../src/utils/prisma', () => ({
       findFirst: jest.fn(),
       create: jest.fn(),
     },
-  },
-}));
+  };
+
+  prismaMock.$transaction = jest.fn((fn: any) => fn(prismaMock));
+
+  return { prisma: prismaMock };
+});
 
 const { prisma: mockPrisma } = jest.requireMock('../../src/utils/prisma') as {
   prisma: typeof prisma;
@@ -139,6 +144,11 @@ jest.mock('../../src/utils/customerAuth', () => ({
   issueCustomerToken: jest.fn(),
 }));
 
+jest.mock('../../src/utils/reservationBatch', () => ({
+  createBatchReservations: jest.fn(),
+  resolveTenantUserId: jest.fn(),
+}));
+
 const mockResolveTenantBySlug = resolveTenantBySlug as jest.MockedFunction<
   typeof resolveTenantBySlug
 >;
@@ -178,6 +188,12 @@ const mockMarkSessionConverted = markSessionConverted as jest.MockedFunction<
 const mockIssueCustomerToken = issueCustomerToken as jest.Mock<
   ReturnType<typeof issueCustomerToken>,
   Parameters<typeof issueCustomerToken>
+>;
+const mockCreateBatchReservations = createBatchReservations as jest.MockedFunction<
+  typeof createBatchReservations
+>;
+const mockResolveTenantUserId = resolveTenantUserId as jest.MockedFunction<
+  typeof resolveTenantUserId
 >;
 
 const buildIntentRecord = (
@@ -305,8 +321,39 @@ describe('Public portal checkout flow', () => {
     mockPrisma.user.create.mockResolvedValue({ id: 'system-user' });
     mockPrisma.reservation.create.mockReset();
     mockPrisma.reservation.findFirst.mockReset();
+    mockPrisma.$transaction.mockClear();
     mockCreateFolioWithCharge.mockResolvedValue({ id: 'folio-123' });
     mockIssueCustomerToken.mockReturnValue('customer-token' as ReturnType<typeof issueCustomerToken>);
+    mockResolveTenantUserId.mockResolvedValue('system-user');
+    mockCreateBatchReservations.mockResolvedValue({
+      groupBookingId: null,
+      reservations: [
+        {
+          id: 'reservation-1',
+          tenantId: baseTenant.id,
+          reservationNumber: 'WEB-123456',
+          guestName: baseBookingPayload.guestName,
+          guestEmail: baseBookingPayload.guestEmail,
+          guestPhone: baseBookingPayload.guestPhone,
+          guestIdNumber: baseBookingPayload.guestIdNumber ?? null,
+          checkInDate: baseBookingPayload.checkInDate,
+          checkOutDate: baseBookingPayload.checkOutDate,
+          adults: baseBookingPayload.adults,
+          children: baseBookingPayload.children,
+          status: 'confirmed',
+          roomId: baseBookingPayload.roomId,
+          room: {
+            id: 'room-1',
+            roomNumber: '101',
+            roomType: 'Deluxe',
+          },
+          rate: basePricing.effectiveRate,
+          depositAmount: null,
+          depositStatus: null,
+          depositRequired: false,
+        },
+      ],
+    });
   });
 
   it('creates a checkout intent and persists the Firestore record', async () => {
@@ -377,24 +424,6 @@ describe('Public portal checkout flow', () => {
       gatewayTransactionId: 'GW-123',
     });
 
-    mockPrisma.reservation.create.mockResolvedValue({
-      id: 'reservation-1',
-      tenantId: baseTenant.id,
-      reservationNumber: 'WEB-123456',
-      guestName: baseBookingPayload.guestName,
-      guestEmail: baseBookingPayload.guestEmail,
-      guestPhone: baseBookingPayload.guestPhone,
-      checkInDate: baseBookingPayload.checkInDate,
-      checkOutDate: baseBookingPayload.checkOutDate,
-      status: 'confirmed',
-      roomId: baseBookingPayload.roomId,
-      room: {
-        id: 'room-1',
-        roomNumber: '101',
-        roomType: 'Deluxe',
-      },
-    });
-
     const response = await request(app)
       .post(`/api/public/portal/${baseTenant.slug}/checkout/confirm`)
       .send({
@@ -415,13 +444,24 @@ describe('Public portal checkout flow', () => {
       customerToken: 'customer-token',
     });
     expect(mockVerifyGatewayPayment).toHaveBeenCalledWith('paystack', 'CKO-REF');
-    expect(mockPrisma.reservation.create).toHaveBeenCalledWith(
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+    expect(mockCreateBatchReservations).toHaveBeenCalledWith(
       expect.objectContaining({
+        tenantId: baseTenant.id,
+        actorUserId: 'system-user',
         data: expect.objectContaining({
-          tenantId: baseTenant.id,
-          roomId: baseBookingPayload.roomId,
           guestName: baseBookingPayload.guestName,
-          status: 'confirmed',
+          rooms: [
+            expect.objectContaining({
+              roomId: baseBookingPayload.roomId,
+              rate: basePricing.effectiveRate,
+            }),
+          ],
+        }),
+        overrides: expect.objectContaining({
+          depositRequired: expect.any(Boolean),
+          depositStatus: 'pending',
+          reservationNumberFactory: expect.any(Function),
         }),
       })
     );

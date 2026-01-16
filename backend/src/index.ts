@@ -48,10 +48,25 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
+const defaultOrigins = [
+  'http://localhost:5173',
+  'https://innsight-2025.web.app',
+];
+const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins.join(','))
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
 // Security middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    }
+  },
   credentials: true
 }));
 

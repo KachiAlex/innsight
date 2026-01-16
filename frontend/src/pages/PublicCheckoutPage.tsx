@@ -177,6 +177,13 @@ const formatCountdown = (targetDate?: string) => {
     .padStart(2, '0')}s`;
 };
 
+const toIsoDateTime = (value?: string) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+};
+
 const PublicCheckoutPage = () => {
   const navigate = useNavigate();
   const { tenantSlug } = useParams<{ tenantSlug: string }>();
@@ -232,6 +239,11 @@ const PublicCheckoutPage = () => {
         setAvailabilityLoading(true);
       }
       try {
+        const startDateIso = toIsoDateTime(form.checkInDate);
+        const endDateIso = toIsoDateTime(form.checkOutDate);
+        if (!startDateIso || !endDateIso) {
+          throw new Error('Invalid date selection');
+        }
         const response = await publicApi.get<{
         data: {
           availableRooms: AvailableRoom[];
@@ -239,8 +251,8 @@ const PublicCheckoutPage = () => {
         };
       }>(`/${tenantSlug}/availability`, {
           params: {
-            startDate: form.checkInDate,
-            endDate: form.checkOutDate,
+            startDate: startDateIso,
+            endDate: endDateIso,
           },
           headers: options?.silent ? suppressToastHeaders() : undefined,
         });

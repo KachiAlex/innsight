@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
 import { db, now, toDate, snapshotToArray } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
+import { prisma } from '../utils/prisma';
 import admin from 'firebase-admin';
 
 export const roomRouter = Router({ mergeParams: true });
@@ -14,6 +16,58 @@ const getRequestUserName = (user?: any) => {
   if (!user) return null;
   const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   return name || user.email || null;
+};
+
+const decimalToNumber = (value?: Prisma.Decimal | number | null) =>
+  value !== null && value !== undefined ? Number(value) : null;
+
+const serializePrismaRoom = (room: any) => {
+  const ratePlan = room.ratePlan
+    ? {
+        id: room.ratePlan.id,
+        name: room.ratePlan.name,
+        description: room.ratePlan.description || null,
+        baseRate: decimalToNumber(room.ratePlan.baseRate),
+        currency: room.ratePlan.currency,
+      }
+    : null;
+
+  const category = room.category
+    ? {
+        id: room.category.id,
+        name: room.category.name,
+      }
+    : null;
+
+  const customRate = decimalToNumber(room.customRate);
+  const effectiveRate = customRate ?? ratePlan?.baseRate ?? null;
+
+  return {
+    id: room.id,
+    tenantId: room.tenantId,
+    roomNumber: room.roomNumber,
+    roomType: room.roomType,
+    floor: room.floor,
+    maxOccupancy: room.maxOccupancy,
+    amenities: room.amenities,
+    ratePlanId: room.ratePlanId,
+    categoryId: room.categoryId,
+    description: room.description,
+    customRate,
+    status: room.status,
+    lastLogType: room.lastLogType,
+    lastLogSummary: room.lastLogSummary,
+    lastLogUserName: room.lastLogUserName,
+    lastLogAt: room.lastLogAt,
+    createdAt: room.createdAt,
+    updatedAt: room.updatedAt,
+    ratePlan,
+    category,
+    effectiveRate,
+    _count: {
+      reservations: room._count?.reservations ?? 0,
+    },
+  };
 };
 
 type RoomDocForReport = {

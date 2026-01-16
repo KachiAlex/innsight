@@ -70,6 +70,9 @@
       "npm --prefix \"$RESOURCE_DIR\" run build"
     ]
   },
+  "firestore": {
+    "indexes": "firestore.indexes.json"
+  },
   "emulators": {
     "functions": {
       "port": 5001

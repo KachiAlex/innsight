@@ -37,9 +37,7 @@ lostFoundRouter.get('/', authenticate, requireTenantAccess, async (req: AuthRequ
       query = query.where('foundAt', '<=', toTimestamp(new Date(foundBefore as string)));
     }
 
-    const snapshot = await query
-      .orderBy('foundAt', 'desc')
-      .get();
+    const snapshot = await query.orderBy('foundAt', 'desc').get();
 
     let items = snapshot.docs.map(doc => ({
       id: doc.id,

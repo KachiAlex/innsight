@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Button from '../components/Button';
 import DepositPolicyModal from '../components/DepositPolicyModal';
+import Layout from '../components/Layout';
 import { Plus, Edit, Trash2, DollarSign, Calculator, Settings } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -64,15 +65,11 @@ export default function DepositManagementPage() {
   const [calculation, setCalculation] = useState<DepositCalculation | null>(null);
   const [calculating, setCalculating] = useState(false);
 
-  useEffect(() => {
-    loadPolicies();
-  }, [user?.tenantId]);
-
-  const loadPolicies = async () => {
+  const loadPolicies = useCallback(async () => {
     if (!user?.tenantId) return;
 
     try {
-      const response = await api.get(`/tenants/${user.tenantId}/deposit-policies`);
+      const response = await api.get(`/tenants/${user.tenantId}/deposits/policies`);
       setPolicies(response.data.data);
     } catch (error) {
       console.error('Error loading deposit policies:', error);
@@ -80,7 +77,11 @@ export default function DepositManagementPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.tenantId]);
+
+  useEffect(() => {
+    loadPolicies();
+  }, [loadPolicies]);
 
   const handleCalculateDeposit = async () => {
     if (!user?.tenantId) return;
@@ -119,7 +120,7 @@ export default function DepositManagementPage() {
     if (!confirm('Are you sure you want to delete this deposit policy?')) return;
 
     try {
-      await api.delete(`/tenants/${user.tenantId}/deposit-policies/${policyId}`);
+      await api.delete(`/tenants/${user.tenantId}/deposits/policies/${policyId}`);
       toast.success('Deposit policy deleted successfully');
       loadPolicies();
     } catch (error) {
@@ -135,7 +136,8 @@ export default function DepositManagementPage() {
   ];
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
+    <Layout>
+      <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
           Deposit Management
@@ -603,20 +605,21 @@ export default function DepositManagementPage() {
         </div>
       )}
 
-      {/* Policy Modal */}
-      <DepositPolicyModal
-        isOpen={showPolicyModal}
-        onClose={() => {
-          setShowPolicyModal(false);
-          setEditingPolicy(null);
-        }}
-        policy={editingPolicy}
-        onSuccess={() => {
-          loadPolicies();
-          setShowPolicyModal(false);
-          setEditingPolicy(null);
-        }}
-      />
-    </div>
+        {/* Policy Modal */}
+        <DepositPolicyModal
+          isOpen={showPolicyModal}
+          onClose={() => {
+            setShowPolicyModal(false);
+            setEditingPolicy(null);
+          }}
+          policy={editingPolicy}
+          onSuccess={() => {
+            loadPolicies();
+            setShowPolicyModal(false);
+            setEditingPolicy(null);
+          }}
+        />
+      </div>
+    </Layout>
   );
 }
