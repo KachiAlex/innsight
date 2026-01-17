@@ -20,6 +20,8 @@ import {
 } from '../utils/guestSessions';
 import { issueCustomerToken, verifyCustomerToken } from '../utils/customerAuth';
 import {
+  buildGatewayCredentialSet,
+  getTenantPaymentSettings,
   initializeGatewayPayment,
   verifyGatewayPayment,
 } from '../utils/publicPayments';
@@ -403,6 +405,10 @@ const resolveRoomEffectiveRate = (room: {
 
 publicPortalRouter.get('/:tenantSlug/summary', async (req, res) => {
   const tenant = await resolveTenantBySlug(req.params.tenantSlug);
+  const paymentSettings = await getTenantPaymentSettings(tenant.id);
+
+  const allowedGateways = paymentSettings.allowedGateways || [];
+
   res.json({
     success: true,
     data: {
@@ -413,6 +419,13 @@ publicPortalRouter.get('/:tenantSlug/summary', async (req, res) => {
       phone: tenant.phone,
       address: tenant.address,
       branding: tenant.branding,
+      paymentGateways: {
+        defaultGateway: paymentSettings.defaultGateway,
+        allowedGateways,
+        paystackPublicKey: paymentSettings.paystackPublicKey || null,
+        flutterwavePublicKey: paymentSettings.flutterwavePublicKey || null,
+        stripePublicKey: paymentSettings.stripePublicKey || null,
+      },
     },
   });
 });
@@ -551,7 +564,7 @@ publicPortalRouter.post('/:tenantSlug/bookings', async (req, res) => {
   }
 
   const reservationNumber = `WEB-${Date.now()}-${uuidv4().substring(0, 6).toUpperCase()}`;
-  const createdBy = await resolveSystemUserId(tenant.id);
+  const createdBy = await resolveTenantUserId(tenant.id);
 
   const sessionToken = getGuestSessionToken(req);
   const { sessionToken: ensuredToken } = await ensureGuestSession({
@@ -655,7 +668,7 @@ publicPortalRouter.post('/:tenantSlug/checkout/intent', async (req, res) => {
   }
 
   const amountMinor = convertMajorToMinor(amountMajor);
-  const { settings, gateway, currency } = await resolveCheckoutPaymentConfig(tenant.id, booking);
+  const { settings, gateway, currency, credentials } = await resolveCheckoutPaymentConfig(tenant.id, booking);
   const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + CHECKOUT_INTENT_TTL_MS);
 
   const sessionToken = getGuestSessionToken(req);
@@ -686,6 +699,7 @@ publicPortalRouter.post('/:tenantSlug/checkout/intent', async (req, res) => {
     currency,
     customerName: booking.guestName,
     customerPhone: booking.guestPhone,
+    credentials,
   });
 
   const timestamp = now();
@@ -814,9 +828,12 @@ publicPortalRouter.post('/:tenantSlug/checkout/confirm', async (req, res) => {
     });
   }
 
+  const tenantPaymentSettings = await getTenantPaymentSettings(tenant.id);
+  const verificationCredentials = buildGatewayCredentialSet(tenantPaymentSettings, gatewayToUse);
+
   let verification;
   try {
-    verification = await verifyGatewayPayment(gatewayToUse, reference);
+    verification = await verifyGatewayPayment(gatewayToUse, reference, verificationCredentials);
   } catch (error: any) {
     await markIntentStatus(intent.id, 'failed', {
       failureReason: error?.message ?? 'verification_failed',

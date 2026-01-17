@@ -8,12 +8,24 @@ import {
   RefreshCcw,
   Clock,
   CheckCircle2,
+  UserRound,
+  BedDouble,
+  Layers3,
+  PenSquare,
 } from 'lucide-react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { addDays, format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { publicApi, suppressToastHeaders } from '../lib/publicApi';
+
+type PublicGateway = 'paystack' | 'flutterwave' | 'stripe';
+
+const gatewayLabelMap: Record<PublicGateway, string> = {
+  paystack: 'Paystack',
+  flutterwave: 'Flutterwave',
+  stripe: 'Stripe',
+};
 
 type TenantSummary = {
   id: string;
@@ -27,6 +39,30 @@ type TenantSummary = {
     accentColor?: string;
     logoUrl?: string;
   };
+  paymentGateways?: {
+    defaultGateway: PublicGateway;
+    allowedGateways: PublicGateway[];
+    paystackPublicKey?: string | null;
+    flutterwavePublicKey?: string | null;
+    stripePublicKey?: string | null;
+  };
+};
+
+type RoomCategory = {
+  id: string;
+  name: string;
+  description?: string | null;
+  color?: string | null;
+  totalRooms?: number | null;
+};
+
+type RatePlanSummary = {
+  id: string;
+  name: string;
+  description?: string | null;
+  currency?: string | null;
+  baseRate?: number | null;
+  categoryId?: string | null;
 };
 
 type AvailableRoom = {
@@ -35,6 +71,7 @@ type AvailableRoom = {
   roomType: string | null;
   amenities?: string[];
   maxOccupancy?: number | null;
+  effectiveRate?: number | null;
   ratePlan?: {
     id: string;
     name: string;
@@ -48,7 +85,7 @@ type CheckoutIntentState = {
   intentId: string;
   authorizationUrl: string;
   reference: string;
-  gateway: 'paystack' | 'flutterwave';
+  gateway: PublicGateway;
   amount: number;
   currency: string;
   expiresAt: string;
@@ -122,12 +159,6 @@ const accentButtonStyle: React.CSSProperties = {
   transition: 'all 0.25s ease',
 };
 
-const gatewayOptions: { value: '' | 'paystack' | 'flutterwave'; label: string }[] = [
-  { value: '', label: 'Use default gateway' },
-  { value: 'paystack', label: 'Pay with Paystack' },
-  { value: 'flutterwave', label: 'Pay with Flutterwave' },
-];
-
 const occupancyOptions = Array.from({ length: 6 }).map((_, idx) => idx + 1);
 
 const StyledDateInput = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
@@ -157,6 +188,13 @@ const formatCurrency = (amount?: number, currency = 'NGN') => {
 const DEFAULT_AVAILABILITY_REFRESH_MS = 60 * 1000;
 const COUNTDOWN_INTERVAL_MS = 1000;
 const CONFIRM_POLL_INTERVAL_MS = 15 * 1000;
+const STEP_LABELS = [
+  { label: 'Guest', icon: UserRound },
+  { label: 'Stay', icon: Calendar },
+  { label: 'Rooms', icon: BedDouble },
+  { label: 'Extras', icon: Layers3 },
+  { label: 'Review', icon: PenSquare },
+];
 
 const getErrorMessage = (error: any, fallback: string) =>
   error?.response?.data?.error?.message ||
@@ -192,6 +230,9 @@ const PublicCheckoutPage = () => {
   const [intentLoading, setIntentLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [availableRooms, setAvailableRooms] = useState<AvailableRoom[]>([]);
+  const [categories, setCategories] = useState<RoomCategory[]>([]);
+  const [ratePlans, setRatePlans] = useState<RatePlanSummary[]>([]);
+  const [availabilityCurrency, setAvailabilityCurrency] = useState('NGN');
   const [checkoutIntent, setCheckoutIntent] = useState<CheckoutIntentState | null>(null);
   const [confirmation, setConfirmation] = useState<CheckoutConfirmation | null>(null);
   const [intentCountdown, setIntentCountdown] = useState('');
@@ -204,10 +245,16 @@ const PublicCheckoutPage = () => {
     guestName: '',
     guestEmail: '',
     guestPhone: '',
+    guestAddress: '',
+    specialRequests: '',
+    hallEventName: '',
+    hallNotes: '',
     roomId: '',
     payDepositOnly: false,
-    gateway: '' as '' | 'paystack' | 'flutterwave',
+    gateway: '' as '' | PublicGateway,
   });
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [currentStep, setCurrentStep] = useState(0);
 
   const availabilityIntervalRef = useRef<number | null>(null);
   const countdownIntervalRef = useRef<number | null>(null);
@@ -231,6 +278,27 @@ const PublicCheckoutPage = () => {
     fetchSummary();
   }, [tenantSlug]);
 
+  useEffect(() => {
+    if (!tenantSlug) return;
+    const fetchCatalog = async () => {
+      try {
+        const response = await publicApi.get<{
+          data: {
+            roomCategories: RoomCategory[];
+            ratePlans?: RatePlanSummary[];
+          };
+        }>(`/${tenantSlug}/catalog`, {
+          headers: suppressToastHeaders(),
+        });
+        setCategories(response.data.data?.roomCategories ?? []);
+        setRatePlans(response.data.data?.ratePlans ?? []);
+      } catch {
+        toast.error('Unable to load room categories');
+      }
+    };
+    fetchCatalog();
+  }, [tenantSlug]);
+
   const fetchAvailability = useCallback(
     async (options?: { silent?: boolean }) => {
       if (!tenantSlug || !canFetchAvailability) return;
@@ -245,18 +313,26 @@ const PublicCheckoutPage = () => {
           throw new Error('Invalid date selection');
         }
         const response = await publicApi.get<{
-        data: {
-          availableRooms: AvailableRoom[];
-          currency?: string;
-        };
-      }>(`/${tenantSlug}/availability`, {
+          data: {
+            availableRooms: AvailableRoom[];
+            currency?: string;
+          };
+        }>(`/${tenantSlug}/availability`, {
           params: {
             startDate: startDateIso,
             endDate: endDateIso,
+            ...(categoryFilter && categoryFilter !== 'all' ? { categoryId: categoryFilter } : {}),
           },
           headers: options?.silent ? suppressToastHeaders() : undefined,
         });
-        const rooms = response.data.data?.availableRooms || [];
+        const payload = response.data.data;
+        const rooms = payload?.availableRooms || [];
+        const currencyFromApi = payload?.currency;
+        if (currencyFromApi) {
+          setAvailabilityCurrency(currencyFromApi);
+        } else if (rooms[0]?.ratePlan?.currency) {
+          setAvailabilityCurrency(rooms[0].ratePlan!.currency || 'NGN');
+        }
         setAvailableRooms(rooms);
         if (!rooms.find((room) => room.id === form.roomId)) {
           setForm((prev) => ({ ...prev, roomId: rooms[0]?.id || '' }));
@@ -274,7 +350,7 @@ const PublicCheckoutPage = () => {
         }
       }
     },
-    [tenantSlug, canFetchAvailability, form.checkInDate, form.checkOutDate, form.roomId]
+    [tenantSlug, canFetchAvailability, form.checkInDate, form.checkOutDate, form.roomId, categoryFilter]
   );
 
   useEffect(() => {
@@ -310,8 +386,86 @@ const PublicCheckoutPage = () => {
     }));
   };
 
-  const handleCreateIntent = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const allowedGateways = useMemo(() => {
+    const allowed = tenant?.paymentGateways?.allowedGateways || [];
+    if (allowed.length > 0) {
+      return allowed;
+    }
+    return tenant?.paymentGateways?.defaultGateway
+      ? [tenant.paymentGateways.defaultGateway]
+      : ([] as PublicGateway[]);
+  }, [tenant]);
+
+  const gatewayOptions = useMemo(() => {
+    const options: { value: '' | PublicGateway; label: string }[] = [];
+    const defaultGateway = tenant?.paymentGateways?.defaultGateway;
+    if (defaultGateway) {
+      options.push({
+        value: '',
+        label: `Use default (${gatewayLabelMap[defaultGateway]})`,
+      });
+    } else {
+      options.push({ value: '', label: 'Use default gateway' });
+    }
+
+    const uniqueGateways = Array.from(new Set(allowedGateways));
+    uniqueGateways.forEach((gateway) => {
+      options.push({
+        value: gateway,
+        label: `Pay with ${gatewayLabelMap[gateway]}`,
+      });
+    });
+
+    return options;
+  }, [allowedGateways, tenant?.paymentGateways?.defaultGateway]);
+
+  useEffect(() => {
+    // Reset selected gateway if it becomes unavailable
+    if (form.gateway && !allowedGateways.includes(form.gateway)) {
+      setForm((prev) => ({ ...prev, gateway: '' }));
+    }
+  }, [allowedGateways, form.gateway]);
+
+  const buildSpecialRequests = () => {
+    const details = [
+      form.guestAddress ? `Guest address: ${form.guestAddress.trim()}` : null,
+      form.specialRequests ? `Notes: ${form.specialRequests.trim()}` : null,
+      form.hallEventName ? `Hall event: ${form.hallEventName.trim()}` : null,
+      form.hallNotes ? `Hall notes: ${form.hallNotes.trim()}` : null,
+    ].filter(Boolean);
+    return details.join('\n');
+  };
+
+  const validateStep = (stepIndex: number) => {
+    switch (stepIndex) {
+      case 0:
+        return Boolean(form.guestName.trim() && form.guestEmail.trim());
+      case 1:
+        return Boolean(form.checkInDate && form.checkOutDate);
+      case 2:
+        return Boolean(form.roomId);
+      case 3:
+        return true;
+      case 4:
+        return Boolean(form.roomId && form.guestName && form.checkInDate && form.checkOutDate);
+      default:
+        return true;
+    }
+  };
+
+  const handleNext = () => {
+    if (!validateStep(currentStep)) {
+      toast.error('Please complete the required details before continuing.');
+      return;
+    }
+    setCurrentStep((prev) => Math.min(prev + 1, STEP_LABELS.length - 1));
+  };
+
+  const handleBack = () => {
+    setCurrentStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handleCreateIntent = async () => {
     if (!tenantSlug) return;
     if (!form.roomId) {
       toast.error('Please select a room to continue.');
@@ -335,6 +489,7 @@ const PublicCheckoutPage = () => {
         guestPhone: form.guestPhone || undefined,
         gateway: form.gateway || undefined,
         payDepositOnly: form.payDepositOnly,
+        specialRequests: buildSpecialRequests() || undefined,
         source: 'web_portal' as const,
       };
 
@@ -402,11 +557,6 @@ const PublicCheckoutPage = () => {
   const accentColor = tenant?.branding?.primaryColor || '#0f172a';
   const accentGradient = `linear-gradient(135deg, ${accentColor}, #7c3aed)`;
 
-  const selectedRoom = useMemo(
-    () => availableRooms.find((room) => room.id === form.roomId),
-    [availableRooms, form.roomId]
-  );
-
   const nights = useMemo(() => {
     if (!form.checkInDate || !form.checkOutDate) return null;
     const start = new Date(form.checkInDate);
@@ -416,8 +566,37 @@ const PublicCheckoutPage = () => {
     return diff > 0 ? diff : null;
   }, [form.checkInDate, form.checkOutDate]);
 
+  const selectedRoom = useMemo(
+    () => availableRooms.find((room) => room.id === form.roomId),
+    [availableRooms, form.roomId]
+  );
+
+  const categoryRateMap = useMemo(() => {
+    const map = new Map<string, { rate: number; currency?: string | null }>();
+    ratePlans.forEach((plan) => {
+      if (!plan.categoryId || plan.baseRate === undefined || plan.baseRate === null) {
+        return;
+      }
+      const existing = map.get(plan.categoryId);
+      if (!existing || plan.baseRate < existing.rate) {
+        map.set(plan.categoryId, { rate: plan.baseRate!, currency: plan.currency });
+      }
+    });
+    return map;
+  }, [ratePlans]);
+
+  const selectedRoomRate = useMemo(() => {
+    if (!selectedRoom) return null;
+    return (
+      selectedRoom.effectiveRate ??
+      selectedRoom.customRate ??
+      selectedRoom.ratePlan?.baseRate ??
+      null
+    );
+  }, [selectedRoom]);
+
   const summaryCurrency =
-    selectedRoom?.ratePlan?.currency || (checkoutIntent?.currency as string) || 'NGN';
+    selectedRoom?.ratePlan?.currency || availabilityCurrency || (checkoutIntent?.currency as string) || 'NGN';
 
   const intentExpiresAt = checkoutIntent?.expiresAt;
   const isIntentExpired = useMemo(() => {
@@ -483,6 +662,422 @@ const PublicCheckoutPage = () => {
     }
   }, [checkoutIntent, isIntentExpired]);
 
+  const renderGuestStep = () => (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div>
+        <label style={labelStyle}>Guest name *</label>
+        <input
+          type="text"
+          value={form.guestName}
+          onChange={(e) => handleInputChange('guestName', e.target.value)}
+          placeholder="Jane Doe"
+          style={inputStyle}
+          required
+        />
+      </div>
+      <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div>
+          <label style={labelStyle}>Guest email *</label>
+          <input
+            type="email"
+            value={form.guestEmail}
+            onChange={(e) => handleInputChange('guestEmail', e.target.value)}
+            placeholder="guest@email.com"
+            style={inputStyle}
+            required
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Guest phone</label>
+          <input
+            type="tel"
+            value={form.guestPhone}
+            onChange={(e) => handleInputChange('guestPhone', e.target.value)}
+            placeholder="+234 801 234 5678"
+            style={inputStyle}
+          />
+        </div>
+      </div>
+      <div>
+        <label style={labelStyle}>Guest address</label>
+        <textarea
+          value={form.guestAddress}
+          onChange={(e) => handleInputChange('guestAddress', e.target.value)}
+          placeholder="Street, City, Country"
+          rows={3}
+          style={{ ...inputStyle, resize: 'vertical' }}
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>Additional notes</label>
+        <textarea
+          value={form.specialRequests}
+          onChange={(e) => handleInputChange('specialRequests', e.target.value)}
+          placeholder="Share expectations, late arrivals, or preferences"
+          rows={3}
+          style={{ ...inputStyle, resize: 'vertical' }}
+        />
+      </div>
+    </div>
+  );
+
+  const renderStayStep = () => (
+    <div style={{ display: 'grid', gap: '1.25rem' }}>
+      <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <div>
+          <label style={labelStyle}>Check-in</label>
+          <DatePicker
+            selected={parseDateValue(form.checkInDate)}
+            onChange={(date) => handleInputChange('checkInDate', date ? toDateString(date) : '')}
+            selectsStart
+            startDate={parseDateValue(form.checkInDate) || undefined}
+            endDate={parseDateValue(form.checkOutDate) || undefined}
+            minDate={new Date()}
+            customInput={<StyledDateInput />}
+            placeholderText="Select date"
+            required
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Check-out</label>
+          <DatePicker
+            selected={parseDateValue(form.checkOutDate)}
+            onChange={(date) => handleInputChange('checkOutDate', date ? toDateString(date) : '')}
+            selectsEnd
+            startDate={parseDateValue(form.checkInDate) || undefined}
+            endDate={parseDateValue(form.checkOutDate) || undefined}
+            minDate={
+              form.checkInDate ? addDays(new Date(form.checkInDate), 1) : new Date()
+            }
+            customInput={<StyledDateInput />}
+            placeholderText="Select date"
+            required
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <div>
+          <label style={labelStyle}>Adults</label>
+          <select
+            value={form.adults}
+            onChange={(e) => handleInputChange('adults', Number(e.target.value))}
+            style={inputStyle}
+          >
+            {occupancyOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Children</label>
+          <select
+            value={form.children}
+            onChange={(e) => handleInputChange('children', Number(e.target.value))}
+            style={inputStyle}
+          >
+            {Array.from({ length: 6 }).map((_, idx) => (
+              <option key={idx} value={idx}>
+                {idx}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div
+        style={{
+          borderRadius: '20px',
+          padding: '1rem',
+          background: 'rgba(15, 23, 42, 0.04)',
+          border: '1px dashed rgba(15, 23, 42, 0.1)',
+        }}
+      >
+        {availabilityLoading ? (
+          <p style={{ margin: 0, color: '#475569' }}>Checking availability...</p>
+        ) : canFetchAvailability ? (
+          <p style={{ margin: 0, color: '#0f172a' }}>
+            {availableRooms.length > 0
+              ? `${availableRooms.length} room${availableRooms.length === 1 ? '' : 's'} currently open`
+              : 'No rooms match those dates. Try adjusting your stay.'}
+          </p>
+        ) : (
+          <p style={{ margin: 0, color: '#475569' }}>Select dates to view availability.</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderRoomsStep = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: '200px' }}>
+          <label style={{ ...labelStyle, marginBottom: '0.35rem' }}>Room category</label>
+          <select
+            value={categoryFilter}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value);
+              setForm((prev) => ({ ...prev, roomId: '' }));
+            }}
+            style={inputStyle}
+          >
+            <option value="all">All categories</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {(() => {
+                  const rateInfo = categoryRateMap.get(category.id);
+                  if (!rateInfo) {
+                    return category.name;
+                  }
+                  return `${category.name} • ${formatCurrency(
+                    rateInfo.rate,
+                    rateInfo.currency || availabilityCurrency
+                  )}`;
+                })()}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          style={{
+            ...accentButtonStyle,
+            padding: '0.65rem 1.4rem',
+            fontSize: '0.9rem',
+            background: 'rgba(15,23,42,0.08)',
+            color: '#0f172a',
+          }}
+          onClick={() => fetchAvailability()}
+          disabled={!canFetchAvailability || availabilityLoading}
+        >
+          <RefreshCcw size={16} />
+          Refresh
+        </button>
+      </div>
+      <div style={{ display: 'grid', gap: '1rem' }}>
+        {(!canFetchAvailability || availableRooms.length === 0) && (
+          <div
+            style={{
+              borderRadius: '18px',
+              border: '1px dashed rgba(15,23,42,0.2)',
+              padding: '1rem',
+              color: '#475569',
+            }}
+          >
+            {canFetchAvailability
+              ? 'No rooms match your filters. Try a different date range or category.'
+              : 'Set your stay dates first to load available rooms.'}
+          </div>
+        )}
+        {availableRooms.map((room) => {
+          const rate = room.effectiveRate ?? room.customRate ?? room.ratePlan?.baseRate ?? null;
+          const isSelected = form.roomId === room.id;
+          return (
+            <div
+              key={room.id}
+              onClick={() => handleInputChange('roomId', room.id)}
+              style={{
+                borderRadius: '20px',
+                border: `2px solid ${isSelected ? accentColor : 'rgba(15,23,42,0.08)'}`,
+                padding: '1rem',
+                cursor: 'pointer',
+                background: isSelected ? 'rgba(15,23,42,0.04)' : '#fff',
+                transition: 'border 0.2s ease',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>
+                    {room.roomNumber ? `Room ${room.roomNumber}` : room.roomType || 'Room'}
+                  </p>
+                  <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+                    {room.roomType || room.ratePlan?.name || 'Standard room'} · Sleeps up to {room.maxOccupancy || 2}
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+                    {(room.amenities || []).slice(0, 3).join(' • ') || 'Essential amenities included'}
+                  </p>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#0f172a' }}>
+                    {rate !== null ? formatCurrency(rate, room.ratePlan?.currency || availabilityCurrency) : '--'}
+                  </p>
+                  <p style={{ margin: 0, color: '#475569' }}>per night</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const renderExtrasStep = () => (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div>
+          <label style={labelStyle}>Payment gateway</label>
+          <select
+            value={form.gateway}
+            onChange={(e) => handleInputChange('gateway', e.target.value as '' | 'paystack' | 'flutterwave')}
+            style={inputStyle}
+          >
+            {gatewayOptions.map((option) => (
+              <option key={option.value || 'default'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Charge deposit only?</label>
+          <div
+            style={{
+              ...inputStyle,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              padding: '0.75rem 1rem',
+            }}
+          >
+            <input
+              id="depositOnly"
+              type="checkbox"
+              checked={form.payDepositOnly}
+              onChange={(e) => handleInputChange('payDepositOnly', e.target.checked)}
+            />
+            <label htmlFor="depositOnly" style={{ margin: 0, color: '#475569', fontWeight: 500 }}>
+              Collect deposit now, settle balance at check-in.
+            </label>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label style={labelStyle}>Hall or event name (optional)</label>
+        <input
+          type="text"
+          value={form.hallEventName}
+          onChange={(e) => handleInputChange('hallEventName', e.target.value)}
+          placeholder="Conference, wedding reception, etc."
+          style={inputStyle}
+        />
+      </div>
+      <div>
+        <label style={labelStyle}>Hall notes</label>
+        <textarea
+          value={form.hallNotes}
+          onChange={(e) => handleInputChange('hallNotes', e.target.value)}
+          placeholder="Share setup needs, headcount, preferred hours"
+          rows={3}
+          style={{ ...inputStyle, resize: 'vertical' }}
+        />
+      </div>
+    </div>
+  );
+
+  const renderReviewStep = () => (
+    <div style={{ display: 'grid', gap: '1rem' }}>
+      <div
+        style={{
+          borderRadius: '20px',
+          padding: '1rem',
+          border: '1px solid rgba(15,23,42,0.08)',
+          background: '#fff',
+          boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+        }}
+      >
+        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+          Guest
+        </p>
+        <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>{form.guestName || '—'}</p>
+        <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+          {form.guestEmail || 'No email'} · {form.guestPhone || 'No phone'}
+        </p>
+      </div>
+      <div
+        style={{
+          borderRadius: '20px',
+          padding: '1rem',
+          border: '1px solid rgba(15,23,42,0.08)',
+          background: '#fff',
+          boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+        }}
+      >
+        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+          Stay
+        </p>
+        <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+          {form.checkInDate || '—'} → {form.checkOutDate || '—'}
+        </p>
+        <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+          {form.adults} adult{form.adults === 1 ? '' : 's'}
+          {form.children ? ` · ${form.children} child${form.children === 1 ? '' : 'ren'}` : ''}
+        </p>
+      </div>
+      {selectedRoom && (
+        <div
+          style={{
+            borderRadius: '20px',
+            padding: '1rem',
+            border: '1px solid rgba(15,23,42,0.08)',
+            background: '#fff',
+            boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+          }}
+        >
+          <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+            Room
+          </p>
+          <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+            {selectedRoom.roomNumber ? `Room ${selectedRoom.roomNumber}` : selectedRoom.roomType || 'Room'}
+          </p>
+          <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+            {selectedRoom.ratePlan?.name || selectedRoom.roomType || 'Standard'}
+          </p>
+          {selectedRoomRate !== null && nights && (
+            <p style={{ margin: '0.35rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+              {formatCurrency(selectedRoomRate * nights, summaryCurrency)} total · {nights} night{nights === 1 ? '' : 's'}
+            </p>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        disabled={intentLoading || !validateStep(4)}
+        onClick={handleCreateIntent}
+        style={{
+          ...accentButtonStyle,
+          background: accentGradient,
+          color: '#fff',
+          fontSize: '1.05rem',
+          marginTop: '0.5rem',
+          opacity: intentLoading ? 0.7 : 1,
+        }}
+      >
+        <CreditCard size={20} />
+        {intentLoading ? 'Starting checkout...' : 'Launch secure payment'}
+      </button>
+    </div>
+  );
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0:
+        return renderGuestStep();
+      case 1:
+        return renderStayStep();
+      case 2:
+        return renderRoomsStep();
+      case 3:
+        return renderExtrasStep();
+      case 4:
+        return renderReviewStep();
+      default:
+        return null;
+    }
+  };
+
+  const canAdvance = validateStep(currentStep);
+
   return (
     <div style={gradientBackground}>
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem 3rem' }}>
@@ -543,24 +1138,36 @@ const PublicCheckoutPage = () => {
           </button>
         </header>
 
-        <div style={{ marginBottom: '2rem' }}>
-          <p style={{ textTransform: 'uppercase', letterSpacing: '0.2em', color: '#0f172a' }}>
-            {tenant?.name || 'Your Stay'} — DIY Portal
-          </p>
-          <h2
-            style={{
-              fontSize: 'clamp(1.75rem, 4vw, 2.75rem)',
-              margin: '0.15rem 0',
-              color: '#0f172a',
-              letterSpacing: '-0.03em',
-            }}
-          >
-            Craft your stay, pay securely.
-          </h2>
-          <p style={{ color: '#475569', maxWidth: '640px', lineHeight: 1.6 }}>
-            Choose your dates, pick your room, and finalize payment via Paystack or
-            Flutterwave—without waiting on a front-desk agent.
-          </p>
+        <div style={{ marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+          {STEP_LABELS.map(({ label, icon: Icon }, index) => {
+            const isActive = index === currentStep;
+            const isCompleted = index < currentStep;
+            return (
+              <div
+                key={label}
+                style={{
+                  flex: '1 1 120px',
+                  minWidth: '120px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  padding: '0.65rem 0.9rem',
+                  borderRadius: '999px',
+                  background: isActive
+                    ? accentGradient
+                    : isCompleted
+                      ? 'rgba(15,23,42,0.1)'
+                      : 'rgba(15,23,42,0.05)',
+                  color: isActive ? '#fff' : '#0f172a',
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                }}
+              >
+                <Icon size={18} />
+                {label}
+              </div>
+            );
+          })}
         </div>
 
         <div
@@ -571,226 +1178,48 @@ const PublicCheckoutPage = () => {
           }}
         >
           <section style={sectionCardStyle}>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <Calendar size={22} color={accentColor} />
-                <div>
-                  <h2 style={{ margin: 0, color: '#0f172a' }}>Stay details</h2>
-                  <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748b' }}>
-                    Choose your dates and room to unlock payment.
-                  </p>
-                </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ margin: 0, color: '#0f172a' }}>{STEP_LABELS[currentStep].label} details</h2>
+                <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748b' }}>
+                  Complete each step to mirror the full reservation workflow.
+                </p>
               </div>
-
-              <form onSubmit={handleCreateIntent} style={{ display: 'grid', gap: '1.25rem' }}>
-                <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Check-in</label>
-                    <DatePicker
-                      selected={parseDateValue(form.checkInDate)}
-                      onChange={(date) => handleInputChange('checkInDate', date ? toDateString(date) : '')}
-                      selectsStart
-                      startDate={parseDateValue(form.checkInDate) || undefined}
-                      endDate={parseDateValue(form.checkOutDate) || undefined}
-                      minDate={new Date()}
-                      customInput={<StyledDateInput />}
-                      placeholderText="Select date"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Check-out</label>
-                    <DatePicker
-                      selected={parseDateValue(form.checkOutDate)}
-                      onChange={(date) => handleInputChange('checkOutDate', date ? toDateString(date) : '')}
-                      selectsEnd
-                      startDate={parseDateValue(form.checkInDate) || undefined}
-                      endDate={parseDateValue(form.checkOutDate) || undefined}
-                      minDate={
-                        form.checkInDate ? addDays(new Date(form.checkInDate), 1) : new Date()
-                      }
-                      customInput={<StyledDateInput />}
-                      placeholderText="Select date"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Adults</label>
-                    <select
-                      value={form.adults}
-                      onChange={(e) => handleInputChange('adults', Number(e.target.value))}
-                      style={inputStyle}
-                    >
-                      {occupancyOptions.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Children</label>
-                    <select
-                      value={form.children}
-                      onChange={(e) => handleInputChange('children', Number(e.target.value))}
-                      style={inputStyle}
-                    >
-                      {Array.from({ length: 6 }).map((_, idx) => (
-                        <option key={idx} value={idx}>
-                          {idx}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <label style={labelStyle}>Available rooms</label>
-                    <button
-                      type="button"
-                      style={{
-                        ...accentButtonStyle,
-                        padding: '0.65rem 1.25rem',
-                        fontSize: '0.9rem',
-                        background: 'rgba(15,23,42,0.08)',
-                        color: '#0f172a',
-                      }}
-                      onClick={() => fetchAvailability()}
-                      disabled={!canFetchAvailability || availabilityLoading}
-                    >
-                      <RefreshCcw size={16} />
-                      Refresh
-                    </button>
-                  </div>
-                  <select
-                    value={form.roomId}
-                    onChange={(e) => handleInputChange('roomId', e.target.value)}
-                    style={inputStyle}
-                    disabled={!availableRooms.length}
-                  >
-                    <option value="" disabled>
-                      {canFetchAvailability
-                        ? availabilityLoading
-                          ? 'Fetching rooms...'
-                          : 'Select a room'
-                        : 'Enter dates to view rooms'}
-                    </option>
-                    {availableRooms.map((room) => (
-                      <option key={room.id} value={room.id}>
-                        {room.roomNumber
-                          ? `${room.roomNumber} · ${room.roomType || 'Deluxe'}`
-                          : room.roomType || 'Room'}{' '}
-                        {room.ratePlan?.baseRate
-                          ? `(${formatCurrency(room.ratePlan.baseRate, room.ratePlan.currency || summaryCurrency)}/night)`
-                          : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedRoom && (
-                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#475569' }}>
-                      Sleeps up to {selectedRoom.maxOccupancy || 2} guests ·{' '}
-                      {selectedRoom.amenities?.slice(0, 3).join(' • ') || 'Essential amenities'}
-                    </p>
-                  )}
-                </div>
-
-                <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Guest name</label>
-                    <input
-                      type="text"
-                      value={form.guestName}
-                      onChange={(e) => handleInputChange('guestName', e.target.value)}
-                      placeholder="Jane Doe"
-                      style={inputStyle}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Guest email</label>
-                    <input
-                      type="email"
-                      value={form.guestEmail}
-                      onChange={(e) => handleInputChange('guestEmail', e.target.value)}
-                      placeholder="guest@email.com"
-                      style={inputStyle}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={labelStyle}>Guest phone</label>
-                  <input
-                    type="tel"
-                    value={form.guestPhone}
-                    onChange={(e) => handleInputChange('guestPhone', e.target.value)}
-                    placeholder="+234 801 234 5678"
-                    style={inputStyle}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                  <div>
-                    <label style={labelStyle}>Payment gateway</label>
-                    <select
-                      value={form.gateway}
-                      onChange={(e) =>
-                        handleInputChange('gateway', e.target.value as '' | 'paystack' | 'flutterwave')
-                      }
-                      style={inputStyle}
-                    >
-                      {gatewayOptions.map((option) => (
-                        <option key={option.value || 'default'} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Charge deposit only?</label>
-                    <div
-                      style={{
-                        ...inputStyle,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.75rem',
-                        padding: '0.75rem 1rem',
-                      }}
-                    >
-                      <input
-                        id="depositOnly"
-                        type="checkbox"
-                        checked={form.payDepositOnly}
-                        onChange={(e) => handleInputChange('payDepositOnly', e.target.checked)}
-                      />
-                      <label htmlFor="depositOnly" style={{ margin: 0, color: '#475569', fontWeight: 500 }}>
-                        Collect deposit now, settle balance at check-in.
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
+            </div>
+            <div style={{ display: 'grid', gap: '1.25rem' }}>{renderStepContent()}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1.5rem', gap: '1rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={handleBack}
+                disabled={currentStep === 0}
+                style={{
+                  ...accentButtonStyle,
+                  background: 'rgba(15,23,42,0.05)',
+                  color: '#0f172a',
+                  padding: '0.75rem 1.5rem',
+                  opacity: currentStep === 0 ? 0.5 : 1,
+                }}
+              >
+                Back
+              </button>
+              {currentStep < STEP_LABELS.length - 1 && (
                 <button
-                  type="submit"
-                  disabled={intentLoading || !canFetchAvailability || !form.roomId}
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!canAdvance}
                   style={{
                     ...accentButtonStyle,
                     background: accentGradient,
                     color: '#fff',
-                    fontSize: '1.05rem',
-                    marginTop: '0.5rem',
-                    opacity: intentLoading ? 0.7 : 1,
+                    padding: '0.75rem 1.5rem',
+                    opacity: canAdvance ? 1 : 0.6,
                   }}
                 >
-                  <CreditCard size={20} />
-                  {intentLoading ? 'Starting checkout...' : 'Launch secure payment'}
+                  Continue
                 </button>
-              </form>
-            </section>
+              )}
+            </div>
+          </section>
 
           <section style={{ ...sectionCardStyle, background: 'rgba(15, 23, 42, 0.9)', color: '#fff' }}>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -968,6 +1397,12 @@ const PublicCheckoutPage = () => {
                 </p>
                 <p style={{ margin: 0, color: 'rgba(255,255,255,0.7)' }}>
                   {selectedRoom.ratePlan?.name || selectedRoom.roomType || 'Standard room'}
+                  {selectedRoomRate !== null && (
+                    <>
+                      {' '}
+                      · {formatCurrency(selectedRoomRate, summaryCurrency)} / night
+                    </>
+                  )}
                 </p>
               </div>
             )}

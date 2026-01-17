@@ -16,7 +16,7 @@ export type CheckoutIntentDoc<TBooking = any> = {
   status: 'pending' | 'confirmed' | 'failed' | 'expired' | 'cancelled';
   booking: TBooking;
   pricing: PricingSummary;
-  gateway: 'paystack' | 'flutterwave';
+  gateway: 'paystack' | 'flutterwave' | 'stripe';
   currency: string;
   amountMajor: number;
   amountMinor: number;

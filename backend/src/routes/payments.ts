@@ -18,6 +18,7 @@ import {
   type InitializePaymentParams,
 } from '../utils/paymentGateway';
 import {
+  buildGatewayCredentialSet,
   getTenantPaymentSettings,
   upsertTenantPaymentSettings,
   type TenantPaymentSettings,
@@ -47,9 +48,11 @@ const verifyPaymentSchema = z.object({
   gateway: z.enum(['paystack', 'flutterwave']),
 });
 
+const allowedGatewayValues = ['paystack', 'flutterwave', 'stripe', 'monnify'] as const;
+
 const updateGatewaySettingsSchema = z
   .object({
-    defaultGateway: z.enum(['paystack', 'flutterwave', 'monnify']).optional(),
+    defaultGateway: z.enum(allowedGatewayValues).optional(),
     currency: z.string().min(3).max(3).optional(),
     callbackUrl: z.string().url().optional(),
     paystackPublicKey: z.string().min(10).optional(),
@@ -61,6 +64,9 @@ const updateGatewaySettingsSchema = z
     monnifyContractCode: z.string().min(4).optional(),
     monnifyCollectionAccount: z.string().min(4).optional(),
     monnifyBaseUrl: z.string().url().optional(),
+    stripePublicKey: z.string().min(10).optional(),
+    stripeSecretKey: z.string().min(10).optional(),
+    allowedGateways: z.array(z.enum(allowedGatewayValues)).min(1).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'Provide at least one payment setting to update',
@@ -88,6 +94,15 @@ const assertGatewayCredentials = (settings: TenantPaymentSettings) => {
     }
   }
 
+  if (defaultGateway === 'stripe') {
+    if (!settings.stripePublicKey || !settings.stripeSecretKey) {
+      throw new AppError(
+        'Stripe is selected as default but missing publishable/secret keys. Provide both keys to continue.',
+        400
+      );
+    }
+  }
+
   if (defaultGateway === 'monnify') {
     if (
       !settings.monnifyApiKey ||
@@ -107,6 +122,7 @@ const sanitizePaymentSettings = (settings: TenantPaymentSettings) => ({
   defaultGateway: settings.defaultGateway,
   currency: settings.currency,
   callbackUrl: settings.callbackUrl || null,
+  allowedGateways: settings.allowedGateways,
   paystack: {
     publicKey: settings.paystackPublicKey || null,
     secretConfigured: maskSecretFlag(settings.paystackSecretKey),
@@ -121,6 +137,10 @@ const sanitizePaymentSettings = (settings: TenantPaymentSettings) => ({
     contractCode: settings.monnifyContractCode || null,
     collectionAccount: settings.monnifyCollectionAccount || null,
     baseUrl: settings.monnifyBaseUrl || null,
+  },
+  stripe: {
+    publicKey: settings.stripePublicKey || null,
+    secretConfigured: maskSecretFlag(settings.stripeSecretKey),
   },
 });
 
@@ -1067,15 +1087,22 @@ paymentRouter.get(
   requireTenantAccess,
   async (req: AuthRequest, res) => {
     try {
+      const tenantId = req.params.tenantId;
+      const settings = await getTenantPaymentSettings(tenantId);
       const availableGateways = paymentGatewayService.getAvailableGateways();
+      const allowedSet = new Set(settings.allowedGateways || []);
 
       res.json({
         success: true,
         data: {
-          gateways: availableGateways.map(gateway => ({
-            name: gateway,
-            configured: paymentGatewayService.isGatewayConfigured(gateway),
-          })),
+          gateways: availableGateways.map((gateway) => {
+            const credentials = buildGatewayCredentialSet(settings, gateway);
+            return {
+              name: gateway,
+              configured: paymentGatewayService.isGatewayConfigured(gateway, credentials),
+              allowedForPublicCheckout: allowedSet.has(gateway),
+            };
+          }),
         },
       });
     } catch (error: any) {

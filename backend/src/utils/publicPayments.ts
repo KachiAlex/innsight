@@ -7,6 +7,7 @@ import {
   type InitializePaymentParams,
   type InitializePaymentResponse,
   type VerifyPaymentResponse,
+  type GatewayCredentialSet,
 } from './paymentGateway';
 
 export const PAYMENT_SETTINGS_COLLECTION = 'tenant_payment_settings';
@@ -25,6 +26,9 @@ export type TenantPaymentSettingsDoc = {
   monnifyContractCode?: string;
   monnifyCollectionAccount?: string;
   monnifyBaseUrl?: string;
+  stripePublicKey?: string;
+  stripeSecretKey?: string;
+  allowedGateways?: PaymentGateway[];
   updatedAt?: FirebaseFirestore.Timestamp;
   createdAt?: FirebaseFirestore.Timestamp;
 };
@@ -43,6 +47,9 @@ export type TenantPaymentSettings = {
   monnifyContractCode?: string;
   monnifyCollectionAccount?: string;
   monnifyBaseUrl?: string;
+  stripePublicKey?: string;
+  stripeSecretKey?: string;
+  allowedGateways: PaymentGateway[];
 };
 
 export type TenantPaymentSettingsUpdate = Partial<
@@ -60,6 +67,9 @@ export type TenantPaymentSettingsUpdate = Partial<
     | 'monnifyContractCode'
     | 'monnifyCollectionAccount'
     | 'monnifyBaseUrl'
+    | 'stripePublicKey'
+    | 'stripeSecretKey'
+    | 'allowedGateways'
   >
 >;
 
@@ -74,9 +84,15 @@ export const getTenantPaymentSettings = async (tenantId: string): Promise<Tenant
   const doc = await getTenantPaymentSettingsDoc(tenantId).get();
   const data = doc.exists ? (doc.data() as TenantPaymentSettingsDoc) : undefined;
 
+  const defaultGateway = (data?.defaultGateway || DEFAULT_GATEWAY) as PaymentGateway;
+  const allowedGateways = (data?.allowedGateways && data.allowedGateways.length > 0
+    ? data.allowedGateways
+    : [defaultGateway]
+  ).filter((gateway) => ['paystack', 'flutterwave', 'stripe'].includes(gateway)) as PaymentGateway[];
+
   return {
     tenantId,
-    defaultGateway: (data?.defaultGateway || DEFAULT_GATEWAY) as PaymentGateway,
+    defaultGateway,
     currency: data?.currency || DEFAULT_CURRENCY,
     callbackUrl: data?.callbackUrl || DEFAULT_CALLBACK_URL || undefined,
     paystackPublicKey: data?.paystackPublicKey || process.env.PAYSTACK_PUBLIC_KEY,
@@ -88,7 +104,33 @@ export const getTenantPaymentSettings = async (tenantId: string): Promise<Tenant
     monnifyContractCode: data?.monnifyContractCode || process.env.MONNIFY_CONTRACT_CODE,
     monnifyCollectionAccount: data?.monnifyCollectionAccount || process.env.MONNIFY_COLLECTION_ACCOUNT,
     monnifyBaseUrl: data?.monnifyBaseUrl || process.env.MONNIFY_BASE_URL,
+    stripePublicKey: data?.stripePublicKey || process.env.STRIPE_PUBLIC_KEY,
+    stripeSecretKey: data?.stripeSecretKey || process.env.STRIPE_SECRET_KEY,
+    allowedGateways: allowedGateways.length > 0 ? Array.from(new Set(allowedGateways)) : [defaultGateway],
   };
+};
+
+export const buildGatewayCredentialSet = (
+  settings: TenantPaymentSettings,
+  gateway: PaymentGateway
+): GatewayCredentialSet | undefined => {
+  switch (gateway) {
+    case 'paystack':
+      return {
+        paystackSecretKey: settings.paystackSecretKey,
+      };
+    case 'flutterwave':
+      return {
+        flutterwavePublicKey: settings.flutterwavePublicKey,
+        flutterwaveSecretKey: settings.flutterwaveSecretKey,
+      };
+    case 'stripe':
+      return {
+        stripeSecretKey: settings.stripeSecretKey,
+      };
+    default:
+      return undefined;
+  }
 };
 
 export const upsertTenantPaymentSettings = async (
@@ -113,8 +155,11 @@ export const upsertTenantPaymentSettings = async (
   return getTenantPaymentSettings(tenantId);
 };
 
-export const ensureGatewayConfigured = (gateway: PaymentGateway) => {
-  if (!paymentGatewayService.isGatewayConfigured(gateway)) {
+export const ensureGatewayConfigured = (
+  gateway: PaymentGateway,
+  credentials?: GatewayCredentialSet
+) => {
+  if (!paymentGatewayService.isGatewayConfigured(gateway, credentials)) {
     throw new AppError(
       `${gateway} is not configured. Please set the corresponding environment variables or tenant payment settings.`,
       400
@@ -125,14 +170,15 @@ export const ensureGatewayConfigured = (gateway: PaymentGateway) => {
 export const initializeGatewayPayment = async (
   params: InitializePaymentParams
 ): Promise<InitializePaymentResponse> => {
-  ensureGatewayConfigured(params.gateway);
+  ensureGatewayConfigured(params.gateway, params.credentials);
   return paymentGatewayService.initializePayment(params);
 };
 
 export const verifyGatewayPayment = async (
   gateway: PaymentGateway,
-  reference: string
+  reference: string,
+  credentials?: GatewayCredentialSet
 ): Promise<VerifyPaymentResponse> => {
-  ensureGatewayConfigured(gateway);
-  return paymentGatewayService.verifyPayment({ gateway, reference });
+  ensureGatewayConfigured(gateway, credentials);
+  return paymentGatewayService.verifyPayment({ gateway, reference, credentials });
 };

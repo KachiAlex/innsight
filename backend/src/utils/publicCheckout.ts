@@ -5,7 +5,7 @@ import admin from 'firebase-admin';
 import { AppError } from '../middleware/errorHandler';
 import { prisma } from './prisma';
 import { db, now, toTimestamp } from './firestore';
-import { getTenantPaymentSettings } from './publicPayments';
+import { buildGatewayCredentialSet, getTenantPaymentSettings } from './publicPayments';
 import {
   CheckoutIntentRecord,
   type CheckoutIntentDoc,
@@ -14,7 +14,7 @@ import {
   markSessionConverted,
   updateGuestSessionMetadata,
 } from './guestSessions';
-import type { VerifyPaymentResponse } from './paymentGateway';
+import type { VerifyPaymentResponse, PaymentGateway } from './paymentGateway';
 import { markIntentStatus } from './checkoutIntents';
 import { triggerTenantWebhookEvent } from './tenantWebhooks';
 import { resolveTenantUserId } from './reservationBatch';
@@ -35,15 +35,19 @@ export const bookingRequestSchema = z.object({
   source: z.enum(['web_portal', 'mobile_portal']).default('web_portal'),
 });
 
+const PUBLIC_ALLOWED_GATEWAYS = ['paystack', 'flutterwave', 'stripe'] as const;
+const publicGatewayEnum = z.enum(PUBLIC_ALLOWED_GATEWAYS);
+type PublicGateway = (typeof PUBLIC_ALLOWED_GATEWAYS)[number];
+
 export const checkoutIntentSchema = bookingRequestSchema.extend({
-  gateway: z.enum(['paystack', 'flutterwave']).optional(),
+  gateway: publicGatewayEnum.optional(),
   currency: z.string().optional(),
   payDepositOnly: z.coerce.boolean().optional(),
 });
 
 export const checkoutConfirmSchema = z.object({
   intentId: z.string().min(10),
-  gateway: z.enum(['paystack', 'flutterwave']).optional(),
+  gateway: publicGatewayEnum.optional(),
   reference: z.string().min(4),
 });
 
@@ -216,19 +220,26 @@ export const resolveCheckoutPaymentConfig = async (
   booking: CheckoutIntentPayload
 ) => {
   const settings = await getTenantPaymentSettings(tenantId);
-  const requestedGateway = booking.gateway ?? settings.defaultGateway;
-  if (!['paystack', 'flutterwave'].includes(requestedGateway)) {
-    throw new AppError(
-      'Selected payment gateway is not supported for public checkout',
-      400
-    );
+  const allowedGateways = settings.allowedGateways?.length
+    ? settings.allowedGateways.filter((gateway) =>
+        (PUBLIC_ALLOWED_GATEWAYS as readonly PaymentGateway[]).includes(gateway)
+      )
+    : [settings.defaultGateway];
+
+  const requestedGateway = (booking.gateway ?? settings.defaultGateway) as PublicGateway;
+
+  if (!allowedGateways.includes(requestedGateway)) {
+    throw new AppError('Selected payment gateway is not enabled for this tenant', 400);
   }
+
   const currency = (booking.currency || settings.currency || 'NGN').toUpperCase();
+  const credentials = buildGatewayCredentialSet(settings, requestedGateway);
 
   return {
     settings,
-    gateway: requestedGateway as 'paystack' | 'flutterwave',
+    gateway: requestedGateway,
     currency,
+    credentials,
   };
 };
 
@@ -329,7 +340,7 @@ export const completeCheckoutIntent = async ({
   const reservationNumber = `WEB-${Date.now()}-${uuidv4()
     .substring(0, 6)
     .toUpperCase()}`;
-  const createdBy = await resolveSystemUserId(tenantId);
+  const createdBy = await resolveTenantUserId(tenantId);
 
   const depositAmountValue = intent.payDepositOnly
     ? intent.amountMajor

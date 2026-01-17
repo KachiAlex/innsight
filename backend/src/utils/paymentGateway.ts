@@ -1,8 +1,16 @@
 import Paystack from 'paystack';
 import Flutterwave from 'flutterwave-node-v3';
+import Stripe from 'stripe';
 import { AppError } from '../middleware/errorHandler';
 
 export type PaymentGateway = 'paystack' | 'flutterwave' | 'monnify' | 'stripe' | 'manual';
+
+export type GatewayCredentialSet = {
+  paystackSecretKey?: string;
+  flutterwavePublicKey?: string;
+  flutterwaveSecretKey?: string;
+  stripeSecretKey?: string;
+};
 
 export interface InitializePaymentParams {
   gateway: PaymentGateway;
@@ -14,6 +22,9 @@ export interface InitializePaymentParams {
   currency?: string; // Default: NGN
   customerName?: string;
   customerPhone?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+  credentials?: GatewayCredentialSet;
 }
 
 export interface InitializePaymentResponse {
@@ -26,6 +37,7 @@ export interface InitializePaymentResponse {
 export interface VerifyPaymentParams {
   gateway: PaymentGateway;
   reference: string;
+  credentials?: GatewayCredentialSet;
 }
 
 export interface VerifyPaymentResponse {
@@ -47,20 +59,54 @@ export interface VerifyPaymentResponse {
 class PaymentGatewayService {
   private paystackClient: Paystack | null = null;
   private flutterwaveClient: Flutterwave | null = null;
+  private stripeClient: Stripe | null = null;
 
   constructor() {
-    // Initialize Paystack
     const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
     if (paystackSecretKey) {
       this.paystackClient = Paystack(paystackSecretKey);
     }
 
-    // Initialize Flutterwave
     const flutterwavePublicKey = process.env.FLUTTERWAVE_PUBLIC_KEY;
     const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
     if (flutterwavePublicKey && flutterwaveSecretKey) {
       this.flutterwaveClient = new Flutterwave(flutterwavePublicKey, flutterwaveSecretKey);
     }
+
+    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    if (stripeSecretKey) {
+      this.stripeClient = new Stripe(stripeSecretKey, { apiVersion: '2023-10-16' });
+    }
+  }
+
+  private getPaystackClient(secretKey?: string) {
+    if (secretKey) {
+      return Paystack(secretKey);
+    }
+    if (this.paystackClient) {
+      return this.paystackClient;
+    }
+    throw new AppError('Paystack is not configured. Please set PAYSTACK_SECRET_KEY.', 500);
+  }
+
+  private getFlutterwaveClient(publicKey?: string, secretKey?: string) {
+    if (publicKey && secretKey) {
+      return new Flutterwave(publicKey, secretKey);
+    }
+    if (this.flutterwaveClient) {
+      return this.flutterwaveClient;
+    }
+    throw new AppError('Flutterwave is not configured. Please set FLUTTERWAVE keys.', 500);
+  }
+
+  private getStripeClient(secretKey?: string) {
+    if (secretKey) {
+      return new Stripe(secretKey, { apiVersion: '2023-10-16' });
+    }
+    if (this.stripeClient) {
+      return this.stripeClient;
+    }
+    throw new AppError('Stripe is not configured. Please set STRIPE_SECRET_KEY.', 500);
   }
 
   async initializePayment(params: InitializePaymentParams): Promise<InitializePaymentResponse> {
@@ -72,6 +118,7 @@ class PaymentGatewayService {
     switch (gateway) {
       case 'paystack':
         return this.initializePaystackPayment({
+          secretKey: params.credentials?.paystackSecretKey,
           amount,
           email,
           reference: paymentReference,
@@ -84,6 +131,8 @@ class PaymentGatewayService {
 
       case 'flutterwave':
         return this.initializeFlutterwavePayment({
+          publicKey: params.credentials?.flutterwavePublicKey,
+          secretKey: params.credentials?.flutterwaveSecretKey,
           amount,
           email,
           reference: paymentReference,
@@ -98,7 +147,17 @@ class PaymentGatewayService {
         throw new AppError('Monnify integration not yet implemented', 501);
 
       case 'stripe':
-        throw new AppError('Stripe integration not yet implemented', 501);
+        return this.initializeStripePayment({
+          secretKey: params.credentials?.stripeSecretKey,
+          amount,
+          email,
+          reference: paymentReference,
+          metadata,
+          currency,
+          callbackUrl,
+          successUrl: params.successUrl,
+          cancelUrl: params.cancelUrl,
+        });
 
       case 'manual':
         throw new AppError('Cannot initialize manual payment through gateway', 400);
@@ -109,6 +168,7 @@ class PaymentGatewayService {
   }
 
   private async initializePaystackPayment(params: {
+    secretKey?: string;
     amount: number;
     email: string;
     reference: string;
@@ -118,12 +178,9 @@ class PaymentGatewayService {
     customerName?: string;
     customerPhone?: string;
   }): Promise<InitializePaymentResponse> {
-    if (!this.paystackClient) {
-      throw new AppError('Paystack is not configured. Please set PAYSTACK_SECRET_KEY', 500);
-    }
-
     try {
-      const response = await this.paystackClient.transaction.initialize({
+      const client = this.getPaystackClient(params.secretKey);
+      const response = await client.transaction.initialize({
         amount: params.amount, // Amount in kobo
         email: params.email,
         reference: params.reference,
@@ -154,6 +211,8 @@ class PaymentGatewayService {
   }
 
   private async initializeFlutterwavePayment(params: {
+    publicKey?: string;
+    secretKey?: string;
     amount: number;
     email: string;
     reference: string;
@@ -163,11 +222,8 @@ class PaymentGatewayService {
     customerName?: string;
     customerPhone?: string;
   }): Promise<InitializePaymentResponse> {
-    if (!this.flutterwaveClient) {
-      throw new AppError('Flutterwave is not configured. Please set FLUTTERWAVE_PUBLIC_KEY and FLUTTERWAVE_SECRET_KEY', 500);
-    }
-
     try {
+      const client = this.getFlutterwaveClient(params.publicKey, params.secretKey);
       const payload = {
         tx_ref: params.reference,
         amount: params.amount / 100, // Flutterwave expects amount in currency unit (not smallest unit)
@@ -186,7 +242,7 @@ class PaymentGatewayService {
         ...(params.metadata && { meta: params.metadata }),
       };
 
-      const response = await this.flutterwaveClient.Payment.initialize(payload);
+      const response = await client.Payment.initialize(payload);
 
       if (response.status !== 'success' || !response.data) {
         throw new AppError('Failed to initialize Flutterwave payment', 500);
@@ -207,18 +263,82 @@ class PaymentGatewayService {
     }
   }
 
+  private async initializeStripePayment(params: {
+    secretKey?: string;
+    amount: number;
+    email: string;
+    reference: string;
+    metadata?: Record<string, any>;
+    currency: string;
+    callbackUrl?: string;
+    successUrl?: string;
+    cancelUrl?: string;
+  }): Promise<InitializePaymentResponse> {
+    const stripe = this.getStripeClient(params.secretKey);
+
+    const successUrl = params.successUrl || params.callbackUrl || process.env.PUBLIC_PAYMENT_CALLBACK_URL || 'https://innsight-2025.web.app/public-checkout/success';
+    const cancelUrl = params.cancelUrl || params.callbackUrl || process.env.PUBLIC_PAYMENT_CALLBACK_URL || successUrl;
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        customer_email: params.email,
+        currency: params.currency?.toLowerCase(),
+        line_items: [
+          {
+            price_data: {
+              currency: params.currency?.toLowerCase(),
+              unit_amount: params.amount,
+              product_data: {
+                name: 'Reservation payment',
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        metadata: {
+          reference: params.reference,
+          ...(params.metadata || {}),
+        },
+      });
+
+      if (!session.url) {
+        throw new AppError('Failed to initialize Stripe payment', 500);
+      }
+
+      return {
+        authorizationUrl: session.url,
+        accessCode: session.payment_intent?.toString() || session.id,
+        reference: session.id,
+        gateway: 'stripe',
+      };
+    } catch (error: any) {
+      console.error('Stripe initialization error:', error);
+      throw new AppError(
+        `Failed to initialize Stripe payment: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
   async verifyPayment(params: VerifyPaymentParams): Promise<VerifyPaymentResponse> {
     const { gateway, reference } = params;
 
     switch (gateway) {
       case 'paystack':
-        return this.verifyPaystackPayment(reference);
+        return this.verifyPaystackPayment(reference, params.credentials?.paystackSecretKey);
 
       case 'flutterwave':
-        return this.verifyFlutterwavePayment(reference);
+        return this.verifyFlutterwavePayment(
+          reference,
+          params.credentials?.flutterwavePublicKey,
+          params.credentials?.flutterwaveSecretKey
+        );
 
       case 'stripe':
-        throw new AppError('Stripe integration not yet implemented', 501);
+        return this.verifyStripePayment(reference, params.credentials?.stripeSecretKey);
 
       case 'manual':
         throw new AppError('Cannot verify manual payment through gateway', 400);
@@ -228,13 +348,10 @@ class PaymentGatewayService {
     }
   }
 
-  private async verifyPaystackPayment(reference: string): Promise<VerifyPaymentResponse> {
-    if (!this.paystackClient) {
-      throw new AppError('Paystack is not configured', 500);
-    }
-
+  private async verifyPaystackPayment(reference: string, secretKey?: string): Promise<VerifyPaymentResponse> {
     try {
-      const response = await this.paystackClient.transaction.verify(reference);
+      const client = this.getPaystackClient(secretKey);
+      const response = await client.transaction.verify(reference);
 
       if (!response.status || !response.data) {
         throw new AppError('Failed to verify Paystack payment', 500);
@@ -268,13 +385,14 @@ class PaymentGatewayService {
     }
   }
 
-  private async verifyFlutterwavePayment(reference: string): Promise<VerifyPaymentResponse> {
-    if (!this.flutterwaveClient) {
-      throw new AppError('Flutterwave is not configured', 500);
-    }
-
+  private async verifyFlutterwavePayment(
+    reference: string,
+    publicKey?: string,
+    secretKey?: string
+  ): Promise<VerifyPaymentResponse> {
     try {
-      const response = await this.flutterwaveClient.Transaction.verify({ tx_ref: reference });
+      const client = this.getFlutterwaveClient(publicKey, secretKey);
+      const response = await client.Transaction.verify({ tx_ref: reference });
 
       if (response.status !== 'success' || !response.data) {
         throw new AppError('Failed to verify Flutterwave payment', 500);
@@ -306,16 +424,54 @@ class PaymentGatewayService {
     }
   }
 
-  isGatewayConfigured(gateway: PaymentGateway): boolean {
+  private async verifyStripePayment(reference: string, secretKey?: string): Promise<VerifyPaymentResponse> {
+    const stripe = this.getStripeClient(secretKey);
+
+    try {
+      const session = await stripe.checkout.sessions.retrieve(reference, {
+        expand: ['payment_intent'],
+      });
+
+      const status = session.status === 'complete' ? 'success' : session.status === 'expired' ? 'failed' : 'pending';
+      const paymentIntent = session.payment_intent as Stripe.PaymentIntent | null;
+
+      return {
+        status,
+        amount: session.amount_total || 0,
+        currency: (session.currency || 'NGN').toUpperCase(),
+        reference: session.id,
+        gatewayTransactionId: paymentIntent?.id || session.id,
+        gateway: 'stripe',
+        paidAt: paymentIntent?.status === 'succeeded' && paymentIntent?.created
+          ? new Date(paymentIntent.created * 1000)
+          : undefined,
+        customer: {
+          email: session.customer_email || '',
+        },
+        metadata: session.metadata || undefined,
+      };
+    } catch (error: any) {
+      console.error('Stripe verification error:', error);
+      throw new AppError(
+        `Failed to verify Stripe payment: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
+  isGatewayConfigured(gateway: PaymentGateway, credentials?: GatewayCredentialSet): boolean {
     switch (gateway) {
       case 'paystack':
-        return !!this.paystackClient;
+        return Boolean(credentials?.paystackSecretKey || this.paystackClient);
       case 'flutterwave':
-        return !!this.flutterwaveClient;
+        return Boolean(
+          (credentials?.flutterwavePublicKey && credentials?.flutterwaveSecretKey) ||
+            this.flutterwaveClient
+        );
       case 'monnify':
         return false;
       case 'stripe':
-        return false; // Not implemented yet
+        return Boolean(credentials?.stripeSecretKey || this.stripeClient);
       case 'manual':
         return true; // Always available
       default:
@@ -331,6 +487,9 @@ class PaymentGatewayService {
     }
     if (this.flutterwaveClient) {
       gateways.push('flutterwave');
+    }
+    if (this.stripeClient) {
+      gateways.push('stripe');
     }
 
     return gateways;

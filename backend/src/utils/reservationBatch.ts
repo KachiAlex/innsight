@@ -87,7 +87,7 @@ export type BatchReservationResult = {
 
 export type BatchReservationOptions = {
   reservationNumberFactory?: () => string;
-  depositStatus?: Prisma.ReservationDepositStatus | null;
+  depositStatus?: string | null;
   depositRequired?: boolean;
 };
 
@@ -284,8 +284,7 @@ export const createBatchReservations = async ({
   const reservationNumberFactory =
     overrides?.reservationNumberFactory ||
     (() => `RES-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`);
-  const depositStatusOverride =
-    overrides?.depositStatus ?? (data.depositAmount ? ('pending' as Prisma.ReservationDepositStatus) : null);
+  const depositStatusOverride = overrides?.depositStatus ?? (data.depositAmount ? 'pending' : null);
   const depositRequiredOverride =
     overrides?.depositRequired ?? (data.depositAmount !== undefined ? true : false);
 
