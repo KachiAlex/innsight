@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Save, DollarSign, Clock, Bell, FileText, CreditCard } from 'lucide-react';
+import { DollarSign, Clock, Bell, FileText, CreditCard } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface TenantSettings {

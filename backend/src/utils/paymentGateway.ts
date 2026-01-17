@@ -75,7 +75,7 @@ class PaymentGatewayService {
 
     const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
     if (stripeSecretKey) {
-      this.stripeClient = new Stripe(stripeSecretKey, { apiVersion: '2023-10-16' });
+      this.stripeClient = new Stripe(stripeSecretKey);
     }
   }
 
@@ -101,7 +101,7 @@ class PaymentGatewayService {
 
   private getStripeClient(secretKey?: string) {
     if (secretKey) {
-      return new Stripe(secretKey, { apiVersion: '2023-10-16' });
+      return new Stripe(secretKey);
     }
     if (this.stripeClient) {
       return this.stripeClient;
