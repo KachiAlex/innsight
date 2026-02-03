@@ -3,6 +3,9 @@ FROM node:20-slim AS base
 ENV NODE_ENV=production
 WORKDIR /usr/src/app
 
+# Install OpenSSL for Prisma
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 FROM base AS deps
 COPY package*.json ./
 RUN npm install --include=dev
