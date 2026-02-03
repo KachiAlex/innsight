@@ -8,12 +8,11 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 
 FROM base AS deps
 COPY package*.json ./
-RUN npm install --include=dev
+RUN npm install --include=dev --ignore-scripts
 
 FROM deps AS build
 COPY . .
 RUN npx prisma generate
-# Skip TypeScript build - we'll use tsx directly
 
 FROM base AS runner
 WORKDIR /usr/src/app
