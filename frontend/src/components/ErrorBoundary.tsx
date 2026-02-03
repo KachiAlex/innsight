@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p style={{ marginBottom: '2rem', color: '#64748b' }}>
               We're sorry, but something unexpected happened. Please try refreshing the page or contact support if the problem persists.
             </p>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <details
                 style={{
                   marginBottom: '2rem',
