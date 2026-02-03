@@ -32,6 +32,17 @@ services:
       periodSeconds: 30
       failureThreshold: 3
 
+  # Frontend Service
+  - type: web
+    name: innsight-frontend
+    env: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    envVars:
+      - key: VITE_API_URL
+        value: https://innsight-backend.onrender.com/api
+
 databases:
   # PostgreSQL Database (if needed)
   - name: innsight-db
