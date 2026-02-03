@@ -1,10 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import admin from 'firebase-admin';
+// import admin from 'firebase-admin';
 import { AppError } from '../middleware/errorHandler';
-import { prisma } from './prisma';
-import { db, now, toTimestamp } from './firestore';
+import { prisma } from '../utils/prisma';
+// import { db, now, toTimestamp } from './firestore';
 import { buildGatewayCredentialSet, getTenantPaymentSettings } from './publicPayments';
 import {
   CheckoutIntentRecord,
