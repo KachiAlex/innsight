@@ -43,6 +43,15 @@ import { publicPaymentsRouter } from './routes/public-payments';
 
 dotenv.config();
 
+// Debug environment variables
+console.log('Environment check:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('PORT:', process.env.PORT);
+console.log('DATABASE_URL exists:', !!process.env.DATABASE_URL);
+console.log('FIREBASE_PROJECT_ID:', process.env.FIREBASE_PROJECT_ID);
+console.log('FIREBASE_CLIENT_EMAIL exists:', !!process.env.FIREBASE_CLIENT_EMAIL);
+console.log('FIREBASE_PRIVATE_KEY exists:', !!process.env.FIREBASE_PRIVATE_KEY);
+
 const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
@@ -145,10 +154,15 @@ export { app };
 // Only start server if explicitly running locally (not in Firebase Functions)
 // Firebase Functions sets K_SERVICE environment variable during discovery
 // We only start the server if RUN_LOCAL_SERVER is explicitly 'true' AND we're not in Firebase Functions
+// OR if we're running in a containerized environment like Render (where NODE_ENV=production and no Firebase Function vars)
 const isFirebaseFunction = process.env.K_SERVICE || process.env.FUNCTION_TARGET || process.env.FUNCTION_NAME || process.env.FIREBASE_FUNCTIONS === 'true';
-if (process.env.RUN_LOCAL_SERVER === 'true' && !isFirebaseFunction) {
+const isContainerEnvironment = process.env.NODE_ENV === 'production' && !isFirebaseFunction;
+const shouldStartServer = (process.env.RUN_LOCAL_SERVER === 'true' && !isFirebaseFunction) || isContainerEnvironment;
+
+if (shouldStartServer) {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔧 Server mode: ${isContainerEnvironment ? 'Container (Render)' : 'Local'}`);
   });
 }
