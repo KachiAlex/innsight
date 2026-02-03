@@ -57,6 +57,7 @@ const defaultOrigins = [
   'http://localhost:5173',
   'https://innsight-2025.web.app',
   'https://innsight-frontend.onrender.com',
+  'https://innsightpms.netlify.app',
 ];
 const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins.join(','))
   .split(',')
