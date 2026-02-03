@@ -6,10 +6,10 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import { db, now, toDate } from '../utils/firestore';
+// import { db, now, toDate } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
 import { prisma } from '../utils/prisma';
-import admin from 'firebase-admin';
+// import admin from 'firebase-admin';
 
 export const roomRouter = Router({ mergeParams: true });
 
