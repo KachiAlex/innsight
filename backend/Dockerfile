@@ -9,6 +9,7 @@ RUN npm install --include=dev
 
 FROM deps AS build
 COPY . .
+RUN npx prisma generate
 RUN npm run build
 # Don't prune devDependencies since we need them for the build
 
