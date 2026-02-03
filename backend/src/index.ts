@@ -64,16 +64,30 @@ const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins.join(','))
   .map(origin => origin.trim())
   .filter(Boolean);
 
+// Always ensure Netlify domain is included
+if (!allowedOrigins.includes('https://innsightpms.netlify.app')) {
+  allowedOrigins.push('https://innsightpms.netlify.app');
+}
+
+console.log('Final allowed origins:', allowedOrigins);
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  console.log('CORS Debug - Origin:', origin);
+  console.log('CORS Debug - Allowed Origins:', allowedOrigins);
+  
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+    console.log('CORS Debug - Origin allowed:', origin);
+  } else {
+    console.log('CORS Debug - Origin not allowed or missing');
   }
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   res.header('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
   res.header('Vary', 'Origin, Access-Control-Request-Headers');
   if (req.method === 'OPTIONS') {
+    console.log('CORS Debug - OPTIONS request, sending 204');
     res.sendStatus(204);
     return;
   }
