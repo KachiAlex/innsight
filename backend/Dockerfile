@@ -5,12 +5,12 @@ WORKDIR /usr/src/app
 
 FROM base AS deps
 COPY package*.json ./
-RUN npm install
+RUN npm install --include=dev
 
 FROM deps AS build
 COPY . .
 RUN npm run build
-RUN npm prune --omit=dev
+# Don't prune devDependencies since we need them for the build
 
 FROM base AS runner
 WORKDIR /usr/src/app
