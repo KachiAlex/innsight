@@ -31,8 +31,14 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     sourcemap: false,
     minify: 'esbuild',
+    // Optimize for Netlify
+    assetsInlineLimit: 4096,
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom'],
+  },
+  // Define API URL for production
+  define: {
+    __VITE_API_URL__: JSON.stringify(process.env.VITE_API_URL || 'https://innsight-backend.onrender.com'),
   },
 })
