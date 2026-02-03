@@ -59,6 +59,7 @@ const PORT = process.env.PORT || 3001;
 const defaultOrigins = [
   'http://localhost:5173',
   'https://innsight-2025.web.app',
+  'https://innsight-frontend.onrender.com',
 ];
 const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins.join(','))
   .split(',')
