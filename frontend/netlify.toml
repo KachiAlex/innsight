@@ -18,7 +18,7 @@
   status = 200
 
 [context.production.environment]
-  VITE_API_URL = "https://innsight-backend.onrender.com"
+  VITE_API_URL = "https://innsight-backend.onrender.com/api"
 
 [context.deploy-preview.environment]
-  VITE_API_URL = "https://innsight-backend.onrender.com"
+  VITE_API_URL = "https://innsight-backend.onrender.com/api"
