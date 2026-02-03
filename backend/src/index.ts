@@ -145,17 +145,11 @@ app.use('/api/public/portal', publicPortalRouter);
 // Error handling (must be last)
 app.use(errorHandler);
 
-// Export app for Firebase Functions
-export { app };
-
 // For local development, start the server
-// Only start server if explicitly running locally (not in Firebase Functions)
-// Firebase Functions sets K_SERVICE environment variable during discovery
-// We only start the server if RUN_LOCAL_SERVER is explicitly 'true' AND we're not in Firebase Functions
-// OR if we're running in a containerized environment like Render (where NODE_ENV=production and no Firebase Function vars)
-const isFirebaseFunction = process.env.K_SERVICE || process.env.FUNCTION_TARGET || process.env.FUNCTION_NAME || process.env.FIREBASE_FUNCTIONS === 'true';
-const isContainerEnvironment = process.env.NODE_ENV === 'production' && !isFirebaseFunction;
-const shouldStartServer = (process.env.RUN_LOCAL_SERVER === 'true' && !isFirebaseFunction) || isContainerEnvironment;
+// Only start server if explicitly running locally
+// OR if we're running in a containerized environment like Render (where NODE_ENV=production)
+const isContainerEnvironment = process.env.NODE_ENV === 'production';
+const shouldStartServer = process.env.RUN_LOCAL_SERVER === 'true' || isContainerEnvironment;
 
 if (shouldStartServer) {
   app.listen(PORT, () => {

@@ -1,64 +1,36 @@
-import * as admin from 'firebase-admin';
+// Firebase is no longer used - this file provides stubs for backward compatibility
+// All data operations should now use PostgreSQL via Prisma
 
-// Initialize Firebase Admin if not already initialized
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+export const db = null;
+export const admin = null;
 
-export const db = admin.firestore();
-
-// Helper to convert Firestore timestamp to Date
-export const toDate = (timestamp: admin.firestore.Timestamp | Date | string | null | undefined): Date | null => {
+// Helper to convert timestamp to Date (for compatibility)
+export const toDate = (timestamp: any): Date | null => {
   if (!timestamp) return null;
   if (timestamp instanceof Date) return timestamp;
   if (typeof timestamp === 'string') return new Date(timestamp);
-  if (timestamp instanceof admin.firestore.Timestamp) {
-    try {
-      return timestamp.toDate();
-    } catch (error) {
-      console.warn('Error converting timestamp to date:', error);
-      return null;
-    }
-  }
   return null;
 };
 
-// Helper to convert Date to Firestore timestamp
-export const toTimestamp = (date: Date | string | null | undefined): admin.firestore.Timestamp | null => {
+// Helper to convert Date to timestamp (for compatibility)
+export const toTimestamp = (date: Date | string | null | undefined): any => {
   if (!date) return null;
-  if (date instanceof Date) {
-    return admin.firestore.Timestamp.fromDate(date);
-  }
-  return admin.firestore.Timestamp.fromDate(new Date(date));
+  if (date instanceof Date) return date;
+  return new Date(date);
 };
 
-// Helper to convert Firestore document to plain object
-export const docToObject = <T>(doc: admin.firestore.DocumentSnapshot): T & { id: string } => {
-  const data = doc.data();
-  if (!data) {
-    throw new Error('Document data is undefined');
-  }
-  return {
-    id: doc.id,
-    ...data,
-  } as T & { id: string };
+// Stub functions for backward compatibility
+export const docToObject = <T>(doc: any): T & { id: string } => {
+  throw new Error('Firebase is no longer supported. Please use PostgreSQL via Prisma.');
 };
 
-// Helper to convert Firestore query snapshot to array
-export const snapshotToArray = <T>(snapshot: admin.firestore.QuerySnapshot): (T & { id: string })[] => {
-  return snapshot.docs.map(doc => docToObject<T>(doc));
+export const snapshotToArray = <T>(snapshot: any): (T & { id: string })[] => {
+  throw new Error('Firebase is no longer supported. Please use PostgreSQL via Prisma.');
 };
 
-// Helper for pagination
-export const paginateQuery = (
-  query: admin.firestore.Query,
-  page: number,
-  limit: number
-): admin.firestore.Query => {
-  const skip = (page - 1) * limit;
-  return query.limit(limit).offset(skip);
+export const paginateQuery = (query: any, page: number, limit: number): any => {
+  throw new Error('Firebase is no longer supported. Please use PostgreSQL via Prisma.');
 };
 
-// Helper to get current timestamp
-export const now = () => admin.firestore.Timestamp.now();
+export const now = (): Date => new Date();
 
