@@ -2,9 +2,52 @@ import { Router } from 'express';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { db, toDate, toTimestamp } from '../utils/firestore';
-import { startOfDay, endOfDay, eachDayOfInterval, format, isWithinInterval } from 'date-fns';
+import { startOfDay, endOfDay, eachDayOfInterval, format } from 'date-fns';
 import admin from 'firebase-admin';
 export const calendarRouter = Router({ mergeParams: true });
+
+type RoomPricingSource = 'custom' | 'rate_plan' | 'base' | 'none';
+
+interface RoomPricingInfo {
+  nightlyRate: number | null;
+  source: RoomPricingSource;
+}
+
+const parseNumericField = (value: unknown): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const resolveRoomPricing = (roomData: admin.firestore.DocumentData): RoomPricingInfo => {
+  const customRate = parseNumericField(roomData.customRate);
+  if (customRate !== null) {
+    return { nightlyRate: customRate, source: 'custom' };
+  }
+
+  const effectiveRate = parseNumericField(roomData.effectiveRate);
+  if (effectiveRate !== null) {
+    return { nightlyRate: effectiveRate, source: 'rate_plan' };
+  }
+
+  const baseRate = parseNumericField(roomData.baseRate);
+  if (baseRate !== null) {
+    return { nightlyRate: baseRate, source: 'base' };
+  }
+
+  return { nightlyRate: null, source: 'none' };
+};
 
 // GET /api/tenants/:tenantId/calendar
 // Get room availability calendar for a date range
@@ -15,7 +58,7 @@ calendarRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const { startDate, endDate, roomType, status } = req.query;
+      const { startDate, endDate, roomType, status, categoryId } = req.query;
 
       // Default to current month if no dates provided
       const start = startDate ? new Date(startDate as string) : startOfDay(new Date());
@@ -35,6 +78,9 @@ calendarRouter.get(
       if (status) {
         roomsQuery = roomsQuery.where('status', '==', status);
       }
+      if (categoryId) {
+        roomsQuery = roomsQuery.where('categoryId', '==', categoryId);
+      }
 
       const roomsSnapshot = await roomsQuery.get();
       const rooms = roomsSnapshot.docs.map(doc => {
@@ -46,7 +92,43 @@ calendarRouter.get(
           roomType: roomData.roomType || '',
           status: roomData.status || 'available',
           maxOccupancy: roomData.maxOccupancy || 2,
+          categoryId: roomData.categoryId || null,
+          customRate: roomData.customRate ?? null,
+          effectiveRate: roomData.effectiveRate ?? null,
+          baseRate: roomData.baseRate ?? null,
         };
+      });
+
+      const categoriesSnapshot = await db.collection('roomCategories')
+        .where('tenantId', '==', tenantId)
+        .get();
+
+      const categoryMap = new Map<string, { id: string; name: string; color: string }>();
+      categoriesSnapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        categoryMap.set(doc.id, {
+          id: doc.id,
+          name: data.name || 'Uncategorized',
+          color: data.color || '#94a3b8',
+        });
+      });
+
+      const categorySummaries = new Map<string, {
+        id: string;
+        name: string;
+        color: string;
+        roomCount: number;
+        minRate: number | null;
+        maxRate: number | null;
+      }>();
+
+      categoryMap.forEach((category) => {
+        categorySummaries.set(category.id, {
+          ...category,
+          roomCount: 0,
+          minRate: null,
+          maxRate: null,
+        });
       });
 
       // Get all reservations that overlap with the date range
@@ -106,6 +188,26 @@ calendarRouter.get(
 
       // Build calendar data structure
       const calendarData = rooms.map(room => {
+        const categoryInfo = room.categoryId ? categoryMap.get(room.categoryId) : null;
+        const pricing = resolveRoomPricing(room);
+
+        if (categoryInfo) {
+          const summary = categorySummaries.get(categoryInfo.id) || {
+            ...categoryInfo,
+            roomCount: 0,
+            minRate: null,
+            maxRate: null,
+          };
+
+          summary.roomCount += 1;
+          if (pricing.nightlyRate !== null) {
+            summary.minRate = summary.minRate === null ? pricing.nightlyRate : Math.min(summary.minRate, pricing.nightlyRate);
+            summary.maxRate = summary.maxRate === null ? pricing.nightlyRate : Math.max(summary.maxRate, pricing.nightlyRate);
+          }
+
+          categorySummaries.set(categoryInfo.id, summary);
+        }
+
         // Get reservations for this room
         const roomReservations = overlappingReservations.filter(r => r.roomId === room.id);
 
@@ -166,6 +268,8 @@ calendarRouter.get(
             roomType: room.roomType,
             status: room.status,
             maxOccupancy: room.maxOccupancy,
+            category: categoryInfo,
+            pricing,
           },
           availability,
         };
@@ -178,12 +282,15 @@ calendarRouter.get(
         return numA - numB;
       });
 
+      const categoryList = Array.from(categorySummaries.values()).sort((a, b) => a.name.localeCompare(b.name));
+
       res.json({
         success: true,
         data: {
           startDate: format(start, 'yyyy-MM-dd'),
           endDate: format(end, 'yyyy-MM-dd'),
           rooms: calendarData,
+          categories: categoryList,
         },
       });
     } catch (error: any) {

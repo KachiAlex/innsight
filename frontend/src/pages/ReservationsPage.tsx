@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -729,15 +729,14 @@ export default function ReservationsPage() {
           />
         )}
       </div>
+
     </Layout>
   );
 }
 
 function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const { user } = useAuthStore();
-  const [allRooms, setAllRooms] = useState<any[]>([]);
   const [availableRooms, setAvailableRooms] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
   const [meetingHalls, setMeetingHalls] = useState<any[]>([]);
   const [hasAvailabilityRun, setHasAvailabilityRun] = useState(false);
   const [roomSearch, setRoomSearch] = useState('');
@@ -763,6 +762,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const [availabilitySummary, setAvailabilitySummary] = useState<{ total: number; available: number } | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [selectedRoomIds, setSelectedRoomIds] = useState<Set<string>>(new Set());
+  const [includeRooms, setIncludeRooms] = useState(true);
   const [includeHall, setIncludeHall] = useState(false);
   const [hallReservations, setHallReservations] = useState<HallReservationForm[]>([]);
   useEffect(() => {
@@ -796,30 +796,8 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
 
   useEffect(() => {
     if (!user?.tenantId) return;
-    fetchRooms();
-    fetchCategories();
     fetchMeetingHalls();
   }, [user?.tenantId]);
-
-  const fetchRooms = async () => {
-    if (!user?.tenantId) return;
-    try {
-      const response = await api.get(`/tenants/${user?.tenantId}/rooms`);
-      setAllRooms(response.data.data || []);
-    } catch (error) {
-      console.error('Failed to fetch rooms:', error);
-    }
-  };
-
-  const fetchCategories = async () => {
-    if (!user?.tenantId) return;
-    try {
-      const response = await api.get(`/tenants/${user?.tenantId}/room-categories`);
-      setCategories(response.data.data || []);
-    } catch (error) {
-      console.error('Failed to fetch categories:', error);
-    }
-  };
 
   const fetchMeetingHalls = async () => {
     if (!user?.tenantId) return;
@@ -869,6 +847,14 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   };
 
   useEffect(() => {
+    if (!includeRooms) {
+      setAvailableRooms([]);
+      setAvailabilitySummary(null);
+      setAvailabilityError(null);
+      setHasAvailabilityRun(false);
+      return;
+    }
+
     if (!formData.checkInDate || !formData.checkOutDate) {
       setAvailableRooms([]);
       setAvailabilitySummary(null);
@@ -892,9 +878,40 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
 
     const minGuests = Number(formData.adults || 0) + Number(formData.children || 0);
     fetchAvailability(checkIn, checkOut, minGuests);
-  }, [formData.checkInDate, formData.checkOutDate, formData.adults, formData.children]);
+  }, [formData.checkInDate, formData.checkOutDate, formData.adults, formData.children, includeRooms]);
 
-  const roomOptions = hasAvailabilityRun ? availableRooms : allRooms;
+  const roomOptions = includeRooms && hasAvailabilityRun ? availableRooms : [];
+
+  const categoryOptions = useMemo(() => {
+    const unique = new Map<string, string>();
+    roomOptions.forEach((room) => {
+      if (room.category?.id) {
+        unique.set(room.category.id, room.category.name || 'Unnamed Category');
+      }
+    });
+    return Array.from(unique.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [roomOptions]);
+
+  const hasUncategorizedRooms = useMemo(
+    () => roomOptions.some((room) => !room.category?.id),
+    [roomOptions]
+  );
+
+  useEffect(() => {
+    if (categoryFilter === 'none' && !hasUncategorizedRooms) {
+      setCategoryFilter('all');
+      return;
+    }
+    if (
+      categoryFilter !== 'all' &&
+      categoryFilter !== 'none' &&
+      !categoryOptions.some((option) => option.id === categoryFilter)
+    ) {
+      setCategoryFilter('all');
+    }
+  }, [categoryFilter, categoryOptions, hasUncategorizedRooms]);
   useEffect(() => {
     setSelectedRoomIds((prev) => {
       if (!prev.size) return prev;
@@ -955,7 +972,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   ).sort((a, b) => a.name.localeCompare(b.name));
 
   const selectedRoomDetails = Array.from(selectedRoomIds)
-    .map((roomId) => roomOptions.find((room) => room.id === roomId) || allRooms.find((room) => room.id === roomId))
+    .map((roomId) => roomOptions.find((room) => room.id === roomId))
     .filter(Boolean);
 
   const resolveRoomRate = (room: any) => {
@@ -1093,6 +1110,8 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   };
 
   const validateStep = (stepIndex: number) => {
+    const hasValidRooms = !includeRooms || (selectedRoomIds.size > 0 && !availabilityError);
+    const hallValid = !includeHall || validateHallReservations();
     switch (stepIndex) {
       case 0:
         return (
@@ -1110,11 +1129,14 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         return !availabilityError;
       }
       case 2:
-        return selectedRoomIds.size > 0 && !availabilityError;
+        return hasValidRooms;
       case 3:
-        return !includeHall || validateHallReservations();
-      case 4:
-        return selectedRoomIds.size > 0 && (!includeHall || validateHallReservations());
+        return hallValid;
+      case 4: {
+        if (!hasValidRooms) return false;
+        if (!includeHall) return true;
+        return hallValid;
+      }
       default:
         return true;
     }
@@ -1123,6 +1145,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   const canProceed = validateStep(currentStep);
 
   const handleRoomToggle = (roomId: string) => {
+    if (!includeRooms) return;
     setSelectedRoomIds((prev) => {
       const next = new Set(prev);
       if (next.has(roomId)) {
@@ -1135,6 +1158,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   };
 
   const handleCategorySelectAll = (rooms: any[]) => {
+    if (!includeRooms) return;
     setSelectedRoomIds((prev) => {
       const next = new Set(prev);
       rooms.forEach((room) => next.add(room.id));
@@ -1151,6 +1175,16 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
   };
 
   const clearAllRooms = () => setSelectedRoomIds(new Set());
+
+  useEffect(() => {
+    if (!includeRooms) {
+      setSelectedRoomIds(new Set());
+      setRoomSearch('');
+      setCategoryFilter('all');
+      setBulkSelectionInput('');
+      setUnavailableRooms(new Set());
+    }
+  }, [includeRooms]);
 
   const toIsoString = (value: string) => {
     if (!value) return '';
@@ -1175,11 +1209,6 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       return;
     }
 
-    if (selectedRoomIds.size === 0) {
-      toast.error('Select at least one room to continue.');
-      return;
-    }
-
     const email = formData.guestEmail.trim();
     const phone = formData.guestPhone.trim();
     const specialRequestsNote = formData.specialRequests.trim();
@@ -1190,18 +1219,19 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       .filter(Boolean)
       .join('\n');
 
-    const roomsPayload = Array.from(selectedRoomIds)
-      .map((roomId) => {
-        const room =
-          availableRooms.find((r) => r.id === roomId) || allRooms.find((r) => r.id === roomId);
-        const nightly = resolveRoomRate(room);
-        return {
-          room,
-          roomId,
-          nightly,
-        };
-      })
-      .filter((entry) => entry.room);
+    const roomsPayload = includeRooms
+      ? Array.from(selectedRoomIds)
+          .map((roomId) => {
+            const room = roomOptions.find((r) => r.id === roomId);
+            const nightly = resolveRoomRate(room);
+            return {
+              room,
+              roomId,
+              nightly,
+            };
+          })
+          .filter((entry) => entry.room)
+      : [];
 
     const invalidRates = roomsPayload
       .filter((entry) => !entry.nightly || entry.nightly <= 0)
@@ -1227,6 +1257,13 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         }))
       : undefined;
 
+    const hasRooms = includeRooms && roomsPayload.length > 0;
+    const hasHalls = includeHall && (hallReservationsPayload?.length || 0) > 0;
+    if (!hasRooms && !hasHalls) {
+      toast.error('Add at least one room or hall reservation.');
+      return;
+    }
+
     setModalLoading(true);
     try {
       const response = await api.post(`/tenants/${user?.tenantId}/reservations/batch`, {
@@ -1246,7 +1283,11 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
       });
 
       const createdCount = response?.data?.data?.reservations?.length || roomsPayload.length;
-      toast.success(`Created ${createdCount} reservation${createdCount > 1 ? 's' : ''}`);
+      if (hasRooms) {
+        toast.success(`Created ${createdCount} reservation${createdCount === 1 ? '' : 's'}`);
+      } else {
+        toast.success('Hall booking captured');
+      }
       onSuccess();
     } catch (error: any) {
       // Error handled by API interceptor
@@ -1453,162 +1494,197 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
           <p style={{ margin: 0, color: '#64748b' }}>Select dates to view availability.</p>
         )}
       </div>
+
     </div>
   );
 
   const renderRoomsStep = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-        <label style={{ color: '#475569', fontWeight: 600 }}>Room filters</label>
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '0.85rem',
-            alignItems: 'stretch',
-            border: '1px solid #cbd5e1',
-            borderRadius: '10px',
-            padding: '0.25rem',
-            background: '#fff',
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              minWidth: '220px',
-              display: 'flex',
-              alignItems: 'center',
-              padding: '0 0.75rem',
-            }}
-          >
-            <input
-              type="text"
-              value={roomSearch}
-              onChange={(e) => setRoomSearch(e.target.value)}
-              placeholder="Search by room #, type, category"
-              style={{
-                width: '100%',
-                border: 'none',
-                outline: 'none',
-                fontSize: '0.95rem',
-                color: '#0f172a',
-              }}
-            />
-          </div>
-          <div
-            style={{
-              minWidth: '220px',
-              borderLeft: '1px solid #e2e8f0',
-              display: 'flex',
-              alignItems: 'stretch',
-            }}
-          >
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              style={{
-                width: '100%',
-                border: 'none',
-                outline: 'none',
-                borderRadius: '0 8px 8px 0',
-                padding: '0.7rem',
-                background: '#f8fafc',
-                color: '#0f172a',
-                fontWeight: 500,
-              }}
-            >
-              <option value="all" style={{ color: '#0f172a' }}>
-                All categories
-              </option>
-              <option value="none" style={{ color: '#0f172a' }}>
-                Uncategorized
-              </option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id} style={{ color: '#0f172a' }}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
       <div
         style={{
-          padding: '1rem',
-          borderRadius: '10px',
           border: '1px solid #e2e8f0',
-          background: '#f8fafc',
+          borderRadius: '10px',
+          padding: '0.85rem 1rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '0.5rem',
         }}
       >
-        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: 600 }}>
-          Bulk select (e.g. "101-105" or "201,203")
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Attach guest rooms</p>
+          <p style={{ margin: '0.2rem 0 0', color: '#64748b', fontSize: '0.85rem' }}>
+            Toggle off if this reservation doesn't need room assignments
+          </p>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={includeRooms} onChange={(e) => setIncludeRooms(e.target.checked)} />
+          Include rooms
         </label>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            value={bulkSelectionInput}
-            onChange={(e) => {
-              setBulkSelectionInput(e.target.value);
-              setBulkSelectionError(null);
-            }}
-            placeholder="101-105, 210"
+      </div>
+
+      {includeRooms && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          <label style={{ color: '#475569', fontWeight: 600 }}>Room filters</label>
+          <div
             style={{
-              flex: 1,
-              minWidth: '220px',
-              padding: '0.75rem',
-              borderRadius: '8px',
-              border: `1px solid ${bulkSelectionError ? '#ef4444' : '#cbd5e1'}`,
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleBulkSelection}
-            style={{
-              padding: '0.8rem 1.5rem',
-              borderRadius: '8px',
-              border: 'none',
-              background: '#2563eb',
-              color: 'white',
-              cursor: 'pointer',
-              fontWeight: 600,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              padding: '0.25rem',
+              background: '#fff',
             }}
           >
-            Add Rooms
-          </button>
-          {selectedRoomIds.size > 0 && (
+            <div
+              style={{
+                flex: 1,
+                minWidth: '220px',
+                display: 'flex',
+                alignItems: 'center',
+                padding: '0 0.75rem',
+              }}
+            >
+              <input
+                type="text"
+                value={roomSearch}
+                onChange={(e) => setRoomSearch(e.target.value)}
+                placeholder="Search by room #, type, category"
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: '0.95rem',
+                  color: '#0f172a',
+                }}
+              />
+            </div>
+            <div
+              style={{
+                minWidth: '220px',
+                borderLeft: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'stretch',
+              }}
+            >
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                disabled={!roomOptions.length}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  borderRadius: '0 8px 8px 0',
+                  padding: '0.7rem',
+                  background: '#f8fafc',
+                  color: '#0f172a',
+                  fontWeight: 500,
+                }}
+              >
+                <option value="all" style={{ color: '#0f172a' }}>
+                  All categories
+                </option>
+                {hasUncategorizedRooms && (
+                  <option value="none" style={{ color: '#0f172a' }}>
+                    Uncategorized
+                  </option>
+                )}
+                {categoryOptions.map((category) => (
+                  <option key={category.id} value={category.id} style={{ color: '#0f172a' }}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {includeRooms && (
+        <div
+          style={{
+            padding: '1rem',
+            borderRadius: '10px',
+            border: '1px solid #e2e8f0',
+            background: '#f8fafc',
+          }}
+        >
+          <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: 600 }}>
+            Bulk select (e.g. "101-105" or "201,203")
+          </label>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              value={bulkSelectionInput}
+              onChange={(e) => {
+                setBulkSelectionInput(e.target.value);
+                setBulkSelectionError(null);
+              }}
+              placeholder="101-105, 210"
+              style={{
+                flex: 1,
+                minWidth: '220px',
+                padding: '0.75rem',
+                borderRadius: '8px',
+                border: `1px solid ${bulkSelectionError ? '#ef4444' : '#cbd5e1'}`,
+              }}
+            />
             <button
               type="button"
-              onClick={clearAllRooms}
+              onClick={handleBulkSelection}
               style={{
                 padding: '0.8rem 1.5rem',
                 borderRadius: '8px',
-                border: '1px solid #e2e8f0',
-                background: '#fff',
-                color: '#475569',
+                border: 'none',
+                background: '#2563eb',
+                color: 'white',
                 cursor: 'pointer',
                 fontWeight: 600,
               }}
             >
-              Clear Selection
+              Add Rooms
             </button>
+            {selectedRoomIds.size > 0 && (
+              <button
+                type="button"
+                onClick={clearAllRooms}
+                style={{
+                  padding: '0.8rem 1.5rem',
+                  borderRadius: '8px',
+                  border: '1px solid #e2e8f0',
+                  background: '#fff',
+                  color: '#475569',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                Clear Selection
+              </button>
+            )}
+          </div>
+          {bulkSelectionError && (
+            <p style={{ marginTop: '0.4rem', color: '#ef4444', fontSize: '0.85rem' }}>{bulkSelectionError}</p>
+          )}
+          {unavailableRooms.size > 0 && (
+            <p style={{ marginTop: '0.4rem', color: '#f97316', fontSize: '0.85rem' }}>
+              Unavailable: {Array.from(unavailableRooms).join(', ')}
+            </p>
           )}
         </div>
-        {bulkSelectionError && (
-          <p style={{ marginTop: '0.4rem', color: '#ef4444', fontSize: '0.85rem' }}>{bulkSelectionError}</p>
-        )}
-        {unavailableRooms.size > 0 && (
-          <p style={{ marginTop: '0.4rem', color: '#f97316', fontSize: '0.85rem' }}>
-            Unavailable: {Array.from(unavailableRooms).join(', ')}
-          </p>
-        )}
-      </div>
+      )}
 
-      {roomsByCategory.length === 0 ? (
+      {!includeRooms ? (
         <p style={{ color: '#94a3b8', textAlign: 'center' }}>
-          {formData.checkInDate && formData.checkOutDate
+          Room booking disabled. Enable the toggle above if you need to attach guest rooms.
+        </p>
+      ) : roomsByCategory.length === 0 ? (
+        <p style={{ color: '#94a3b8', textAlign: 'center' }}>
+          {formData.checkInDate && formData.checkOutDate && hasAvailabilityRun
             ? 'No rooms available for the selected filters'
-            : 'Select stay details first to load rooms'}
+            : 'Set stay dates and occupants to load available rooms'}
         </p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '320px', overflowY: 'auto' }}>
@@ -1732,7 +1808,7 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         </div>
       )}
 
-      {selectedRoomIds.size > 0 && (
+      {includeRooms && selectedRoomIds.size > 0 && (
         <div
           style={{
             border: '1px solid #e2e8f0',
@@ -2052,31 +2128,37 @@ function CreateReservationModal({ onClose, onSuccess }: { onClose: () => void; o
         }}
       >
         <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Rooms ({selectedRoomIds.size})</p>
-        <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-          {selectedRoomDetails.map((room: any) => {
-            const nightly = roomRates[room.id] || 0;
-            return (
-              <div
-                key={room.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  color: '#475569',
-                }}
-              >
-                <span>
-                  Room {room.roomNumber} • {room.roomType}
-                </span>
-                <span>
-                  {formatCurrency(nightly)} × {nightMultiplier} = {formatCurrency(nightly * nightMultiplier)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        <p style={{ marginTop: '0.8rem', fontWeight: 600, color: '#0f172a' }}>
-          Subtotal: {formatCurrency(roomSubtotal)}
-        </p>
+        {includeRooms && selectedRoomDetails.length > 0 ? (
+          <>
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+              {selectedRoomDetails.map((room: any) => {
+                const nightly = roomRates[room.id] || 0;
+                return (
+                  <div
+                    key={room.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      color: '#475569',
+                    }}
+                  >
+                    <span>
+                      Room {room.roomNumber} • {room.roomType}
+                    </span>
+                    <span>
+                      {formatCurrency(nightly)} × {nightMultiplier} = {formatCurrency(nightly * nightMultiplier)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ marginTop: '0.8rem', fontWeight: 600, color: '#0f172a' }}>
+              Subtotal: {formatCurrency(roomSubtotal)}
+            </p>
+          </>
+        ) : (
+          <p style={{ marginTop: '0.75rem', color: '#94a3b8' }}>No rooms attached to this booking.</p>
+        )}
       </div>
       {includeHall && hallReservations.length > 0 && (
         <div

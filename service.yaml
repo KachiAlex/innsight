@@ -1,0 +1,83 @@
+﻿apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
+    cloudfunctions.googleapis.com/function-id: api
+    run.googleapis.com/build-base-image: us-central1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs20
+    run.googleapis.com/build-enable-automatic-updates: 'true'
+    run.googleapis.com/build-environment-variables: '{"GOOGLE_NODE_RUN_SCRIPTS":""}'
+    run.googleapis.com/build-function-target: api
+    run.googleapis.com/build-id: 8e91bb66-d5ea-42f9-9355-44589c9fc0d9
+    run.googleapis.com/build-image-uri: us-central1-docker.pkg.dev/real-estate-marketplace-37544/gcf-artifacts/real--estate--marketplace--37544__us--central1__api:version_1
+    run.googleapis.com/build-name: projects/759115682573/locations/us-central1/builds/90b2da3a-34bd-4b17-87c5-4adf2416e1b4
+    run.googleapis.com/build-service-account: projects/real-estate-marketplace-37544/serviceAccounts/759115682573-compute@developer.gserviceaccount.com
+    run.googleapis.com/build-source-location: gs://gcf-v2-sources-759115682573-us-central1/api/function-source.zip#1769656317219533
+    run.googleapis.com/custom-audiences: '["https://us-central1-real-estate-marketplace-37544.cloudfunctions.net/api"]'
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/urls: '["https://api-759115682573.us-central1.run.app","https://us-central1-real-estate-marketplace-37544.cloudfunctions.net/api","https://api-kzs3jdpe7a-uc.a.run.app"]'
+  labels:
+    cloud.googleapis.com/location: us-central1
+    firebase-functions-hash: f1dcdb19b55ceb3c4c32259e006fd23484a93819
+    goog-cloudfunctions-runtime: nodejs20
+    goog-drz-cloudfunctions-id: api
+    goog-drz-cloudfunctions-location: us-central1
+    goog-managed-by: cloudfunctions
+  name: api
+  namespace: '759115682573'
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '20'
+        cloudfunctions.googleapis.com/trigger-type: HTTP_TRIGGER
+        run.googleapis.com/base-images: '{"worker":"us-central1-docker.pkg.dev/serverless-runtimes/google-22-full/runtimes/nodejs20"}'
+        run.googleapis.com/client-name: gcloud
+        run.googleapis.com/client-version: 548.0.0
+        run.googleapis.com/startup-cpu-boost: 'true'
+        run.googleapis.com/response-headers: '[{"name":"Access-Control-Allow-Origin","value":"https://innsight-2025.web.app"},{"name":"Access-Control-Allow-Credentials","value":"true"}]'
+      labels:
+        firebase-functions-hash: f1dcdb19b55ceb3c4c32259e006fd23484a93819
+        goog-drz-cloudfunctions-id: api
+        goog-drz-cloudfunctions-location: us-central1
+        run.googleapis.com/startupProbeType: Default
+      name: api-00063-jup
+    spec:
+      containerConcurrency: 80
+      containers:
+      - env:
+        - name: FLUTTERWAVE_SECRET_KEY
+          value: FLWSECK_TEST-c913279c55318b1715de93539229f706-X
+        - name: FRONTEND_URL
+          value: https://real-estate-marketplace-37544.web.app
+        - name: FIREBASE_CONFIG
+          value: '{"projectId":"real-estate-marketplace-37544","storageBucket":"real-estate-marketplace-37544.firebasestorage.app"}'
+        - name: GCLOUD_PROJECT
+          value: real-estate-marketplace-37544
+        - name: EVENTARC_CLOUD_EVENT_SOURCE
+          value: projects/real-estate-marketplace-37544/locations/us-central1/services/api
+        - name: FUNCTION_TARGET
+          value: api
+        - name: LOG_EXECUTION_ID
+          value: 'true'
+        image: us-central1-docker.pkg.dev/real-estate-marketplace-37544/gcf-artifacts/real--estate--marketplace--37544__us--central1__api:version_1
+        name: worker
+        ports:
+        - containerPort: 5000
+          name: http1
+        resources:
+          limits:
+            cpu: '1'
+            memory: 256Mi
+        startupProbe:
+          failureThreshold: 1
+          periodSeconds: 240
+          tcpSocket:
+            port: 5000
+          timeoutSeconds: 240
+      runtimeClassName: run.googleapis.com/linux-base-image-update
+      serviceAccountName: 759115682573-compute@developer.gserviceaccount.com
+      timeoutSeconds: 60
+  traffic:
+  - latestRevision: true
+    percent: 100

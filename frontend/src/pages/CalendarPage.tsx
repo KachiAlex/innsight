@@ -8,9 +8,21 @@ import { CardSkeleton } from '../components/LoadingSkeleton';
 import { format, addDays, subDays, startOfDay, eachDayOfInterval, isSameDay, parseISO } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 
+type CalendarAvailabilityStatus = 'available' | 'occupied' | 'check_in' | 'check_out' | 'blocked';
+
+interface CategorySummary {
+  id: string;
+  name: string;
+  color: string;
+  roomCount: number;
+  minRate: number | null;
+  maxRate: number | null;
+}
+
 interface CalendarData {
   startDate: string;
   endDate: string;
+  categories: CategorySummary[];
   rooms: Array<{
     room: {
       id: string;
@@ -18,10 +30,19 @@ interface CalendarData {
       roomType: string;
       status: string;
       maxOccupancy: number;
+      category?: {
+        id: string;
+        name: string;
+        color: string;
+      } | null;
+      pricing: {
+        nightlyRate: number | null;
+        source: 'custom' | 'rate_plan' | 'base' | 'none';
+      };
     };
     availability: Array<{
       date: string;
-      status: 'available' | 'occupied' | 'check_in' | 'check_out' | 'blocked';
+      status: CalendarAvailabilityStatus;
       reservation: {
         id: string;
         guestName: string;
@@ -53,6 +74,7 @@ export default function CalendarPage() {
   const [filters, setFilters] = useState({
     roomType: '',
     status: '',
+    categoryId: '',
   });
   const [draggedReservation, setDraggedReservation] = useState<{
     reservationId: string;
@@ -93,6 +115,7 @@ export default function CalendarPage() {
       };
       if (filters.roomType) params.roomType = filters.roomType;
       if (filters.status) params.status = filters.status;
+      if (filters.categoryId) params.categoryId = filters.categoryId;
 
       const response = await api.get(`/tenants/${user?.tenantId}/calendar`, { params });
       setCalendarData(response.data.data);
@@ -333,8 +356,30 @@ export default function CalendarPage() {
                 <option value="maintenance">Maintenance</option>
               </select>
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: '#64748b' }}>
+                Category
+              </label>
+              <select
+                value={filters.categoryId}
+                onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })}
+                style={{
+                  padding: '0.5rem',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  minWidth: '150px',
+                }}
+              >
+                <option value="">All Categories</option>
+                {calendarData?.categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
-              onClick={() => setFilters({ roomType: '', status: '' })}
+              onClick={() => setFilters({ roomType: '', status: '', categoryId: '' })}
               style={{
                 padding: '0.5rem 1rem',
                 border: '1px solid #e2e8f0',
@@ -473,7 +518,28 @@ export default function CalendarPage() {
                   <div style={{ fontWeight: '600', color: '#1e293b', marginBottom: '0.25rem' }}>
                     {roomData.room.roomNumber}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{roomData.room.roomType}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <span>{roomData.room.roomType}</span>
+                    {roomData.room.category && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: roomData.room.category.color,
+                            display: 'inline-block',
+                          }}
+                        />
+                        {roomData.room.category.name}
+                      </span>
+                    )}
+                    {roomData.room.pricing.nightlyRate !== null && (
+                      <span style={{ fontWeight: 600, color: '#1e293b' }}>
+                        ₦{roomData.room.pricing.nightlyRate.toLocaleString()} / night
+                      </span>
+                    )}
+                  </div>
                   <div
                     style={{
                       fontSize: '0.75rem',

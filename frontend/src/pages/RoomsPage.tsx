@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Plus, DoorOpen, Tag, X, Edit, Trash2 } from 'lucide-react';
+import { Plus, DoorOpen, Tag, X, Edit, Trash2, Package, Layers, Camera } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { CardSkeleton } from '../components/LoadingSkeleton';
 import SearchInput from '../components/SearchInput';
@@ -19,6 +19,37 @@ interface RoomCategory {
   color?: string;
   minPrice?: number | null;
   maxPrice?: number | null;
+}
+
+interface InventoryItem {
+  id?: string;
+  name: string;
+  quantity?: number | null;
+  unit?: string | null;
+  status?: string | null;
+  notes?: string | null;
+  imageUrl?: string | null;
+  isTemplateDerived?: boolean;
+  categoryItemId?: string | null;
+}
+
+interface RoomInventoryDetail {
+  roomId: string;
+  categoryId: string | null;
+  inventoryItems: InventoryItem[];
+  inventoryInheritsTemplate: boolean;
+  inventoryTemplateAppliedVersion: number | null;
+  inventoryUpdatedAt: string | Date | null;
+  primaryImageUrl: string | null;
+  inventoryHasCustomItems: boolean;
+  categoryTemplate?: InventoryItem[] | null;
+}
+
+interface BulkInventoryState {
+  inheritTemplate?: boolean;
+  overwriteCustom?: boolean;
+  primaryImageUrl?: string;
+  customItems: InventoryItem[];
 }
 
 interface Room {
@@ -46,6 +77,462 @@ interface Room {
   lastLogSummary?: string | null;
   lastLogUserName?: string | null;
   lastLogAt?: string | Date | null;
+  inventoryItems?: InventoryItem[];
+  inventoryInheritsTemplate?: boolean;
+  inventoryTemplateAppliedVersion?: number | null;
+  inventoryUpdatedAt?: string | Date | null;
+  inventoryHasCustomItems?: boolean;
+  primaryImageUrl?: string | null;
+}
+
+const inventoryStatusOptions = ['available', 'in_use', 'maintenance', 'retired'];
+
+const mapInventoryItemToPayload = (item: InventoryItem) => ({
+  id: item.id,
+  name: item.name,
+  quantity: item.quantity ?? undefined,
+  unit: item.unit ?? undefined,
+  status: (item.status as any) ?? undefined,
+  notes: item.notes ?? undefined,
+  imageUrl: item.imageUrl ?? undefined,
+});
+
+const srOnlyStyle: React.CSSProperties = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  padding: 0,
+  margin: '-1px',
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
+
+function InventoryItemEditor({
+  items,
+  onChange,
+}: {
+  items: InventoryItem[];
+  onChange: (items: InventoryItem[]) => void;
+}) {
+  const handleUpdate = (index: number, field: keyof InventoryItem, value: any) => {
+    const updated = [...items];
+    (updated[index] as any)[field] = value;
+    onChange(updated);
+  };
+
+  const handleAdd = () => {
+    onChange([
+      ...items,
+      {
+        id: crypto.randomUUID(),
+        name: '',
+        quantity: 0,
+        unit: '',
+        status: 'available',
+        notes: '',
+        imageUrl: '',
+        isTemplateDerived: false,
+      },
+    ]);
+  };
+
+  const handleRemove = (index: number) => {
+    const updated = items.filter((_, i) => i !== index);
+    onChange(updated);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {items.length === 0 && <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>No custom items yet.</p>}
+      {items.map((item, index) => (
+        <div key={item.id || index} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem', background: '#f8fafc' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr auto', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="text"
+              value={item.name}
+              onChange={(e) => handleUpdate(index, 'name', e.target.value)}
+              placeholder="Item name"
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            />
+            <input
+              type="number"
+              min={0}
+              value={item.quantity ?? ''}
+              onChange={(e) => handleUpdate(index, 'quantity', e.target.value === '' ? null : Number(e.target.value))}
+              placeholder="Qty"
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            />
+            <input
+              type="text"
+              value={item.unit ?? ''}
+              onChange={(e) => handleUpdate(index, 'unit', e.target.value)}
+              placeholder="Unit"
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            />
+            <select
+              value={item.status || 'available'}
+              onChange={(e) => handleUpdate(index, 'status', e.target.value)}
+              style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+            >
+              {inventoryStatusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {status.replace('_', ' ')}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => handleRemove(index)}
+              style={{
+                padding: '0.35rem 0.75rem',
+                borderRadius: '6px',
+                border: '1px solid #fecaca',
+                background: '#fee2e2',
+                color: '#b91c1c',
+                cursor: 'pointer',
+              }}
+            >
+              Remove
+            </button>
+          </div>
+          <textarea
+            value={item.notes ?? ''}
+            onChange={(e) => handleUpdate(index, 'notes', e.target.value)}
+            placeholder="Notes"
+            style={{ marginTop: '0.5rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', minHeight: '60px' }}
+          />
+          <input
+            type="text"
+            value={item.imageUrl ?? ''}
+            onChange={(e) => handleUpdate(index, 'imageUrl', e.target.value)}
+            placeholder="Image URL"
+            style={{ marginTop: '0.5rem', padding: '0.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%' }}
+          />
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={handleAdd}
+        style={{
+          padding: '0.5rem 0.75rem',
+          borderRadius: '6px',
+          border: '1px dashed #3b82f6',
+          background: '#eff6ff',
+          color: '#1d4ed8',
+          cursor: 'pointer',
+        }}
+      >
+        + Add custom item
+      </button>
+    </div>
+  );
+}
+
+function RoomInventoryModal({
+  room,
+  detail,
+  loading,
+  inheritTemplate,
+  onChangeInherit,
+  onClose,
+  onSave,
+}: {
+  room: Room;
+  detail: RoomInventoryDetail | null;
+  loading: boolean;
+  inheritTemplate: boolean;
+  onChangeInherit: (value: boolean) => void;
+  onClose: () => void;
+  onSave: (payload: { inheritTemplate?: boolean; customItems?: InventoryItem[]; overwriteCustom?: boolean; primaryImageUrl?: string | null }) => void;
+}) {
+  const [customItems, setCustomItems] = useState<InventoryItem[]>([]);
+  const [primaryImage, setPrimaryImage] = useState<string>('');
+
+  useEffect(() => {
+    if (detail) {
+      const items = (detail.inventoryItems || []).filter((item) => item.isTemplateDerived === false);
+      setCustomItems(items);
+      setPrimaryImage(detail.primaryImageUrl || '');
+    }
+  }, [detail]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave({
+      inheritTemplate,
+      customItems: customItems.map(mapInventoryItemToPayload),
+      overwriteCustom: true,
+      primaryImageUrl: primaryImage || null,
+    });
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1100,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '10px',
+          padding: '1.5rem',
+          width: '95%',
+          maxWidth: '900px',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Inventory • Room {room.roomNumber}</h2>
+            <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>
+              Manage items inherited from category templates and room-specific overrides.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>Loading inventory...</div>
+        ) : !detail ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#ef4444' }}>Unable to load inventory.</div>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div
+              style={{
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                padding: '1rem',
+                background: '#f8fafc',
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={inheritTemplate}
+                  onChange={(e) => onChangeInherit(e.target.checked)}
+                />
+                Inherit category template items
+              </label>
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem', color: '#475569' }}>
+                Template version: {detail.inventoryTemplateAppliedVersion ?? 'None'}. {detail.inventoryHasCustomItems ? 'Room has custom overrides.' : 'No custom overrides yet.'}
+              </p>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div>
+                <h3 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Template items</h3>
+                {inheritTemplate && detail.categoryTemplate && detail.categoryTemplate.length > 0 ? (
+                  <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '280px', overflowY: 'auto' }}>
+                    {detail.categoryTemplate.map((item) => (
+                      <div key={item.id} style={{ display: 'flex', flexDirection: 'column', padding: '0.5rem', background: '#fff', borderRadius: '6px', border: '1px solid #f1f5f9' }}>
+                        <strong>{item.name}</strong>
+                        <span style={{ fontSize: '0.75rem', color: '#475569' }}>
+                          Qty: {item.quantity ?? 0} {item.unit || ''}
+                        </span>
+                        {item.notes && <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#64748b' }}>{item.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>No template items.</p>
+                )}
+              </div>
+              <div>
+                <h3 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Custom items</h3>
+                <InventoryItemEditor items={customItems} onChange={setCustomItems} />
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1rem' }}>
+              <h3 style={{ marginBottom: '0.5rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Camera size={18} /> Primary image
+              </h3>
+              <input
+                type="text"
+                value={primaryImage}
+                onChange={(e) => setPrimaryImage(e.target.value)}
+                placeholder="https://example.com/room.jpg"
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+              />
+              {primaryImage && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <img
+                    src={primaryImage}
+                    alt={`Room ${room.roomNumber}`}
+                    style={{ width: '100%', maxHeight: '240px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #e2e8f0' }}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{ padding: '0.75rem 1.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                style={{ padding: '0.75rem 1.5rem', borderRadius: '6px', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer' }}
+              >
+                Save changes
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BulkInventoryModal({
+  selectedCount,
+  state,
+  setState,
+  onClose,
+  onApply,
+  saving,
+}: {
+  selectedCount: number;
+  state: BulkInventoryState;
+  setState: React.Dispatch<React.SetStateAction<BulkInventoryState>>;
+  onClose: () => void;
+  onApply: () => void;
+  saving: boolean;
+}) {
+  const [customItems, setCustomItems] = useState<InventoryItem[]>(state.customItems);
+
+  useEffect(() => {
+    setCustomItems(state.customItems);
+  }, [state.customItems]);
+
+  useEffect(() => {
+    setState((prev) => ({ ...prev, customItems }));
+  }, [customItems]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1050,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '10px',
+          padding: '1.5rem',
+          width: '90%',
+          maxWidth: '720px',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Bulk inventory update</h2>
+            <p style={{ margin: 0, color: '#64748b', fontSize: '0.875rem' }}>
+              Applying changes to {selectedCount} room{selectedCount === 1 ? '' : 's'}.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={state.inheritTemplate ?? false}
+              onChange={(e) => setState((prev) => ({ ...prev, inheritTemplate: e.target.checked }))}
+            />
+            Inherit category templates (rooms without templates will be skipped)
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={state.overwriteCustom ?? false}
+              onChange={(e) => setState((prev) => ({ ...prev, overwriteCustom: e.target.checked }))}
+            />
+            Remove existing custom overrides before applying new ones
+          </label>
+
+          <div>
+            <h3 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Primary image override</h3>
+            <input
+              type="text"
+              value={state.primaryImageUrl ?? ''}
+              onChange={(e) => setState((prev) => ({ ...prev, primaryImageUrl: e.target.value }))}
+              placeholder="Leave blank to keep existing images"
+              style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+            />
+          </div>
+
+          <div>
+            <h3 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Custom items to append</h3>
+            <InventoryItemEditor items={customItems} onChange={setCustomItems} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ padding: '0.75rem 1.5rem', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onApply}
+              disabled={saving}
+              style={{ padding: '0.75rem 1.5rem', borderRadius: '6px', border: 'none', background: '#10b981', color: 'white', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}
+            >
+              {saving ? 'Applying...' : 'Apply changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface RoomLog {
@@ -100,6 +587,92 @@ export default function RoomsPage() {
     hasPrev: false,
   });
   const [latestReport, setLatestReport] = useState<any>(null);
+  const [inventoryRoom, setInventoryRoom] = useState<Room | null>(null);
+  const [showInventoryModal, setShowInventoryModal] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryDetail, setInventoryDetail] = useState<RoomInventoryDetail | null>(null);
+  const [inheritTemplateToggle, setInheritTemplateToggle] = useState(false);
+  const [bulkInventoryModalOpen, setBulkInventoryModalOpen] = useState(false);
+  const [bulkInventoryState, setBulkInventoryState] = useState<BulkInventoryState>({
+    inheritTemplate: undefined,
+    overwriteCustom: false,
+    primaryImageUrl: '',
+    customItems: [],
+  });
+  const [bulkInventorySaving, setBulkInventorySaving] = useState(false);
+
+  const handleOpenInventoryModal = async (room: Room) => {
+    if (!user?.tenantId) return;
+    setInventoryRoom(room);
+    setShowInventoryModal(true);
+    setInventoryLoading(true);
+    try {
+      const response = await api.get(`/tenants/${user.tenantId}/rooms/${room.id}/inventory`);
+      setInventoryDetail(response.data.data);
+      setInheritTemplateToggle(response.data.data.inventoryInheritsTemplate);
+    } catch (error) {
+      console.error('Failed to load inventory', error);
+      toast.error('Failed to load inventory');
+      setShowInventoryModal(false);
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  const handleSaveInventory = async (payload: { inheritTemplate?: boolean; customItems?: InventoryItem[]; overwriteCustom?: boolean; primaryImageUrl?: string | null }) => {
+    if (!user?.tenantId || !inventoryRoom) return;
+    setInventoryLoading(true);
+    try {
+      await api.post(`/tenants/${user.tenantId}/rooms/${inventoryRoom.id}/inventory`, payload);
+      toast.success('Inventory updated');
+      await fetchRooms(pagination.page);
+      setShowInventoryModal(false);
+      setInventoryRoom(null);
+    } catch (error) {
+      console.error('Failed to save inventory', error);
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  const handleBulkInventoryApply = async () => {
+    if (!user?.tenantId) return;
+    if (selectedRooms.size === 0) {
+      toast.error('Select rooms to apply bulk inventory');
+      return;
+    }
+    if (!window.confirm(`Apply inventory changes to ${selectedRooms.size} room(s)?`)) {
+      return;
+    }
+    setBulkInventorySaving(true);
+    try {
+      const payload: any = {
+        roomIds: Array.from(selectedRooms),
+      };
+      if (bulkInventoryState.inheritTemplate !== undefined) {
+        payload.inheritTemplate = bulkInventoryState.inheritTemplate;
+      }
+      if (bulkInventoryState.overwriteCustom !== undefined) {
+        payload.overwriteCustom = bulkInventoryState.overwriteCustom;
+      }
+      if (bulkInventoryState.primaryImageUrl !== undefined) {
+        payload.primaryImageUrl = bulkInventoryState.primaryImageUrl || null;
+      }
+      if (bulkInventoryState.customItems.length > 0) {
+        payload.customItems = bulkInventoryState.customItems.map(mapInventoryItemToPayload);
+      }
+      await api.post(`/tenants/${user.tenantId}/rooms/bulk-inventory`, payload);
+      toast.success('Bulk inventory update queued');
+      setBulkInventoryModalOpen(false);
+      setBulkInventoryState({ inheritTemplate: undefined, overwriteCustom: false, primaryImageUrl: '', customItems: [] });
+      setSelectedRooms(new Set());
+      fetchRooms(pagination.page);
+    } catch (error) {
+      console.error('Bulk inventory failed', error);
+    } finally {
+      setBulkInventorySaving(false);
+    }
+  };
 
   const fetchRooms = useCallback(async (page = 1, limit = pagination.limit, showLoading = false) => {
     if (!user?.tenantId) return;
@@ -379,18 +952,6 @@ export default function RoomsPage() {
   };
 
   const statusOptions = Object.keys(statusLabels);
-
-  const srOnlyStyle: React.CSSProperties = {
-    position: 'absolute',
-    width: '1px',
-    height: '1px',
-    padding: 0,
-    margin: '-1px',
-    overflow: 'hidden',
-    clip: 'rect(0,0,0,0)',
-    whiteSpace: 'nowrap',
-    border: 0,
-  };
 
   const formatTimeAgo = (date?: Date | null) => {
     if (!date) return 'No activity yet';
@@ -674,6 +1235,24 @@ export default function RoomsPage() {
                 }}
               >
                 Clear Selection
+              </button>
+              <button
+                onClick={() => setBulkInventoryModalOpen(true)}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#fef3c7',
+                  color: '#92400e',
+                  border: '1px solid #fcd34d',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                }}
+              >
+                <Layers size={16} />
+                Bulk inventory
               </button>
             </div>
           </div>
@@ -1192,6 +1771,24 @@ export default function RoomsPage() {
                 >
                   View Activity
                 </button>
+                <button
+                  onClick={() => handleOpenInventoryModal(room)}
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    background: '#fff8eb',
+                    color: '#b45309',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                  }}
+                >
+                  <Package size={16} />
+                  Inventory
+                </button>
               </div>
             </div>
           ))}
@@ -1286,6 +1883,33 @@ export default function RoomsPage() {
             loading={roomLogsLoading}
             onClose={closeActivityModal}
             onPageChange={handleActivityPageChange}
+          />
+        )}
+
+        {showInventoryModal && inventoryRoom && (
+          <RoomInventoryModal
+            room={inventoryRoom}
+            detail={inventoryDetail}
+            loading={inventoryLoading}
+            inheritTemplate={inheritTemplateToggle}
+            onChangeInherit={setInheritTemplateToggle}
+            onClose={() => {
+              setShowInventoryModal(false);
+              setInventoryRoom(null);
+              setInventoryDetail(null);
+            }}
+            onSave={handleSaveInventory}
+          />
+        )}
+
+        {bulkInventoryModalOpen && (
+          <BulkInventoryModal
+            selectedCount={selectedRooms.size}
+            state={bulkInventoryState}
+            setState={setBulkInventoryState}
+            onClose={() => setBulkInventoryModalOpen(false)}
+            onApply={handleBulkInventoryApply}
+            saving={bulkInventorySaving}
           />
         )}
       </div>

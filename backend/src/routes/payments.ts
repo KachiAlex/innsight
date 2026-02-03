@@ -153,7 +153,6 @@ paymentRouter.get(
     try {
       const tenantId = req.params.tenantId;
       const settings = await getTenantPaymentSettings(tenantId);
-      assertGatewayCredentials(settings);
 
       res.json({
         success: true,

@@ -1,0 +1,41 @@
+services:
+  # Backend API Service
+  - type: web
+    name: innsight-backend
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Set this in Render dashboard
+      - key: FIREBASE_PROJECT_ID
+        value: innsight-2025
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false # Set this in Render dashboard
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false # Set this in Render dashboard
+      - key: PUBLIC_PORTAL_BASE_URL
+        value: https://innsight-backend.onrender.com
+    healthCheck:
+      path: /api/health
+      initialDelaySeconds: 30
+      timeoutSeconds: 10
+      periodSeconds: 30
+      failureThreshold: 3
+
+databases:
+  # PostgreSQL Database (if needed)
+  - name: innsight-db
+    databaseName: innsight
+    user: innsight_user
+    plan: free
+    ipAllowList: []

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { v4 as uuidv4 } from 'uuid';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import { db, now, toDate, snapshotToArray } from '../utils/firestore';
+import { db, now, toDate } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
 import { prisma } from '../utils/prisma';
 import admin from 'firebase-admin';
@@ -20,6 +21,196 @@ const getRequestUserName = (user?: any) => {
 
 const decimalToNumber = (value?: Prisma.Decimal | number | null) =>
   value !== null && value !== undefined ? Number(value) : null;
+
+const inventoryStatusValues = ['available', 'in_use', 'maintenance', 'retired'] as const;
+
+const roomInventoryItemSchema = z.object({
+  id: z.string().min(8).optional(),
+  name: z.string().min(1).max(120),
+  quantity: z.number().nonnegative().optional(),
+  unit: z.string().max(50).optional(),
+  status: z.enum(inventoryStatusValues).optional(),
+  notes: z.string().max(500).optional(),
+  imageUrl: z.string().url().optional(),
+});
+
+type RoomInventoryItemInput = z.infer<typeof roomInventoryItemSchema>;
+
+const normalizeCustomRoomInventoryItems = (items?: RoomInventoryItemInput[]) => {
+  if (!items || !Array.isArray(items)) {
+    return [];
+  }
+
+  return items.map((item) => ({
+    id: item.id || uuidv4(),
+    name: item.name.trim(),
+    quantity: Number(item.quantity ?? 0),
+    unit: item.unit || null,
+    status: item.status || 'available',
+    notes: item.notes || null,
+    imageUrl: item.imageUrl || null,
+    categoryItemId: null,
+    isTemplateDerived: false,
+  }));
+};
+
+const buildInventoryItemsFromTemplate = (templateItems: any[]) => {
+  if (!Array.isArray(templateItems) || templateItems.length === 0) {
+    return [];
+  }
+
+  return templateItems.map((item) => ({
+    id: uuidv4(),
+    name: (item?.name || '').trim(),
+    quantity: Number(item?.quantity ?? 0),
+    unit: item?.unit || null,
+    status: item?.status || 'available',
+    notes: item?.notes || null,
+    imageUrl: item?.imageUrl || null,
+    categoryItemId: item?.id || null,
+    isTemplateDerived: true,
+  }));
+};
+
+const splitInventoryItems = (items?: any[]) => {
+  const list = Array.isArray(items) ? items : [];
+  const templateItems: any[] = [];
+  const customItems: any[] = [];
+
+  list.forEach((item) => {
+    if (item?.isTemplateDerived) {
+      templateItems.push(item);
+    } else {
+      customItems.push(item);
+    }
+  });
+
+  return { templateItems, customItems };
+};
+
+const hasCustomInventoryItems = (items?: any[]) =>
+  Array.isArray(items) ? items.some((item) => item && item.isTemplateDerived === false) : false;
+
+const resolveCategoryTemplate = async (categoryId: string | null | undefined, tenantId: string) => {
+  if (!categoryId) {
+    return { template: [] as any[], version: null as number | null };
+  }
+
+  const categoryDoc = await db.collection('roomCategories').doc(categoryId).get();
+  if (!categoryDoc.exists) {
+    return { template: [], version: null };
+  }
+
+  const categoryData = categoryDoc.data();
+  if (categoryData?.tenantId !== tenantId) {
+    return { template: [], version: null };
+  }
+
+  return {
+    template: Array.isArray(categoryData?.inventoryTemplate) ? categoryData.inventoryTemplate : [],
+    version: categoryData?.inventoryTemplateVersion ?? null,
+  };
+};
+
+const computeInventoryStateForRoom = (
+  roomData: FirebaseFirestore.DocumentData | undefined,
+  options: {
+    inheritTemplate?: boolean;
+    customItems?: RoomInventoryItemInput[];
+    overwriteCustom?: boolean;
+    categoryTemplate: any[];
+    categoryTemplateVersion: number | null;
+  }
+) => {
+  const existingItems = Array.isArray(roomData?.inventoryItems) ? roomData!.inventoryItems : [];
+  const { templateItems: existingTemplateItems, customItems: existingCustomItems } = splitInventoryItems(
+    existingItems
+  );
+
+  let nextTemplateItems = existingTemplateItems;
+  let inheritsTemplate = !!roomData?.inventoryInheritsTemplate;
+  let templateVersion = roomData?.inventoryTemplateAppliedVersion ?? null;
+
+  if (options.inheritTemplate !== undefined) {
+    if (options.inheritTemplate) {
+      if (!options.categoryTemplate || options.categoryTemplate.length === 0) {
+        throw new AppError('Room category has no inventory template to inherit', 400);
+      }
+      nextTemplateItems = buildInventoryItemsFromTemplate(options.categoryTemplate);
+      inheritsTemplate = true;
+      templateVersion = options.categoryTemplateVersion ?? 0;
+    } else {
+      nextTemplateItems = [];
+      inheritsTemplate = false;
+      templateVersion = null;
+    }
+  }
+
+  let nextCustomItems = options.overwriteCustom ? [] : [...existingCustomItems];
+  if (options.customItems) {
+    nextCustomItems = [...nextCustomItems, ...normalizeCustomRoomInventoryItems(options.customItems)];
+  }
+
+  const inventoryItems = [...nextTemplateItems, ...nextCustomItems];
+  if (!inventoryItems.length) {
+    inheritsTemplate = false;
+    templateVersion = null;
+  }
+
+  return {
+    inventoryItems,
+    inventoryInheritsTemplate: inheritsTemplate,
+    inventoryTemplateAppliedVersion: inheritsTemplate ? templateVersion : null,
+  };
+};
+
+const normalizePrimaryImageValue = (value?: string | null) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') {
+    return null;
+  }
+  return value;
+};
+
+const getRoomDocForTenant = async (tenantId: string, roomId: string) => {
+  const roomDoc = await db.collection('rooms').doc(roomId).get();
+  if (!roomDoc.exists || roomDoc.data()?.tenantId !== tenantId) {
+    throw new AppError('Room not found', 404);
+  }
+  return {
+    roomDoc,
+    roomData: roomDoc.data()!,
+  };
+};
+
+const buildInventoryAuditSnapshot = (
+  roomId: string,
+  roomData: FirebaseFirestore.DocumentData | undefined,
+  categoryTemplate?: any[] | null,
+  categoryTemplateVersion?: number | null,
+) =>
+  formatRoomInventoryPayload(roomId, roomData, categoryTemplate, categoryTemplateVersion);
+
+const formatRoomInventoryPayload = (
+  roomId: string,
+  roomData: FirebaseFirestore.DocumentData | undefined,
+  categoryTemplate?: any[] | null,
+  categoryTemplateVersion?: number | null,
+) => {
+  const inventoryItems = Array.isArray(roomData?.inventoryItems) ? roomData!.inventoryItems : [];
+  return {
+    roomId,
+    categoryId: roomData?.categoryId || null,
+    inventoryItems,
+    inventoryInheritsTemplate: !!roomData?.inventoryInheritsTemplate,
+    inventoryTemplateAppliedVersion: roomData?.inventoryTemplateAppliedVersion ?? null,
+    inventoryUpdatedAt: toDate(roomData?.inventoryUpdatedAt) || null,
+    primaryImageUrl: roomData?.primaryImageUrl || null,
+    inventoryHasCustomItems: hasCustomInventoryItems(inventoryItems),
+    categoryTemplate: categoryTemplate || null,
+    categoryTemplateVersion: categoryTemplateVersion ?? null,
+  };
+};
 
 const serializePrismaRoom = (room: any) => {
   const ratePlan = room.ratePlan
@@ -89,6 +280,23 @@ const createRoomSchema = z.object({
   categoryId: z.string().optional(),
   description: z.string().optional(),
   customRate: z.number().positive().optional(),
+});
+
+const primaryImageInputSchema = z.union([z.string().url(), z.literal(''), z.null()]);
+
+const roomInventoryUpdateSchema = z.object({
+  inheritTemplate: z.boolean().optional(),
+  customItems: z.array(roomInventoryItemSchema).optional(),
+  overwriteCustom: z.boolean().optional(),
+  primaryImageUrl: primaryImageInputSchema.optional(),
+});
+
+const bulkRoomInventorySchema = z.object({
+  roomIds: z.array(z.string().min(1)),
+  inheritTemplate: z.boolean().optional(),
+  customItems: z.array(roomInventoryItemSchema).optional(),
+  overwriteCustom: z.boolean().optional(),
+  primaryImageUrl: primaryImageInputSchema.optional(),
 });
 
 // GET /api/tenants/:tenantId/rooms
@@ -237,6 +445,12 @@ roomRouter.get(
               id: roomId,
               ...roomData,
               customRate: roomData.customRate ?? null,
+              inventoryItems: Array.isArray(roomData.inventoryItems) ? roomData.inventoryItems : [],
+              inventoryInheritsTemplate: !!roomData.inventoryInheritsTemplate,
+              inventoryTemplateAppliedVersion: roomData.inventoryTemplateAppliedVersion ?? null,
+              inventoryUpdatedAt: toDate(roomData.inventoryUpdatedAt) || null,
+              inventoryHasCustomItems: hasCustomInventoryItems(roomData.inventoryItems),
+              primaryImageUrl: roomData.primaryImageUrl || null,
               ratePlan,
               category,
               _count: {
@@ -278,6 +492,207 @@ roomRouter.get(
         500
       );
     }
+  }
+);
+
+// GET /api/tenants/:tenantId/rooms/:id/inventory
+roomRouter.get(
+  '/:id/inventory',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    const tenantId = req.params.tenantId;
+    const roomId = req.params.id;
+
+    const { roomDoc, roomData } = await getRoomDocForTenant(tenantId, roomId);
+    const categoryInfo = await resolveCategoryTemplate(roomData.categoryId || null, tenantId);
+
+    res.json({
+      success: true,
+      data: formatRoomInventoryPayload(
+        roomDoc.id,
+        roomData,
+        categoryInfo.template,
+        categoryInfo.version
+      ),
+    });
+  }
+);
+
+// POST /api/tenants/:tenantId/rooms/:id/inventory
+roomRouter.post(
+  '/:id/inventory',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    const tenantId = req.params.tenantId;
+    const roomId = req.params.id;
+    const payload = roomInventoryUpdateSchema.parse(req.body || {});
+
+    const { roomDoc, roomData } = await getRoomDocForTenant(tenantId, roomId);
+    const categoryInfo = await resolveCategoryTemplate(roomData.categoryId || null, tenantId);
+
+    const inventoryState = computeInventoryStateForRoom(roomData, {
+      inheritTemplate: payload.inheritTemplate,
+      customItems: payload.customItems,
+      overwriteCustom: payload.overwriteCustom,
+      categoryTemplate: categoryInfo.template,
+      categoryTemplateVersion: categoryInfo.version,
+    });
+
+    const normalizedImage = normalizePrimaryImageValue(payload.primaryImageUrl);
+
+    const updates: any = {
+      ...inventoryState,
+      inventoryUpdatedAt: now(),
+      updatedAt: now(),
+    };
+
+    if (normalizedImage !== undefined) {
+      updates.primaryImageUrl = normalizedImage;
+    }
+
+    await roomDoc.ref.update(updates);
+
+    const updatedDoc = await roomDoc.ref.get();
+    const updatedData = updatedDoc.data();
+
+    await createAuditLog({
+      tenantId,
+      userId: req.user?.id,
+      action: 'update_room_inventory',
+      entityType: 'room',
+      entityId: roomId,
+      beforeState: buildInventoryAuditSnapshot(
+        roomId,
+        roomData,
+        categoryInfo.template,
+        categoryInfo.version
+      ),
+      afterState: buildInventoryAuditSnapshot(
+        roomId,
+        updatedData,
+        categoryInfo.template,
+        categoryInfo.version
+      ),
+    });
+
+    res.json({
+      success: true,
+      data: formatRoomInventoryPayload(
+        roomId,
+        updatedData,
+        categoryInfo.template,
+        categoryInfo.version
+      ),
+    });
+  }
+);
+
+// POST /api/tenants/:tenantId/rooms/bulk-inventory
+roomRouter.post(
+  '/bulk-inventory',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    const tenantId = req.params.tenantId;
+    const payload = bulkRoomInventorySchema.parse(req.body || {});
+
+    if (!payload.roomIds.length) {
+      throw new AppError('roomIds must not be empty', 400);
+    }
+
+    const templateCache = new Map<string, { template: any[]; version: number | null }>();
+    const getTemplateForCategory = async (categoryId?: string | null) => {
+      const cacheKey = categoryId || '__none__';
+      if (!templateCache.has(cacheKey)) {
+        const info = await resolveCategoryTemplate(categoryId || null, tenantId);
+        templateCache.set(cacheKey, info);
+      }
+      return templateCache.get(cacheKey)!;
+    };
+
+    const roomDocs = await Promise.all(payload.roomIds.map((roomId) => db.collection('rooms').doc(roomId).get()));
+
+    const updates: { ref: FirebaseFirestore.DocumentReference; data: any }[] = [];
+    const errors: { roomId: string; message: string }[] = [];
+
+    for (const doc of roomDocs) {
+      const data = doc.data();
+      if (!doc.exists || data?.tenantId !== tenantId) {
+        errors.push({ roomId: doc.id, message: 'Room not found' });
+        continue;
+      }
+
+      let categoryInfo;
+      try {
+        categoryInfo = await getTemplateForCategory(data?.categoryId || null);
+      } catch (error: any) {
+        errors.push({ roomId: doc.id, message: error.message || 'Failed to load category template' });
+        continue;
+      }
+
+      let inventoryState;
+      try {
+        inventoryState = computeInventoryStateForRoom(data, {
+          inheritTemplate: payload.inheritTemplate,
+          customItems: payload.customItems,
+          overwriteCustom: payload.overwriteCustom,
+          categoryTemplate: categoryInfo.template,
+          categoryTemplateVersion: categoryInfo.version,
+        });
+      } catch (error: any) {
+        errors.push({ roomId: doc.id, message: error.message || 'Failed to update inventory' });
+        continue;
+      }
+
+      const normalizedImage = normalizePrimaryImageValue(payload.primaryImageUrl);
+
+      const updateData: any = {
+        ...inventoryState,
+        inventoryUpdatedAt: now(),
+        updatedAt: now(),
+      };
+
+      if (normalizedImage !== undefined) {
+        updateData.primaryImageUrl = normalizedImage;
+      }
+
+      updates.push({ ref: doc.ref, data: updateData });
+    }
+
+    const batchSize = 400;
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = db.batch();
+      updates.slice(i, i + batchSize).forEach(({ ref, data }) => {
+        batch.update(ref, data);
+      });
+      await batch.commit();
+    }
+
+    await createAuditLog({
+      tenantId,
+      userId: req.user?.id,
+      action: 'bulk_update_room_inventory',
+      entityType: 'room',
+      entityId: 'bulk',
+      metadata: {
+        roomCount: updates.length,
+        requestedRoomIds: payload.roomIds,
+        inheritTemplate: payload.inheritTemplate ?? null,
+        overwriteCustom: payload.overwriteCustom ?? null,
+        hasCustomItems: !!payload.customItems?.length,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        updated: updates.length,
+        failed: errors.length,
+        errors,
+      },
+    });
   }
 );
 
@@ -447,6 +862,12 @@ roomRouter.get(
         id: roomDoc.id,
         ...roomData,
         customRate: roomData.customRate ?? null,
+        inventoryItems: Array.isArray(roomData?.inventoryItems) ? roomData?.inventoryItems : [],
+        inventoryInheritsTemplate: !!roomData?.inventoryInheritsTemplate,
+        inventoryTemplateAppliedVersion: roomData?.inventoryTemplateAppliedVersion ?? null,
+        inventoryUpdatedAt: toDate(roomData?.inventoryUpdatedAt) || null,
+        inventoryHasCustomItems: hasCustomInventoryItems(roomData?.inventoryItems),
+        primaryImageUrl: roomData?.primaryImageUrl || null,
         ratePlan,
         category,
         reservations,
@@ -614,6 +1035,11 @@ roomRouter.post(
         description: data.description || null,
         customRate: data.customRate ?? null,
         status: 'available',
+        inventoryItems: [],
+        inventoryInheritsTemplate: false,
+        inventoryTemplateAppliedVersion: null,
+        inventoryUpdatedAt: null,
+        primaryImageUrl: null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -751,6 +1177,11 @@ roomRouter.post(
           description: categoryDescription,
           customRate: null,
           status: 'available',
+          inventoryItems: [],
+          inventoryInheritsTemplate: false,
+          inventoryTemplateAppliedVersion: null,
+          inventoryUpdatedAt: null,
+          primaryImageUrl: null,
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -843,6 +1274,12 @@ roomRouter.patch(
         ...req.body,
         updatedAt: now(),
       };
+
+      delete updateData.inventoryItems;
+      delete updateData.inventoryInheritsTemplate;
+      delete updateData.inventoryTemplateAppliedVersion;
+      delete updateData.inventoryUpdatedAt;
+      delete updateData.primaryImageUrl;
 
       // Handle null values properly
       if (updateData.categoryId === '') updateData.categoryId = null;

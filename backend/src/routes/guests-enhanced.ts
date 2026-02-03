@@ -1,17 +1,306 @@
 import { Router } from 'express';
+import { z } from 'zod';
+import { Prisma, type LoyaltyProgram } from '@prisma/client';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
-import { db, toDate, toTimestamp, now } from '../utils/firestore';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import admin from 'firebase-admin';
+import { prisma } from '../utils/prisma';
+import { normalizeEmail, normalizePhone } from '../utils/guestProfiles';
 
 export const guestEnhancedRouter = Router({ mergeParams: true });
+
+const ensurePrisma = () => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+  return prisma;
+};
+
+const sanitizeNullableString = (value: string | null | undefined) => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const sanitizeDate = (value: string | null | undefined) => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return new Date(value);
+};
+
+const defaultLoyaltyProgram = {
+  isActive: true,
+  programName: 'InnSight Rewards',
+  pointsPerNight: 10,
+  pointsPerCurrency: 1,
+  silverThreshold: 100,
+  goldThreshold: 500,
+  platinumThreshold: 1000,
+  vipThreshold: 5000,
+  bronzeDiscount: 0,
+  silverDiscount: 5,
+  goldDiscount: 10,
+  platinumDiscount: 15,
+  vipDiscount: 20,
+  pointsRedemptionRate: 100,
+  minRedemptionPoints: 500,
+  pointsExpiryMonths: null as number | null,
+};
+
+const guestUpsertSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().min(1),
+  email: z.string().email().optional().or(z.literal('').transform(() => undefined)),
+  phone: z.string().optional().or(z.literal('').transform(() => undefined)),
+  idNumber: z.string().optional().nullable(),
+  dateOfBirth: z.string().datetime().optional(),
+  nationality: z.string().optional().nullable(),
+  address: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  state: z.string().optional().nullable(),
+  country: z.string().optional().nullable(),
+  postalCode: z.string().optional().nullable(),
+  preferredRoomType: z.string().optional().nullable(),
+  preferredFloor: z.number().int().optional().nullable(),
+  smokingPreference: z.boolean().optional(),
+  bedPreference: z.string().optional().nullable(),
+  pillowPreference: z.string().optional().nullable(),
+  dietaryRestrictions: z.array(z.string()).optional(),
+  allergies: z.array(z.string()).optional(),
+  specialRequests: z.string().optional().nullable(),
+  marketingOptIn: z.boolean().optional(),
+  emailOptIn: z.boolean().optional(),
+  smsOptIn: z.boolean().optional(),
+  loyaltyTier: z.string().optional(),
+  isVIP: z.boolean().optional(),
+  isBanned: z.boolean().optional(),
+  bannedReason: z.string().optional().nullable(),
+  bannedAt: z.string().datetime().optional(),
+});
+
+const activitySchema = z.object({
+  activityType: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().optional().nullable(),
+  metadata: z.record(z.any()).optional(),
+});
+
+const noteSchema = z.object({
+  noteType: z.string().optional(),
+  note: z.string().min(1),
+  isImportant: z.boolean().optional(),
+  isPinned: z.boolean().optional(),
+});
+
+const loyaltyMutationSchema = z.object({
+  points: z.number().int().refine((val) => val !== 0, {
+    message: 'Points value is required',
+  }),
+  description: z.string().optional(),
+  reservationId: z.string().optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+const loyaltyProgramSchema = z.object({
+  isActive: z.boolean().optional(),
+  programName: z.string().optional(),
+  pointsPerNight: z.number().int().min(0).optional(),
+  pointsPerCurrency: z.number().positive().optional(),
+  silverThreshold: z.number().int().min(0).optional(),
+  goldThreshold: z.number().int().min(0).optional(),
+  platinumThreshold: z.number().int().min(0).optional(),
+  vipThreshold: z.number().int().min(0).optional(),
+  bronzeDiscount: z.number().min(0).optional(),
+  silverDiscount: z.number().min(0).optional(),
+  goldDiscount: z.number().min(0).optional(),
+  platinumDiscount: z.number().min(0).optional(),
+  vipDiscount: z.number().min(0).optional(),
+  pointsRedemptionRate: z.number().positive().optional(),
+  minRedemptionPoints: z.number().int().min(0).optional(),
+  pointsExpiryMonths: z.number().int().min(1).nullable().optional(),
+});
+
+const listQuerySchema = z.object({
+  loyaltyTier: z.string().optional(),
+  isVIP: z.enum(['true', 'false']).optional(),
+  search: z.string().optional(),
+});
+
+const resolveLoyaltyTier = (points: number, program?: { [key: string]: any }) => {
+  const config = program || defaultLoyaltyProgram;
+  if (points >= config.vipThreshold) return 'vip';
+  if (points >= config.platinumThreshold) return 'platinum';
+  if (points >= config.goldThreshold) return 'gold';
+  if (points >= config.silverThreshold) return 'silver';
+  return 'bronze';
+};
+
+const serializeDecimal = (value: Prisma.Decimal | number | null | undefined) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'number') return value;
+  return Number(value);
+};
+
+const serializeGuest = (guest: any) => ({
+  ...guest,
+  totalSpent: serializeDecimal(guest.totalSpent) || 0,
+  dietaryRestrictions: Array.isArray(guest.dietaryRestrictions) ? guest.dietaryRestrictions : [],
+  allergies: Array.isArray(guest.allergies) ? guest.allergies : [],
+});
+
+const findGuestByIdentifier = async (tenantId: string, identifier: string) => {
+  const client = ensurePrisma();
+  const email = normalizeEmail(identifier) || undefined;
+  const phone = normalizePhone(identifier) || undefined;
+
+  return client.guest.findFirst({
+    where: {
+      tenantId,
+      OR: [
+        { id: identifier },
+        email ? { email } : undefined,
+        phone ? { phone } : undefined,
+      ].filter(Boolean) as Prisma.GuestWhereInput[],
+    },
+  });
+};
+
+const getGuestOrThrow = async (tenantId: string, identifier: string) => {
+  const guest = await findGuestByIdentifier(tenantId, identifier);
+  if (!guest) {
+    throw new AppError('Guest not found', 404);
+  }
+  return guest;
+};
+
+const calculateNights = (checkIn?: Date | null, checkOut?: Date | null) => {
+  if (!checkIn || !checkOut) return 0;
+  const diff = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.max(0, diff);
+};
+
+type GuestStats = {
+  totalStays: number;
+  totalNights: number;
+  totalSpent: number;
+  firstStayDate: Date | null;
+  lastStayDate: Date | null;
+  preferredRoomType: string | null;
+};
+
+const buildGuestStats = async (tenantId: string, guestIds: string[]): Promise<Record<string, GuestStats>> => {
+  const client = ensurePrisma();
+  if (!guestIds.length) {
+    return {};
+  }
+
+  const reservations = await client.reservation.findMany({
+    where: {
+      tenantId,
+      guestId: { in: guestIds },
+    },
+    select: {
+      guestId: true,
+      checkInDate: true,
+      checkOutDate: true,
+      rate: true,
+      room: {
+        select: {
+          roomType: true,
+        },
+      },
+    },
+  });
+
+  const statsMap: Record<string, GuestStats & { roomTypeCounts: Record<string, number> }> = {};
+
+  for (const reservation of reservations) {
+    if (!reservation.guestId) continue;
+    if (!statsMap[reservation.guestId]) {
+      statsMap[reservation.guestId] = {
+        totalStays: 0,
+        totalNights: 0,
+        totalSpent: 0,
+        firstStayDate: null,
+        lastStayDate: null,
+        preferredRoomType: null,
+        roomTypeCounts: {},
+      };
+    }
+
+    const entry = statsMap[reservation.guestId];
+    entry.totalStays += 1;
+    entry.totalSpent += Number(reservation.rate || 0);
+    const checkIn = reservation.checkInDate ? new Date(reservation.checkInDate) : null;
+    const checkOut = reservation.checkOutDate ? new Date(reservation.checkOutDate) : null;
+    entry.totalNights += calculateNights(checkIn, checkOut);
+    if (checkIn && (!entry.firstStayDate || checkIn < entry.firstStayDate)) {
+      entry.firstStayDate = checkIn;
+    }
+    if (checkOut && (!entry.lastStayDate || checkOut > entry.lastStayDate)) {
+      entry.lastStayDate = checkOut;
+    }
+    if (reservation.room?.roomType) {
+      const key = reservation.room.roomType;
+      entry.roomTypeCounts[key] = (entry.roomTypeCounts[key] || 0) + 1;
+    }
+  }
+
+  const formatted: Record<string, GuestStats> = {};
+  Object.entries(statsMap).forEach(([guestId, data]) => {
+    const preferred = Object.entries(data.roomTypeCounts)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    formatted[guestId] = {
+      totalStays: data.totalStays,
+      totalNights: data.totalNights,
+      totalSpent: data.totalSpent,
+      firstStayDate: data.firstStayDate,
+      lastStayDate: data.lastStayDate,
+      preferredRoomType: preferred,
+    };
+  });
+
+  return formatted;
+};
+
+const buildLoyaltyProgramConfig = (program?: LoyaltyProgram | null) => {
+  if (!program) {
+    return defaultLoyaltyProgram;
+  }
+
+  return {
+    isActive: program.isActive,
+    programName: program.programName,
+    pointsPerNight: program.pointsPerNight,
+    pointsPerCurrency: Number(program.pointsPerCurrency),
+    silverThreshold: program.silverThreshold,
+    goldThreshold: program.goldThreshold,
+    platinumThreshold: program.platinumThreshold,
+    vipThreshold: program.vipThreshold,
+    bronzeDiscount: Number(program.bronzeDiscount),
+    silverDiscount: Number(program.silverDiscount),
+    goldDiscount: Number(program.goldDiscount),
+    platinumDiscount: Number(program.platinumDiscount),
+    vipDiscount: Number(program.vipDiscount),
+    pointsRedemptionRate: Number(program.pointsRedemptionRate),
+    minRedemptionPoints: program.minRedemptionPoints,
+    pointsExpiryMonths: program.pointsExpiryMonths,
+  };
+};
 
 // ============================================
 // GUEST CRUD OPERATIONS
 // ============================================
 
-// POST /api/tenants/:tenantId/guests - Create or update guest
 guestEnhancedRouter.post(
   '/',
   authenticate,
@@ -19,132 +308,149 @@ guestEnhancedRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestData = req.body;
+      const payload = guestUpsertSchema.parse(req.body);
+      const client = ensurePrisma();
 
-      // Validate required fields
-      if (!guestData.name) {
-        throw new AppError('Guest name is required', 400);
-      }
+      const normalizedEmail = payload.email ? normalizeEmail(payload.email) : undefined;
+      const normalizedPhone = payload.phone ? normalizePhone(payload.phone) : undefined;
 
-      if (!guestData.email && !guestData.phone) {
+      if (!payload.id && !normalizedEmail && !normalizedPhone) {
         throw new AppError('Either email or phone is required', 400);
       }
 
-      // Check if guest already exists
-      let existingGuestId: string | null = null;
-      if (guestData.email) {
-        const emailQuery = await db.collection('guests')
-          .where('tenantId', '==', tenantId)
-          .where('email', '==', guestData.email.toLowerCase())
-          .limit(1)
-          .get();
-        
-        if (!emailQuery.empty) {
-          existingGuestId = emailQuery.docs[0].id;
-        }
+      let guest = payload.id
+        ? await client.guest.findFirst({ where: { id: payload.id, tenantId } })
+        : null;
+
+      if (!guest && (normalizedEmail || normalizedPhone)) {
+        guest = await client.guest.findFirst({
+          where: {
+            tenantId,
+            OR: [
+              normalizedEmail ? { email: normalizedEmail } : undefined,
+              normalizedPhone ? { phone: normalizedPhone } : undefined,
+            ].filter(Boolean) as Prisma.GuestWhereInput[],
+          },
+        });
       }
 
-      if (!existingGuestId && guestData.phone) {
-        const phoneQuery = await db.collection('guests')
-          .where('tenantId', '==', tenantId)
-          .where('phone', '==', guestData.phone)
-          .limit(1)
-          .get();
-        
-        if (!phoneQuery.empty) {
-          existingGuestId = phoneQuery.docs[0].id;
-        }
-      }
-
-      const timestamp = now();
-      const guestRecord = {
-        tenantId,
-        name: guestData.name,
-        email: guestData.email?.toLowerCase() || null,
-        phone: guestData.phone || null,
-        idNumber: guestData.idNumber || admin.firestore.FieldValue.delete(),
-        dateOfBirth: guestData.dateOfBirth ? toTimestamp(new Date(guestData.dateOfBirth)) : admin.firestore.FieldValue.delete(),
-        nationality: guestData.nationality || admin.firestore.FieldValue.delete(),
-        address: guestData.address || admin.firestore.FieldValue.delete(),
-        city: guestData.city || admin.firestore.FieldValue.delete(),
-        state: guestData.state || admin.firestore.FieldValue.delete(),
-        country: guestData.country || admin.firestore.FieldValue.delete(),
-        postalCode: guestData.postalCode || admin.firestore.FieldValue.delete(),
-        
-        // Preferences
-        preferredRoomType: guestData.preferredRoomType || admin.firestore.FieldValue.delete(),
-        preferredFloor: guestData.preferredFloor || admin.firestore.FieldValue.delete(),
-        smokingPreference: guestData.smokingPreference || false,
-        bedPreference: guestData.bedPreference || admin.firestore.FieldValue.delete(),
-        pillowPreference: guestData.pillowPreference || admin.firestore.FieldValue.delete(),
-        
-        // Dietary & Special
-        dietaryRestrictions: guestData.dietaryRestrictions || [],
-        allergies: guestData.allergies || [],
-        specialRequests: guestData.specialRequests || admin.firestore.FieldValue.delete(),
-        
-        // Marketing
-        marketingOptIn: guestData.marketingOptIn !== false,
-        emailOptIn: guestData.emailOptIn !== false,
-        smsOptIn: guestData.smsOptIn !== false,
-        
-        updatedAt: timestamp,
+      const baseData: Prisma.GuestUpdateInput = {
+        name: payload.name.trim(),
+        email:
+          normalizedEmail ?? (payload.email === undefined ? undefined : payload.email === null ? null : payload.email),
+        phone:
+          normalizedPhone ?? (payload.phone === undefined ? undefined : payload.phone === null ? null : payload.phone),
+        idNumber: sanitizeNullableString(payload.idNumber),
+        dateOfBirth: sanitizeDate(payload.dateOfBirth),
+        nationality: sanitizeNullableString(payload.nationality),
+        address: sanitizeNullableString(payload.address),
+        city: sanitizeNullableString(payload.city),
+        state: sanitizeNullableString(payload.state),
+        country: sanitizeNullableString(payload.country),
+        postalCode: sanitizeNullableString(payload.postalCode),
+        preferredRoomType: sanitizeNullableString(payload.preferredRoomType),
+        preferredFloor:
+          payload.preferredFloor === undefined ? undefined : payload.preferredFloor ?? null,
+        smokingPreference: payload.smokingPreference ?? undefined,
+        bedPreference: sanitizeNullableString(payload.bedPreference),
+        pillowPreference: sanitizeNullableString(payload.pillowPreference),
+        dietaryRestrictions: payload.dietaryRestrictions ?? undefined,
+        allergies: payload.allergies ?? undefined,
+        specialRequests: sanitizeNullableString(payload.specialRequests),
+        marketingOptIn: payload.marketingOptIn ?? undefined,
+        emailOptIn: payload.emailOptIn ?? undefined,
+        smsOptIn: payload.smsOptIn ?? undefined,
+        isVIP: payload.isVIP ?? undefined,
+        isBanned: payload.isBanned ?? undefined,
+        bannedReason: sanitizeNullableString(payload.bannedReason),
+        bannedAt: sanitizeDate(payload.bannedAt),
+        loyaltyTier: sanitizeNullableString(payload.loyaltyTier) ?? undefined,
       };
 
-      let guestId: string;
-      if (existingGuestId) {
-        // Update existing guest
-        await db.collection('guests').doc(existingGuestId).update(guestRecord);
-        guestId = existingGuestId;
+      let savedGuest;
 
-        // Log activity
-        await db.collection('guest_activity_logs').add({
-          tenantId,
-          guestId,
-          activityType: 'profile_updated',
-          title: 'Profile Updated',
-          description: 'Guest profile information was updated',
-          metadata: { updatedBy: req.user?.id },
-          performedBy: req.user?.id || null,
-          createdAt: timestamp,
+      if (guest) {
+        savedGuest = await client.guest.update({
+          where: { id: guest.id },
+          data: {
+            ...Object.fromEntries(
+              Object.entries(baseData).filter(([, value]) => value !== undefined)
+            ),
+          },
+        });
+
+        await client.guestActivityLog.create({
+          data: {
+            tenantId,
+            guestId: guest.id,
+            activityType: 'profile_updated',
+            title: 'Profile Updated',
+            description: 'Guest profile information was updated',
+            metadata: { updatedBy: req.user?.id },
+            performedBy: req.user?.id || null,
+          },
         });
       } else {
-        // Create new guest
-        const newGuest = {
-          ...guestRecord,
-          loyaltyTier: 'bronze',
-          loyaltyPoints: 0,
-          totalStays: 0,
-          totalNights: 0,
-          totalSpent: 0,
-          isVIP: false,
-          isBanned: false,
-          createdAt: timestamp,
-        };
+        savedGuest = await client.guest.create({
+          data: {
+            tenantId,
+            name: payload.name.trim(),
+            email: normalizedEmail ?? sanitizeNullableString(payload.email ?? null),
+            phone: normalizedPhone ?? sanitizeNullableString(payload.phone ?? null),
+            idNumber: sanitizeNullableString(payload.idNumber) ?? null,
+            dateOfBirth: sanitizeDate(payload.dateOfBirth) ?? null,
+            nationality: sanitizeNullableString(payload.nationality) ?? null,
+            address: sanitizeNullableString(payload.address) ?? null,
+            city: sanitizeNullableString(payload.city) ?? null,
+            state: sanitizeNullableString(payload.state) ?? null,
+            country: sanitizeNullableString(payload.country) ?? null,
+            postalCode: sanitizeNullableString(payload.postalCode) ?? null,
+            preferredRoomType: sanitizeNullableString(payload.preferredRoomType) ?? null,
+            preferredFloor: payload.preferredFloor ?? null,
+            smokingPreference: payload.smokingPreference ?? false,
+            bedPreference: sanitizeNullableString(payload.bedPreference) ?? null,
+            pillowPreference: sanitizeNullableString(payload.pillowPreference) ?? null,
+            dietaryRestrictions: payload.dietaryRestrictions ?? [],
+            allergies: payload.allergies ?? [],
+            specialRequests: sanitizeNullableString(payload.specialRequests) ?? null,
+            marketingOptIn: payload.marketingOptIn ?? true,
+            emailOptIn: payload.emailOptIn ?? true,
+            smsOptIn: payload.smsOptIn ?? true,
+            loyaltyTier: sanitizeNullableString(payload.loyaltyTier) ?? 'bronze',
+            isVIP: payload.isVIP ?? false,
+            isBanned: payload.isBanned ?? false,
+            bannedReason: sanitizeNullableString(payload.bannedReason) ?? null,
+            bannedAt: sanitizeDate(payload.bannedAt) ?? null,
+          },
+        });
 
-        const docRef = await db.collection('guests').add(newGuest);
-        guestId = docRef.id;
-
-        // Log activity
-        await db.collection('guest_activity_logs').add({
-          tenantId,
-          guestId,
-          activityType: 'profile_created',
-          title: 'Profile Created',
-          description: 'Guest profile was created',
-          metadata: { createdBy: req.user?.id },
-          performedBy: req.user?.id || null,
-          createdAt: timestamp,
+        await client.guestActivityLog.create({
+          data: {
+            tenantId,
+            guestId: savedGuest.id,
+            activityType: 'profile_created',
+            title: 'Profile Created',
+            description: 'Guest profile was created',
+            metadata: { createdBy: req.user?.id },
+            performedBy: req.user?.id || null,
+          },
         });
       }
 
-      // Fetch and return the guest
-      const guestDoc = await db.collection('guests').doc(guestId).get();
-      const guest = { id: guestDoc.id, ...guestDoc.data() };
+      const statsMap = await buildGuestStats(tenantId, [savedGuest.id]);
+      const stats = statsMap[savedGuest.id];
 
       res.json({
         success: true,
-        data: guest,
+        data: {
+          ...serializeGuest(savedGuest),
+          totalStays: stats?.totalStays ?? savedGuest.totalStays ?? 0,
+          totalNights: stats?.totalNights ?? savedGuest.totalNights ?? 0,
+          totalSpent: stats?.totalSpent ?? serializeDecimal(savedGuest.totalSpent) ?? 0,
+          firstStayDate: stats?.firstStayDate ?? savedGuest.firstStayDate ?? null,
+          lastStayDate: stats?.lastStayDate ?? savedGuest.lastStayDate ?? null,
+          preferredRoomType: savedGuest.preferredRoomType ?? stats?.preferredRoomType ?? null,
+        },
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -159,117 +465,81 @@ guestEnhancedRouter.post(
   }
 );
 
-// GET /api/tenants/:tenantId/guests/:guestId - Get detailed guest profile
+// ============================================
+// GUEST LISTING
+// ============================================
+
 guestEnhancedRouter.get(
-  '/:guestId',
+  '/',
   authenticate,
   requireTenantAccess,
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestId = req.params.guestId;
+      const { skip, take, page, limit } = getPaginationParams(req);
+      const filters = listQuerySchema.parse(req.query);
+      const client = ensurePrisma();
 
-      // Get guest document
-      const guestDoc = await db.collection('guests').doc(guestId).get();
+      const where: Prisma.GuestWhereInput = { tenantId };
 
-      if (!guestDoc.exists || guestDoc.data()?.tenantId !== tenantId) {
-        throw new AppError('Guest not found', 404);
+      if (filters.loyaltyTier) {
+        where.loyaltyTier = filters.loyaltyTier;
       }
 
-      const guestData = guestDoc.data()!;
+      if (filters.isVIP) {
+        where.isVIP = filters.isVIP === 'true';
+      }
 
-      // Get reservations for this guest
-      const reservationsSnapshot = await db.collection('reservations')
-        .where('tenantId', '==', tenantId)
-        .where('guestId', '==', guestId)
-        .orderBy('checkInDate', 'desc')
-        .get();
+      if (filters.search) {
+        where.OR = [
+          { name: { contains: filters.search, mode: 'insensitive' } },
+          { email: { contains: filters.search, mode: 'insensitive' } },
+          { phone: { contains: filters.search, mode: 'insensitive' } },
+          { idNumber: { contains: filters.search, mode: 'insensitive' } },
+        ];
+      }
 
-      const reservations = await Promise.all(
-        reservationsSnapshot.docs.map(async (doc) => {
-          const resData = doc.data();
-          const roomDoc = await db.collection('rooms').doc(resData.roomId).get();
-          
-          return {
-            id: doc.id,
-            ...resData,
-            checkInDate: toDate(resData.checkInDate),
-            checkOutDate: toDate(resData.checkOutDate),
-            room: roomDoc.exists ? {
-              roomNumber: roomDoc.data()?.roomNumber,
-              roomType: roomDoc.data()?.roomType,
-            } : null,
-          };
-        })
+      const [guests, total] = await Promise.all([
+        client.guest.findMany({
+          where,
+          skip,
+          take,
+          orderBy: [
+            { lastStayDate: 'desc' },
+            { createdAt: 'desc' },
+          ],
+        }),
+        client.guest.count({ where }),
+      ]);
+
+      const statsMap = await buildGuestStats(
+        tenantId,
+        guests.map((guest) => guest.id)
       );
 
-      // Get activity logs
-      const activityLogsSnapshot = await db.collection('guest_activity_logs')
-        .where('tenantId', '==', tenantId)
-        .where('guestId', '==', guestId)
-        .orderBy('createdAt', 'desc')
-        .limit(50)
-        .get();
+      const items = guests.map((guest) => {
+        const stats = statsMap[guest.id];
+        return {
+          ...serializeGuest(guest),
+          totalStays: stats?.totalStays ?? guest.totalStays ?? 0,
+          totalNights: stats?.totalNights ?? guest.totalNights ?? 0,
+          totalSpent: stats?.totalSpent ?? serializeDecimal(guest.totalSpent) ?? 0,
+          firstStayDate: stats?.firstStayDate ?? guest.firstStayDate ?? null,
+          lastStayDate: stats?.lastStayDate ?? guest.lastStayDate ?? null,
+          preferredRoomType: guest.preferredRoomType ?? stats?.preferredRoomType ?? null,
+        };
+      });
 
-      const activityLogs = activityLogsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: toDate(doc.data().createdAt),
-      }));
-
-      // Get notes
-      const notesSnapshot = await db.collection('guest_notes')
-        .where('tenantId', '==', tenantId)
-        .where('guestId', '==', guestId)
-        .orderBy('createdAt', 'desc')
-        .get();
-
-      const notes = notesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: toDate(doc.data().createdAt),
-        updatedAt: toDate(doc.data().updatedAt),
-      }));
-
-      // Get loyalty transactions
-      const loyaltyTransactionsSnapshot = await db.collection('loyalty_transactions')
-        .where('tenantId', '==', tenantId)
-        .where('guestId', '==', guestId)
-        .orderBy('createdAt', 'desc')
-        .limit(20)
-        .get();
-
-      const loyaltyTransactions = loyaltyTransactionsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: toDate(doc.data().createdAt),
-      }));
-
-      const guestProfile = {
-        id: guestDoc.id,
-        ...guestData,
-        dateOfBirth: toDate(guestData.dateOfBirth),
-        firstStayDate: toDate(guestData.firstStayDate),
-        lastStayDate: toDate(guestData.lastStayDate),
-        createdAt: toDate(guestData.createdAt),
-        updatedAt: toDate(guestData.updatedAt),
-        reservations,
-        activityLogs,
-        notes,
-        loyaltyTransactions,
-      };
+      const result = createPaginationResult(items, total, page, limit);
 
       res.json({
         success: true,
-        data: guestProfile,
+        ...result,
       });
     } catch (error: any) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-      console.error('Error fetching guest profile:', error);
+      console.error('Error fetching guests:', error);
       throw new AppError(
-        `Failed to fetch guest profile: ${error.message || 'Unknown error'}`,
+        `Failed to fetch guests: ${error.message || 'Unknown error'}`,
         500
       );
     }
@@ -277,10 +547,104 @@ guestEnhancedRouter.get(
 );
 
 // ============================================
-// GUEST ACTIVITY LOGS
+// LOYALTY PROGRAM CONFIGURATION
 // ============================================
 
-// POST /api/tenants/:tenantId/guests/:guestId/activity - Add activity log
+guestEnhancedRouter.get(
+  '/loyalty/program',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const client = ensurePrisma();
+      const program = await client.loyaltyProgram.findUnique({ where: { tenantId } });
+
+      res.json({
+        success: true,
+        data: buildLoyaltyProgramConfig(program),
+      });
+    } catch (error: any) {
+      console.error('Error fetching loyalty program:', error);
+      throw new AppError(
+        `Failed to fetch loyalty program: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+);
+
+guestEnhancedRouter.put(
+  '/loyalty/program',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const payload = loyaltyProgramSchema.parse(req.body);
+      const client = ensurePrisma();
+
+      const existing = await client.loyaltyProgram.findUnique({ where: { tenantId } });
+
+      const data: Prisma.LoyaltyProgramUpsertArgs['create'] = {
+        tenantId,
+        isActive: payload.isActive ?? existing?.isActive ?? defaultLoyaltyProgram.isActive,
+        programName: payload.programName ?? existing?.programName ?? defaultLoyaltyProgram.programName,
+        pointsPerNight: payload.pointsPerNight ?? existing?.pointsPerNight ?? defaultLoyaltyProgram.pointsPerNight,
+        pointsPerCurrency:
+          payload.pointsPerCurrency ??
+          Number(existing?.pointsPerCurrency ?? defaultLoyaltyProgram.pointsPerCurrency),
+        silverThreshold: payload.silverThreshold ?? existing?.silverThreshold ?? defaultLoyaltyProgram.silverThreshold,
+        goldThreshold: payload.goldThreshold ?? existing?.goldThreshold ?? defaultLoyaltyProgram.goldThreshold,
+        platinumThreshold:
+          payload.platinumThreshold ?? existing?.platinumThreshold ?? defaultLoyaltyProgram.platinumThreshold,
+        vipThreshold: payload.vipThreshold ?? existing?.vipThreshold ?? defaultLoyaltyProgram.vipThreshold,
+        bronzeDiscount:
+          payload.bronzeDiscount ?? Number(existing?.bronzeDiscount ?? defaultLoyaltyProgram.bronzeDiscount),
+        silverDiscount:
+          payload.silverDiscount ?? Number(existing?.silverDiscount ?? defaultLoyaltyProgram.silverDiscount),
+        goldDiscount:
+          payload.goldDiscount ?? Number(existing?.goldDiscount ?? defaultLoyaltyProgram.goldDiscount),
+        platinumDiscount:
+          payload.platinumDiscount ?? Number(existing?.platinumDiscount ?? defaultLoyaltyProgram.platinumDiscount),
+        vipDiscount:
+          payload.vipDiscount ?? Number(existing?.vipDiscount ?? defaultLoyaltyProgram.vipDiscount),
+        pointsRedemptionRate:
+          payload.pointsRedemptionRate ??
+          Number(existing?.pointsRedemptionRate ?? defaultLoyaltyProgram.pointsRedemptionRate),
+        minRedemptionPoints:
+          payload.minRedemptionPoints ?? existing?.minRedemptionPoints ?? defaultLoyaltyProgram.minRedemptionPoints,
+        pointsExpiryMonths:
+          payload.pointsExpiryMonths ?? existing?.pointsExpiryMonths ?? defaultLoyaltyProgram.pointsExpiryMonths,
+      };
+
+      const program = await client.loyaltyProgram.upsert({
+        where: { tenantId },
+        create: data,
+        update: data,
+      });
+
+      res.json({
+        success: true,
+        data: buildLoyaltyProgramConfig(program),
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error updating loyalty program:', error);
+      throw new AppError(
+        `Failed to update loyalty program: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+);
+
+// ============================================
+// GUEST ACTIVITY LOGS & NOTES
+// ============================================
+
 guestEnhancedRouter.post(
   '/:guestId/activity',
   authenticate,
@@ -288,34 +652,25 @@ guestEnhancedRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestId = req.params.guestId;
-      const { activityType, title, description, metadata } = req.body;
+      const guest = await getGuestOrThrow(tenantId, req.params.guestId);
+      const payload = activitySchema.parse(req.body);
+      const client = ensurePrisma();
 
-      if (!activityType || !title) {
-        throw new AppError('Activity type and title are required', 400);
-      }
-
-      const timestamp = now();
-      const activityLog = {
-        tenantId,
-        guestId,
-        activityType,
-        title,
-        description: description || null,
-        metadata: metadata || {},
-        performedBy: req.user?.id || null,
-        createdAt: timestamp,
-      };
-
-      const docRef = await db.collection('guest_activity_logs').add(activityLog);
+      const activity = await client.guestActivityLog.create({
+        data: {
+          tenantId,
+          guestId: guest.id,
+          activityType: payload.activityType,
+          title: payload.title,
+          description: sanitizeNullableString(payload.description) ?? null,
+          metadata: payload.metadata ?? {},
+          performedBy: req.user?.id || null,
+        },
+      });
 
       res.json({
         success: true,
-        data: {
-          id: docRef.id,
-          ...activityLog,
-          createdAt: toDate(timestamp),
-        },
+        data: activity,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -330,11 +685,6 @@ guestEnhancedRouter.post(
   }
 );
 
-// ============================================
-// GUEST NOTES
-// ============================================
-
-// POST /api/tenants/:tenantId/guests/:guestId/notes - Add note
 guestEnhancedRouter.post(
   '/:guestId/notes',
   authenticate,
@@ -342,63 +692,48 @@ guestEnhancedRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestId = req.params.guestId;
-      const { noteType, note, isImportant, isPinned } = req.body;
+      const guest = await getGuestOrThrow(tenantId, req.params.guestId);
+      const payload = noteSchema.parse(req.body);
+      const client = ensurePrisma();
 
-      if (!note) {
-        throw new AppError('Note content is required', 400);
-      }
+      const note = await client.guestNote.create({
+        data: {
+          tenantId,
+          guestId: guest.id,
+          noteType: sanitizeNullableString(payload.noteType) ?? 'general',
+          note: payload.note,
+          isImportant: payload.isImportant ?? false,
+          isPinned: payload.isPinned ?? false,
+          createdBy: req.user?.id || 'system',
+        },
+      });
 
-      const timestamp = now();
-      const noteRecord = {
-        tenantId,
-        guestId,
-        noteType: noteType || 'general',
-        note,
-        isImportant: isImportant || false,
-        isPinned: isPinned || false,
-        createdBy: req.user?.id || 'system',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      };
-
-      const docRef = await db.collection('guest_notes').add(noteRecord);
-
-      // Log activity
-      await db.collection('guest_activity_logs').add({
-        tenantId,
-        guestId,
-        activityType: 'note',
-        title: 'Note Added',
-        description: note.substring(0, 100),
-        metadata: { noteId: docRef.id, noteType },
-        performedBy: req.user?.id || null,
-        createdAt: timestamp,
+      await client.guestActivityLog.create({
+        data: {
+          tenantId,
+          guestId: guest.id,
+          activityType: 'note',
+          title: 'Note Added',
+          description: payload.note.substring(0, 100),
+          metadata: { noteId: note.id, noteType: note.noteType },
+          performedBy: req.user?.id || null,
+        },
       });
 
       res.json({
         success: true,
-        data: {
-          id: docRef.id,
-          ...noteRecord,
-          createdAt: toDate(timestamp),
-          updatedAt: toDate(timestamp),
-        },
+        data: note,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
         throw error;
       }
       console.error('Error adding note:', error);
-      throw new AppError(
-        `Failed to add note: ${error.message || 'Unknown error'}`,
-        500
-      );
+      throw new AppError(`Failed to add note: ${error.message || 'Unknown error'}`, 500);
     }
   }
 );
 
-// PUT /api/tenants/:tenantId/guests/:guestId/notes/:noteId - Update note
 guestEnhancedRouter.put(
   '/:guestId/notes/:noteId',
   authenticate,
@@ -406,52 +741,42 @@ guestEnhancedRouter.put(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestId = req.params.guestId;
-      const noteId = req.params.noteId;
-      const { note, isImportant, isPinned, noteType } = req.body;
+      await getGuestOrThrow(tenantId, req.params.guestId);
+      const payload = noteSchema.parse(req.body);
+      const client = ensurePrisma();
 
-      const noteDoc = await db.collection('guest_notes').doc(noteId).get();
+      const note = await client.guestNote.findFirst({
+        where: { id: req.params.noteId, tenantId },
+      });
 
-      if (!noteDoc.exists || noteDoc.data()?.tenantId !== tenantId) {
+      if (!note) {
         throw new AppError('Note not found', 404);
       }
 
-      const updates: any = {
-        updatedAt: now(),
-      };
-
-      if (note !== undefined) updates.note = note;
-      if (isImportant !== undefined) updates.isImportant = isImportant;
-      if (isPinned !== undefined) updates.isPinned = isPinned;
-      if (noteType !== undefined) updates.noteType = noteType;
-
-      await db.collection('guest_notes').doc(noteId).update(updates);
-
-      const updatedDoc = await db.collection('guest_notes').doc(noteId).get();
+      const updated = await client.guestNote.update({
+        where: { id: note.id },
+        data: {
+          note: payload.note ?? note.note,
+          isImportant: payload.isImportant ?? note.isImportant,
+          isPinned: payload.isPinned ?? note.isPinned,
+          noteType: sanitizeNullableString(payload.noteType) ?? note.noteType,
+        },
+      });
 
       res.json({
         success: true,
-        data: {
-          id: updatedDoc.id,
-          ...updatedDoc.data(),
-          createdAt: toDate(updatedDoc.data()?.createdAt),
-          updatedAt: toDate(updatedDoc.data()?.updatedAt),
-        },
+        data: updated,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
         throw error;
       }
       console.error('Error updating note:', error);
-      throw new AppError(
-        `Failed to update note: ${error.message || 'Unknown error'}`,
-        500
-      );
+      throw new AppError(`Failed to update note: ${error.message || 'Unknown error'}`, 500);
     }
   }
 );
 
-// DELETE /api/tenants/:tenantId/guests/:guestId/notes/:noteId - Delete note
 guestEnhancedRouter.delete(
   '/:guestId/notes/:noteId',
   authenticate,
@@ -459,15 +784,18 @@ guestEnhancedRouter.delete(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const noteId = req.params.noteId;
+      await getGuestOrThrow(tenantId, req.params.guestId);
+      const client = ensurePrisma();
 
-      const noteDoc = await db.collection('guest_notes').doc(noteId).get();
+      const note = await client.guestNote.findFirst({
+        where: { id: req.params.noteId, tenantId },
+      });
 
-      if (!noteDoc.exists || noteDoc.data()?.tenantId !== tenantId) {
+      if (!note) {
         throw new AppError('Note not found', 404);
       }
 
-      await db.collection('guest_notes').doc(noteId).delete();
+      await client.guestNote.delete({ where: { id: note.id } });
 
       res.json({
         success: true,
@@ -478,10 +806,7 @@ guestEnhancedRouter.delete(
         throw error;
       }
       console.error('Error deleting note:', error);
-      throw new AppError(
-        `Failed to delete note: ${error.message || 'Unknown error'}`,
-        500
-      );
+      throw new AppError(`Failed to delete note: ${error.message || 'Unknown error'}`, 500);
     }
   }
 );
@@ -490,7 +815,6 @@ guestEnhancedRouter.delete(
 // LOYALTY MANAGEMENT
 // ============================================
 
-// POST /api/tenants/:tenantId/guests/:guestId/loyalty - Add loyalty points
 guestEnhancedRouter.post(
   '/:guestId/loyalty',
   authenticate,
@@ -498,66 +822,55 @@ guestEnhancedRouter.post(
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
-      const guestId = req.params.guestId;
-      const { points, description, reservationId, metadata } = req.body;
+      const guest = await getGuestOrThrow(tenantId, req.params.guestId);
+      const payload = loyaltyMutationSchema.parse(req.body);
+      const client = ensurePrisma();
 
-      if (!points || points === 0) {
-        throw new AppError('Points value is required', 400);
+      const program = await client.loyaltyProgram.findUnique({ where: { tenantId } });
+      const config = buildLoyaltyProgramConfig(program);
+
+      const currentPoints = guest.loyaltyPoints ?? 0;
+      const newPoints = currentPoints + payload.points;
+
+      if (newPoints < 0) {
+        throw new AppError('Insufficient loyalty points', 400);
       }
 
-      // Get guest document
-      const guestDoc = await db.collection('guests').doc(guestId).get();
+      const newTier = resolveLoyaltyTier(newPoints, config);
 
-      if (!guestDoc.exists || guestDoc.data()?.tenantId !== tenantId) {
-        throw new AppError('Guest not found', 404);
-      }
-
-      const guestData = guestDoc.data();
-      const currentPoints = guestData?.loyaltyPoints || 0;
-      const newPoints = currentPoints + points;
-
-      // Determine new tier based on total points
-      let newTier = 'bronze';
-      // Get loyalty program settings or use defaults
-      if (newPoints >= 5000) newTier = 'vip';
-      else if (newPoints >= 1000) newTier = 'platinum';
-      else if (newPoints >= 500) newTier = 'gold';
-      else if (newPoints >= 100) newTier = 'silver';
-
-      const timestamp = now();
-
-      // Record transaction
-      await db.collection('loyalty_transactions').add({
-        tenantId,
-        guestId,
-        transactionType: points > 0 ? 'earned' : 'redeemed',
-        points,
-        balanceBefore: currentPoints,
-        balanceAfter: newPoints,
-        description: description || (points > 0 ? 'Points earned' : 'Points redeemed'),
-        reservationId: reservationId || null,
-        metadata: metadata || {},
-        createdBy: req.user?.id || null,
-        createdAt: timestamp,
+      await client.loyaltyTransaction.create({
+        data: {
+          tenantId,
+          guestId: guest.id,
+          transactionType: payload.points > 0 ? 'earned' : 'redeemed',
+          points: payload.points,
+          balanceBefore: currentPoints,
+          balanceAfter: newPoints,
+          description: payload.description || (payload.points > 0 ? 'Points earned' : 'Points redeemed'),
+          reservationId: sanitizeNullableString(payload.reservationId) ?? null,
+          metadata: payload.metadata ?? {},
+          createdBy: req.user?.id || null,
+        },
       });
 
-      // Update guest record
-      await db.collection('guests').doc(guestId).update({
-        loyaltyPoints: newPoints,
-        loyaltyTier: newTier,
-        updatedAt: timestamp,
+      await client.guest.update({
+        where: { id: guest.id },
+        data: {
+          loyaltyPoints: newPoints,
+          loyaltyTier: newTier,
+        },
       });
 
-      // Log activity
-      await db.collection('guest_activity_logs').add({
-        tenantId,
-        guestId,
-        activityType: points > 0 ? 'loyalty_earned' : 'loyalty_redeemed',
-        title: points > 0 ? 'Loyalty Points Earned' : 'Loyalty Points Redeemed',
-        description: `${Math.abs(points)} points ${points > 0 ? 'earned' : 'redeemed'}`,
-        metadata: { points, balanceAfter: newPoints, tier: newTier },
-        performedBy: req.user?.id || null,
-        createdAt: timestamp,
+      await client.guestActivityLog.create({
+        data: {
+          tenantId,
+          guestId: guest.id,
+          activityType: payload.points > 0 ? 'loyalty_earned' : 'loyalty_redeemed',
+          title: payload.points > 0 ? 'Loyalty Points Earned' : 'Loyalty Points Redeemed',
+          description: `${Math.abs(payload.points)} points ${payload.points > 0 ? 'earned' : 'redeemed'}`,
+          metadata: { points: payload.points, balanceAfter: newPoints, tier: newTier },
+          performedBy: req.user?.id || null,
+        },
       });
 
       res.json({
@@ -565,11 +878,6 @@ guestEnhancedRouter.post(
         data: {
           points: newPoints,
           tier: newTier,
-          transaction: {
-            points,
-            balanceBefore: currentPoints,
-            balanceAfter: newPoints,
-          },
         },
       });
     } catch (error: any) {
@@ -585,192 +893,87 @@ guestEnhancedRouter.post(
   }
 );
 
-// GET /api/tenants/:tenantId/guests/loyalty/program - Get loyalty program settings
+// ============================================
+// GUEST PROFILE
+// ============================================
+
 guestEnhancedRouter.get(
-  '/loyalty/program',
+  '/:guestId',
   authenticate,
   requireTenantAccess,
   async (req: AuthRequest, res) => {
     try {
       const tenantId = req.params.tenantId;
+      const guest = await getGuestOrThrow(tenantId, req.params.guestId);
+      const client = ensurePrisma();
 
-      const programSnapshot = await db.collection('loyalty_programs')
-        .where('tenantId', '==', tenantId)
-        .limit(1)
-        .get();
-
-      let program;
-      if (programSnapshot.empty) {
-        // Return default settings
-        program = {
-          isActive: true,
-          programName: 'InnSight Rewards',
-          pointsPerNight: 10,
-          pointsPerCurrency: 1,
-          silverThreshold: 100,
-          goldThreshold: 500,
-          platinumThreshold: 1000,
-          vipThreshold: 5000,
-          bronzeDiscount: 0,
-          silverDiscount: 5,
-          goldDiscount: 10,
-          platinumDiscount: 15,
-          vipDiscount: 20,
-          pointsRedemptionRate: 100,
-          minRedemptionPoints: 500,
-          pointsExpiryMonths: null,
-        };
-      } else {
-        const doc = programSnapshot.docs[0];
-        program = {
-          id: doc.id,
-          ...doc.data(),
-        };
-      }
-
-      res.json({
-        success: true,
-        data: program,
+      const reservations = await client.reservation.findMany({
+        where: { tenantId, guestId: guest.id },
+        include: {
+          room: {
+            select: {
+              id: true,
+              roomNumber: true,
+              roomType: true,
+            },
+          },
+        },
+        orderBy: { checkInDate: 'desc' },
       });
-    } catch (error: any) {
-      console.error('Error fetching loyalty program:', error);
-      throw new AppError(
-        `Failed to fetch loyalty program: ${error.message || 'Unknown error'}`,
-        500
-      );
-    }
-  }
-);
 
-// PUT /api/tenants/:tenantId/guests/loyalty/program - Update loyalty program settings
-guestEnhancedRouter.put(
-  '/loyalty/program',
-  authenticate,
-  requireTenantAccess,
-  async (req: AuthRequest, res) => {
-    try {
-      const tenantId = req.params.tenantId;
-      const programData = req.body;
-
-      const programSnapshot = await db.collection('loyalty_programs')
-        .where('tenantId', '==', tenantId)
-        .limit(1)
-        .get();
-
-      const timestamp = now();
-      const programRecord = {
-        tenantId,
-        ...programData,
-        updatedAt: timestamp,
+      const statsMap = await buildGuestStats(tenantId, [guest.id]);
+      const stats = statsMap[guest.id] ?? {
+        totalStays: guest.totalStays ?? 0,
+        totalNights: guest.totalNights ?? 0,
+        totalSpent: serializeDecimal(guest.totalSpent) ?? 0,
+        firstStayDate: guest.firstStayDate ?? null,
+        lastStayDate: guest.lastStayDate ?? null,
+        preferredRoomType: guest.preferredRoomType ?? null,
       };
 
-      let programId: string;
-      if (programSnapshot.empty) {
-        // Create new program
-        const docRef = await db.collection('loyalty_programs').add({
-          ...programRecord,
-          createdAt: timestamp,
-        });
-        programId = docRef.id;
-      } else {
-        // Update existing program
-        programId = programSnapshot.docs[0].id;
-        await db.collection('loyalty_programs').doc(programId).update(programRecord);
-      }
+      const activityLogs = await client.guestActivityLog.findMany({
+        where: { tenantId, guestId: guest.id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
 
-      const updatedDoc = await db.collection('loyalty_programs').doc(programId).get();
+      const notes = await client.guestNote.findMany({
+        where: { tenantId, guestId: guest.id },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const loyaltyTransactions = await client.loyaltyTransaction.findMany({
+        where: { tenantId, guestId: guest.id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
 
       res.json({
         success: true,
         data: {
-          id: updatedDoc.id,
-          ...updatedDoc.data(),
+          ...serializeGuest(guest),
+          totalStays: stats.totalStays,
+          totalNights: stats.totalNights,
+          totalSpent: stats.totalSpent,
+          firstStayDate: stats.firstStayDate,
+          lastStayDate: stats.lastStayDate,
+          preferredRoomType: guest.preferredRoomType ?? stats.preferredRoomType,
+          reservations: reservations.map((reservation) => ({
+            ...reservation,
+            rate: serializeDecimal(reservation.rate),
+          })),
+          activityLogs,
+          notes,
+          loyaltyTransactions,
         },
       });
     } catch (error: any) {
       if (error instanceof AppError) {
         throw error;
       }
-      console.error('Error updating loyalty program:', error);
+      console.error('Error fetching guest profile:', error);
       throw new AppError(
-        `Failed to update loyalty program: ${error.message || 'Unknown error'}`,
-        500
-      );
-    }
-  }
-);
-
-// GET /api/tenants/:tenantId/guests - List all guests with enhanced filtering
-guestEnhancedRouter.get(
-  '/',
-  authenticate,
-  requireTenantAccess,
-  async (req: AuthRequest, res) => {
-    try {
-      const tenantId = req.params.tenantId;
-      const { page, limit } = getPaginationParams(req);
-      const { loyaltyTier, isVIP, search } = req.query;
-
-      let query: admin.firestore.Query = db.collection('guests')
-        .where('tenantId', '==', tenantId);
-
-      // Apply filters
-      if (loyaltyTier) {
-        query = query.where('loyaltyTier', '==', loyaltyTier);
-      }
-
-      if (isVIP === 'true') {
-        query = query.where('isVIP', '==', true);
-      }
-
-      // Execute query with error handling
-      let snapshot;
-      try {
-        snapshot = await query.orderBy('lastStayDate', 'desc').get();
-      } catch (error) {
-        // If orderBy fails (e.g., no index or field doesn't exist), query without ordering
-        console.warn('Failed to order by lastStayDate, fetching without ordering:', error);
-        snapshot = await query.get();
-      }
-
-      let guests = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          dateOfBirth: toDate(data.dateOfBirth),
-          firstStayDate: toDate(data.firstStayDate),
-          lastStayDate: toDate(data.lastStayDate),
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        };
-      });
-
-      // Client-side search filter
-      if (search) {
-        const searchLower = (search as string).toLowerCase();
-        guests = guests.filter((guest: any) => 
-          guest.name?.toLowerCase().includes(searchLower) ||
-          guest.email?.toLowerCase().includes(searchLower) ||
-          guest.phone?.includes(searchLower) ||
-          guest.idNumber?.includes(searchLower)
-        );
-      }
-
-      const total = guests.length;
-      const skip = (page - 1) * limit;
-      const paginatedGuests = guests.slice(skip, skip + limit);
-
-      const result = createPaginationResult(paginatedGuests, total, page, limit);
-
-      res.json({
-        success: true,
-        ...result,
-      });
-    } catch (error: any) {
-      console.error('Error fetching guests:', error);
-      throw new AppError(
-        `Failed to fetch guests: ${error.message || 'Unknown error'}`,
+        `Failed to fetch guest profile: ${error.message || 'Unknown error'}`,
         500
       );
     }

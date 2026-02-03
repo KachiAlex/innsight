@@ -17,6 +17,7 @@ import {
   createReservationBatchSchema,
   resolveTenantUserId,
 } from '../utils/reservationBatch';
+import { upsertGuestProfile } from '../utils/guestProfiles';
 import { 
   sendEmail, 
   generateReservationConfirmationEmail, 
@@ -97,6 +98,7 @@ const availabilityQuerySchema = sharedAvailabilityQuerySchema;
 const createReservationSchema = z.object({
   roomId: z.string().min(1),
   guestName: z.string().min(1),
+  guestId: z.string().uuid().optional(),
   guestEmail: z.preprocess(
     (val) => (val === '' || val === null || val === undefined ? undefined : val),
     z.string().email().optional()
@@ -121,6 +123,71 @@ const createReservationSchema = z.object({
     z.string().optional()
   ),
 });
+
+type GuestResolutionInput = {
+  tenantId: string;
+  guestName: string;
+  guestId?: string;
+  guestEmail?: string | null;
+  guestPhone?: string | null;
+};
+
+const resolveGuestContext = async ({
+  tenantId,
+  guestName,
+  guestId,
+  guestEmail,
+  guestPhone,
+}: GuestResolutionInput) => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  if (guestId) {
+    const existingGuest = await prisma.guest.findFirst({
+      where: {
+        id: guestId,
+        tenantId,
+      },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+      },
+    });
+
+    if (!existingGuest) {
+      throw new AppError('Guest not found', 404);
+    }
+
+    return {
+      guestId: existingGuest.id,
+      guestEmail: existingGuest.email ?? guestEmail ?? null,
+      guestPhone: existingGuest.phone ?? guestPhone ?? null,
+    };
+  }
+
+  if (!guestEmail && !guestPhone) {
+    return {
+      guestId: null,
+      guestEmail: guestEmail ?? null,
+      guestPhone: guestPhone ?? null,
+    };
+  }
+
+  const guestProfile = await upsertGuestProfile({
+    tenantId,
+    name: guestName,
+    email: guestEmail ?? undefined,
+    phone: guestPhone ?? undefined,
+  });
+
+  return {
+    guestId: guestProfile?.id ?? null,
+    guestEmail: guestProfile?.email ?? guestEmail ?? null,
+    guestPhone: guestProfile?.phone ?? guestPhone ?? null,
+  };
+};
 
 // POST /api/tenants/:tenantId/reservations
 // GET /api/tenants/:tenantId/reservations/availability
@@ -220,14 +287,23 @@ reservationRouter.post(
 
       const reservationNumber = `RES-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
 
+      const guestContext = await resolveGuestContext({
+        tenantId,
+        guestName: data.guestName,
+        guestId: data.guestId,
+        guestEmail: data.guestEmail ?? null,
+        guestPhone: data.guestPhone ?? null,
+      });
+
       const reservation = await prisma.reservation.create({
         data: {
           tenantId,
           roomId: data.roomId,
           reservationNumber,
           guestName: data.guestName,
-          guestEmail: data.guestEmail || null,
-          guestPhone: data.guestPhone || null,
+          guestId: guestContext.guestId,
+          guestEmail: guestContext.guestEmail,
+          guestPhone: guestContext.guestPhone,
           guestIdNumber: data.guestIdNumber || null,
           checkInDate: checkIn,
           checkOutDate: checkOut,
@@ -368,11 +444,26 @@ reservationRouter.post(
 
       const data = createReservationBatchSchema.parse(req.body);
 
+      const guestContext = await resolveGuestContext({
+        tenantId,
+        guestName: data.guestName,
+        guestId: data.guestId,
+        guestEmail: data.guestEmail ?? null,
+        guestPhone: data.guestPhone ?? null,
+      });
+
+      const payloadWithGuest = {
+        ...data,
+        guestId: guestContext.guestId ?? undefined,
+        guestEmail: guestContext.guestEmail ?? undefined,
+        guestPhone: guestContext.guestPhone ?? undefined,
+      };
+
       const result = await prisma.$transaction(async (tx) => {
         const actorUserId = await resolveTenantUserId(tenantId, req.user?.id, tx);
         const batch = await createBatchReservations({
           tenantId,
-          data,
+          data: payloadWithGuest,
           actorUserId,
           client: tx,
         });

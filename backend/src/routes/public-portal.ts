@@ -368,6 +368,58 @@ export const publicPortalRouter = Router();
 const decimalToNumber = (value?: Prisma.Decimal | number | null) =>
   value !== null && value !== undefined ? Number(value) : null;
 
+const fetchFirestoreRoomCategories = async (tenantId: string) => {
+  try {
+    const snapshot = await db
+      .collection('roomCategories')
+      .where('tenantId', '==', tenantId)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => {
+        const data = doc.data() || {};
+        return {
+          id: doc.id,
+          name: data.name,
+          description: data.description ?? null,
+          color: data.color ?? null,
+          totalRooms: data.totalRooms ?? null,
+        };
+      })
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } catch (error) {
+    console.warn('Failed to fetch room categories from Firestore:', error);
+    return [];
+  }
+};
+
+const fetchFirestoreRatePlans = async (tenantId: string) => {
+  try {
+    const snapshot = await db
+      .collection('ratePlans')
+      .where('tenantId', '==', tenantId)
+      .where('isActive', '==', true)
+      .get();
+
+    return snapshot.docs
+      .map((doc) => {
+        const data = doc.data() || {};
+        return {
+          id: doc.id,
+          name: data.name,
+          description: data.description ?? null,
+          currency: data.currency ?? 'NGN',
+          baseRate: Number(data.baseRate ?? 0) || null,
+          categoryId: data.categoryId ?? null,
+        };
+      })
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } catch (error) {
+    console.warn('Failed to fetch rate plans from Firestore:', error);
+    return [];
+  }
+};
+
 const availabilityQuerySchema = sharedAvailabilityQuerySchema.pick({
   startDate: true,
   endDate: true,
@@ -433,51 +485,64 @@ publicPortalRouter.get('/:tenantSlug/summary', async (req, res) => {
 publicPortalRouter.get('/:tenantSlug/catalog', async (req, res) => {
   const tenant = await resolveTenantBySlug(req.params.tenantSlug);
 
-  if (!prisma) {
-    throw new AppError('Database connection not initialized', 500);
+  if (prisma) {
+    const [roomCategories, ratePlans, meetingHalls] = await Promise.all([
+      prisma.roomCategory.findMany({
+        where: { tenantId: tenant.id },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.ratePlan.findMany({
+        where: { tenantId: tenant.id, isActive: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.meetingHall.findMany({
+        where: { tenantId: tenant.id, isActive: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        roomCategories: roomCategories.map((category) => ({
+          id: category.id,
+          name: category.name,
+          description: category.description,
+          color: category.color,
+          totalRooms: category.totalRooms,
+        })),
+        ratePlans: ratePlans.map((plan) => ({
+          id: plan.id,
+          name: plan.name,
+          description: plan.description,
+          currency: plan.currency,
+          baseRate: decimalToNumber(plan.baseRate),
+          categoryId: plan.categoryId,
+        })),
+        meetingHalls: meetingHalls.map((hall) => ({
+          id: hall.id,
+          name: hall.name,
+          description: hall.description,
+          capacity: hall.capacity,
+          location: hall.location,
+          amenities: hall.amenities,
+        })),
+      },
+    });
+    return;
   }
 
-  const [roomCategories, ratePlans, meetingHalls] = await Promise.all([
-    prisma.roomCategory.findMany({
-      where: { tenantId: tenant.id },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.ratePlan.findMany({
-      where: { tenantId: tenant.id, isActive: true },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.meetingHall.findMany({
-      where: { tenantId: tenant.id, isActive: true },
-      orderBy: { name: 'asc' },
-    }),
+  const [roomCategories, ratePlans] = await Promise.all([
+    fetchFirestoreRoomCategories(tenant.id),
+    fetchFirestoreRatePlans(tenant.id),
   ]);
 
   res.json({
     success: true,
     data: {
-      roomCategories: roomCategories.map((category) => ({
-        id: category.id,
-        name: category.name,
-        description: category.description,
-        color: category.color,
-        totalRooms: category.totalRooms,
-      })),
-      ratePlans: ratePlans.map((plan) => ({
-        id: plan.id,
-        name: plan.name,
-        description: plan.description,
-        currency: plan.currency,
-        baseRate: decimalToNumber(plan.baseRate),
-        categoryId: plan.categoryId,
-      })),
-      meetingHalls: meetingHalls.map((hall) => ({
-        id: hall.id,
-        name: hall.name,
-        description: hall.description,
-        capacity: hall.capacity,
-        location: hall.location,
-        amenities: hall.amenities,
-      })),
+      roomCategories,
+      ratePlans,
+      meetingHalls: [],
     },
   });
 });

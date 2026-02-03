@@ -43,24 +43,24 @@ const dailyAccountabilityReport = accountabilityModule.dailyAccountabilityReport
 // Define secrets with error handling for discovery phase
 let jwtSecret, jwtRefreshSecret;
 try {
-  jwtSecret = defineSecret('JWT_SECRET');
-  jwtRefreshSecret = defineSecret('JWT_REFRESH_SECRET');
+  // Use environment variables instead of Secret Manager for now
+  jwtSecret = { value: () => process.env.JWT_SECRET || 'your-fallback-jwt-secret-key' };
+  jwtRefreshSecret = { value: () => process.env.JWT_REFRESH_SECRET || 'your-fallback-jwt-refresh-secret-key' };
 } catch (e) {
-  // During discovery, create placeholder secrets
-  jwtSecret = { value: () => process.env.JWT_SECRET || '' };
-  jwtRefreshSecret = { value: () => process.env.JWT_REFRESH_SECRET || '' };
+  // Fallback to environment variables
+  jwtSecret = { value: () => process.env.JWT_SECRET || 'your-fallback-jwt-secret-key' };
+  jwtRefreshSecret = { value: () => process.env.JWT_REFRESH_SECRET || 'your-fallback-jwt-refresh-secret-key' };
 }
 
 // Cache the Express app instance
 let cachedApp = null;
 
-// Export as Firebase Function v2 with secrets
+// Export as Firebase Function v2
 exports.api = onRequest(
   {
     cors: true,
     timeoutSeconds: 540,
     memory: '512MB',
-    secrets: [jwtSecret, jwtRefreshSecret],
   },
   (req, res) => {
     // Lazy load Express app only on first request

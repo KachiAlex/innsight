@@ -1,7 +1,24 @@
 import axios, { AxiosHeaders } from 'axios';
 import toast from 'react-hot-toast';
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || '/api';
+const HOSTING_ORIGINS = new Set([
+  'https://innsight-2025.web.app',
+  'https://innsight-2025.firebaseapp.com',
+]);
+
+const resolveApiBaseUrl = () => {
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (typeof window === 'undefined') {
+    return envUrl || 'https://innsight-backend.onrender.com/api';
+  }
+  const origin = window.location.origin;
+  if (HOSTING_ORIGINS.has(origin)) {
+    return 'https://innsight-backend.onrender.com/api';
+  }
+  return envUrl || 'https://innsight-backend.onrender.com/api';
+};
+
+const API_BASE_URL = resolveApiBaseUrl().replace(/\/$/, '') || '/api';
 export const PUBLIC_PORTAL_BASE_URL = `${API_BASE_URL}/public/portal`;
 const GUEST_SESSION_STORAGE_KEY = 'diy_guest_session';
 const CUSTOMER_TOKEN_STORAGE_KEY = 'diy_customer_token';
