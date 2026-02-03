@@ -5,7 +5,7 @@ import { hashPassword } from '../utils/password';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
-import { db, toDate, now } from '../utils/firestore';
+// import { db, toDate, now } from '../utils/firestore';
 
 export const tenantRouter = Router();
 
@@ -536,46 +536,37 @@ tenantRouter.get('/:id', authenticate, requireRole('iitech_admin'), async (req, 
 // GET /api/tenants - List all tenants (IITECH admin)
 tenantRouter.get('/', authenticate, requireRole('iitech_admin'), async (req, res) => {
   try {
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
     }
-    const db = admin.firestore();
 
-    // Get all tenants
-    const tenantsSnapshot = await db.collection('tenants')
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    // Get counts for each tenant
-    const tenantsWithCounts = await Promise.all(
-      tenantsSnapshot.docs.map(async (doc) => {
-        const tenantData = doc.data();
-        const tenantId = doc.id;
-
-        // Get user count
-        const usersSnapshot = await db.collection('users')
-          .where('tenantId', '==', tenantId)
-          .get();
-
-        // Get rooms count
-        const roomsSnapshot = await db.collection('rooms')
-          .where('tenantId', '==', tenantId)
-          .get();
-
-        return {
-          id: tenantId,
-          ...tenantData,
-          createdAt: tenantData.createdAt?.toDate?.()?.toISOString() || tenantData.createdAt,
-          updatedAt: tenantData.updatedAt?.toDate?.()?.toISOString() || tenantData.updatedAt,
-          _count: {
-            users: usersSnapshot.size,
-            rooms: roomsSnapshot.size,
+    // Get all tenants from PostgreSQL
+    const tenants = await prisma.tenant.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: {
+            users: true,
+            rooms: true,
           },
-        };
-      })
-    );
+        },
+      },
+    });
+
+    // Format the response
+    const tenantsWithCounts = tenants.map((tenant) => ({
+      id: tenant.id,
+      name: tenant.name,
+      slug: tenant.slug,
+      email: tenant.email,
+      phone: tenant.phone,
+      address: tenant.address,
+      subscriptionStatus: tenant.subscriptionStatus,
+      createdAt: tenant.createdAt,
+      updatedAt: tenant.updatedAt,
+      userCount: tenant._count.users,
+      roomsCount: tenant._count.rooms,
+    }));
 
     res.json({
       success: true,
@@ -583,6 +574,11 @@ tenantRouter.get('/', authenticate, requireRole('iitech_admin'), async (req, res
     });
   } catch (error: any) {
     console.error('Error fetching tenants:', error);
-    throw new AppError(`Failed to fetch tenants: ${error.message}`, 500);
+    throw new AppError(
+      `Failed to fetch tenants: ${error.message || 'Unknown error'}`,
+      500
+    );
   }
 });
+
+export { tenantRouter };
