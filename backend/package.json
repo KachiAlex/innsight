@@ -12,7 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
-    "create-admin": "tsx scripts/create-admin-firestore.ts",
+    "create-admin": "curl -X POST http://localhost:3001/api/auth/create-admin",
     "backfill:order-journals": "tsx scripts/backfill-order-journals.ts"
   },
   "prisma": {
@@ -29,8 +29,6 @@
     "express": "^4.18.2",
     "express-async-errors": "^3.1.1",
     "express-rate-limit": "^7.1.5",
-    "firebase-admin": "^11.11.1",
-    "firebase-functions": "^7.0.0",
     "flutterwave-node-v3": "^1.3.0",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",

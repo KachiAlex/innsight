@@ -29,55 +29,54 @@ authRouter.post('/login', async (req, res) => {
   try {
     const { email, password, tenantId } = loginSchema.parse(req.body);
 
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
     }
-    const db = admin.firestore();
 
-    // Query Firestore for user
-    let userQuery = db.collection('users')
-      .where('email', '==', email)
-      .where('isActive', '==', true);
+    // Query PostgreSQL for user
+    const whereClause: any = {
+      email,
+      isActive: true,
+    };
 
     if (tenantId) {
-      userQuery = userQuery.where('tenantId', '==', tenantId);
+      whereClause.tenantId = tenantId;
     }
 
-    const userSnapshot = await userQuery.limit(1).get();
+    const user = await prisma.user.findFirst({
+      where: whereClause,
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
 
-    if (userSnapshot.empty) {
+    if (!user) {
       throw new AppError('Invalid credentials', 401);
     }
 
-    const userDoc = userSnapshot.docs[0];
-    const userData = userDoc.data();
-    const userId = userDoc.id;
-
     // Verify password
-    const isValidPassword = await comparePassword(password, userData.passwordHash);
+    const isValidPassword = await comparePassword(password, user.passwordHash);
     if (!isValidPassword) {
       throw new AppError('Invalid credentials', 401);
     }
 
-    // Get tenant information
-    const tenantDoc = await db.collection('tenants').doc(userData.tenantId).get();
-    if (!tenantDoc.exists) {
-      throw new AppError('Tenant not found', 404);
-    }
-    const tenantData = tenantDoc.data();
-
     // Update last login
-    await userDoc.ref.update({
-      lastLoginAt: admin.firestore.Timestamp.now(),
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
     });
 
     const tokenPayload = {
-      id: userId,
-      tenantId: userData.tenantId,
-      email: userData.email,
-      role: userData.role,
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      role: user.role,
     };
 
     const token = generateToken(tokenPayload);
@@ -89,16 +88,16 @@ authRouter.post('/login', async (req, res) => {
         token,
         refreshToken,
         user: {
-          id: userId,
-          email: userData.email,
-          firstName: userData.firstName,
-          lastName: userData.lastName,
-          role: userData.role,
-          tenantId: userData.tenantId,
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          tenantId: user.tenantId,
           tenant: {
-            id: userData.tenantId,
-            name: tenantData?.name || '',
-            slug: tenantData?.slug || '',
+            id: user.tenant.id,
+            name: user.tenant.name,
+            slug: user.tenant.slug,
           },
         },
       },
@@ -135,29 +134,23 @@ authRouter.post('/refresh', async (req, res) => {
       role: string;
     };
 
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
-    }
-    const db = admin.firestore();
-
-    const userDoc = await db.collection('users').doc(decoded.id).get();
-
-    if (!userDoc.exists) {
-      throw new AppError('User not found or inactive', 401);
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
     }
 
-    const userData = userDoc.data();
-    if (!userData || !userData.isActive) {
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+    });
+
+    if (!user || !user.isActive) {
       throw new AppError('User not found or inactive', 401);
     }
 
     const tokenPayload = {
-      id: decoded.id,
-      tenantId: userData.tenantId,
-      email: userData.email,
-      role: userData.role,
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      role: user.role,
     };
 
     const newToken = generateToken(tokenPayload);
@@ -176,39 +169,44 @@ authRouter.post('/refresh', async (req, res) => {
 // GET /api/auth/me
 authRouter.get('/me', authenticate, async (req: AuthRequest, res) => {
   try {
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
     }
-    const db = admin.firestore();
 
-    const userDoc = await db.collection('users').doc(req.user!.id).get();
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            branding: true,
+          },
+        },
+      },
+    });
 
-    if (!userDoc.exists) {
+    if (!user) {
       throw new AppError('User not found', 404);
     }
-
-    const userData = userDoc.data();
-    const tenantDoc = await db.collection('tenants').doc(userData!.tenantId).get();
-    const tenantData = tenantDoc.exists ? tenantDoc.data() : null;
 
     res.json({
       success: true,
       data: {
-        id: req.user!.id,
-        email: userData!.email,
-        firstName: userData!.firstName,
-        lastName: userData!.lastName,
-        phone: userData!.phone || null,
-        role: userData!.role,
-        permissions: userData!.permissions || null,
-        tenantId: userData!.tenantId,
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone || null,
+        role: user.role,
+        permissions: user.permissions || null,
+        tenantId: user.tenantId,
         tenant: {
-          id: userData!.tenantId,
-          name: tenantData?.name || '',
-          slug: tenantData?.slug || '',
-          branding: tenantData?.branding || null,
+          id: user.tenant.id,
+          name: user.tenant.name,
+          slug: user.tenant.slug,
+          branding: user.tenant.branding || null,
         },
       },
     });
@@ -221,102 +219,175 @@ authRouter.get('/me', authenticate, async (req: AuthRequest, res) => {
   }
 });
 
-// POST /api/auth/create-admin - Create admin account in Firestore (one-time setup, no auth required)
+// POST /api/auth/register
+authRouter.post('/register', async (req, res) => {
+  try {
+    const { email, password, firstName, lastName, phone, role, tenantId } = registerSchema.parse(req.body);
+
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
+    }
+
+    // Check if tenant exists
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      throw new AppError('Tenant not found', 404);
+    }
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        email,
+        tenantId,
+      },
+    });
+
+    if (existingUser) {
+      throw new AppError('User already exists', 409);
+    }
+
+    // Create new user
+    const passwordHash = await hashPassword(password);
+    const user = await prisma.user.create({
+      data: {
+        tenantId,
+        email,
+        passwordHash,
+        firstName,
+        lastName,
+        phone,
+        role,
+        isActive: true,
+      },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    const tokenPayload = {
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      role: user.role,
+    };
+
+    const token = generateToken(tokenPayload);
+    const refreshToken = generateRefreshToken(tokenPayload);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        token,
+        refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          tenantId: user.tenantId,
+          tenant: {
+            id: user.tenant.id,
+            name: user.tenant.name,
+            slug: user.tenant.slug,
+          },
+        },
+      },
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    console.error('Register error:', error);
+    throw new AppError(error.message || 'Registration failed', 500);
+  }
+});
+
+// POST /api/auth/create-admin - Create admin account in PostgreSQL (one-time setup, no auth required)
 authRouter.post('/create-admin', async (req, res) => {
   try {
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    const bcrypt = require('bcryptjs');
-    
-    // Initialize Firebase Admin if not already initialized
-    if (!admin.apps.length) {
-      admin.initializeApp();
+    if (!prisma) {
+      throw new AppError('Database connection not initialized', 500);
     }
-    
-    const db = admin.firestore();
-    
+
     // Find or create IITECH tenant
-    const tenantsRef = db.collection('tenants');
-    let iitechTenantId: string;
-    
-    const tenantSnapshot = await tenantsRef.where('slug', '==', 'iitech').limit(1).get();
-    
-    if (!tenantSnapshot.empty) {
-      iitechTenantId = tenantSnapshot.docs[0].id;
-    } else {
-      const now = admin.firestore.Timestamp.now();
-      const newTenant = {
-        name: 'IITECH Platform',
-        slug: 'iitech',
-        email: 'admin@iitech.com',
-        phone: '+2341234567890',
-        subscriptionStatus: 'active',
-        createdAt: now,
-        updatedAt: now,
-      };
-      const tenantRef = await tenantsRef.add(newTenant);
-      iitechTenantId = tenantRef.id;
+    let iitechTenant = await prisma.tenant.findUnique({
+      where: { slug: 'iitech' },
+    });
+
+    if (!iitechTenant) {
+      iitechTenant = await prisma.tenant.create({
+        data: {
+          name: 'IITECH Platform',
+          slug: 'iitech',
+          email: 'admin@iitech.com',
+          phone: '+2341234567890',
+          subscriptionStatus: 'active',
+        },
+      });
     }
 
     // Create or update admin user
-    const passwordHash = await bcrypt.hash('admin123', 12);
-    const usersRef = db.collection('users');
+    const passwordHash = await hashPassword('admin123');
     
-    const userSnapshot = await usersRef
-      .where('tenantId', '==', iitechTenantId)
-      .where('email', '==', 'admin@insight.com')
-      .limit(1)
-      .get();
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        tenantId: iitechTenant.id,
+        email: 'admin@insight.com',
+      },
+    });
 
-    const now = admin.firestore.Timestamp.now();
-    let adminUserId: string;
-    let adminUserData: any;
-
-    if (!userSnapshot.empty) {
+    let adminUser;
+    if (existingUser) {
       // Update existing user
-      const userDoc = userSnapshot.docs[0];
-      await userDoc.ref.update({
-        passwordHash,
-        firstName: 'Admin',
-        lastName: 'User',
-        role: 'iitech_admin',
-        isActive: true,
-        updatedAt: now,
+      adminUser = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          passwordHash,
+          firstName: 'Admin',
+          lastName: 'User',
+          role: 'iitech_admin',
+          isActive: true,
+        },
       });
-      adminUserId = userDoc.id;
-      adminUserData = { ...userDoc.data(), passwordHash, firstName: 'Admin', lastName: 'User', role: 'iitech_admin', isActive: true };
     } else {
       // Create new user
-      const newUser = {
-        tenantId: iitechTenantId,
-        email: 'admin@insight.com',
-        passwordHash,
-        firstName: 'Admin',
-        lastName: 'User',
-        role: 'iitech_admin',
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const userRef = await usersRef.add(newUser);
-      adminUserId = userRef.id;
-      adminUserData = newUser;
+      adminUser = await prisma.user.create({
+        data: {
+          tenantId: iitechTenant.id,
+          email: 'admin@insight.com',
+          passwordHash,
+          firstName: 'Admin',
+          lastName: 'User',
+          role: 'iitech_admin',
+          isActive: true,
+        },
+      });
     }
 
     res.status(201).json({
       success: true,
-      message: 'Admin account created/updated successfully in Firestore',
+      message: 'Admin account created/updated successfully in PostgreSQL',
       data: {
-        id: adminUserId,
-        email: adminUserData.email,
-        firstName: adminUserData.firstName,
-        lastName: adminUserData.lastName,
-        role: adminUserData.role,
-        tenantId: iitechTenantId,
+        id: adminUser.id,
+        email: adminUser.email,
+        firstName: adminUser.firstName,
+        lastName: adminUser.lastName,
+        role: adminUser.role,
+        tenantId: iitechTenant.id,
       },
     });
   } catch (error: any) {
-    console.error('Error creating admin in Firestore:', error);
+    console.error('Error creating admin in PostgreSQL:', error);
     throw new AppError(`Failed to create admin account: ${error.message}`, 500);
   }
 });
