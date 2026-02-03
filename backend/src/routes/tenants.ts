@@ -580,5 +580,3 @@ tenantRouter.get('/', authenticate, requireRole('iitech_admin'), async (req, res
     );
   }
 });
-
-export { tenantRouter };
