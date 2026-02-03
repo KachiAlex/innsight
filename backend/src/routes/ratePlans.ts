@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
-import { db, now, toDate } from '../utils/firestore';
-import admin from 'firebase-admin';
+import { prisma } from '../utils/prisma';
+
 export const ratePlanRouter = Router({ mergeParams: true });
 
 const createRatePlanSchema = z.object({
@@ -29,64 +29,59 @@ ratePlanRouter.get(
       const tenantId = req.params.tenantId;
       const { isActive, categoryId } = req.query;
 
-      let query: admin.firestore.Query = db.collection('ratePlans')
-        .where('tenantId', '==', tenantId);
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
+      // Build where clause
+      const where: any = { tenantId };
 
       if (isActive !== undefined) {
-        query = query.where('isActive', '==', isActive === 'true');
+        where.isActive = isActive === 'true';
       }
 
-      const snapshot = await query.get();
-      
-      // Filter by category in memory if needed (Firestore doesn't support null comparisons well)
-      let filteredDocs = snapshot.docs;
       if (categoryId !== undefined) {
         if (categoryId === 'none' || categoryId === 'null') {
-          filteredDocs = snapshot.docs.filter(doc => !doc.data().categoryId);
+          where.categoryId = null;
         } else {
-          filteredDocs = snapshot.docs.filter(doc => doc.data().categoryId === categoryId);
+          where.categoryId = categoryId;
         }
       }
-      const ratePlans = filteredDocs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        baseRate: Number(doc.data().baseRate || 0),
-        categoryId: doc.data().categoryId || null,
-        createdAt: toDate(doc.data().createdAt),
-        updatedAt: toDate(doc.data().updatedAt),
-      }));
 
-      // Fetch category names for rate plans that have categories
-      const categoryIds = [...new Set(ratePlans.map(rp => rp.categoryId).filter(Boolean))];
-      const categoryMap: Record<string, any> = {};
-      
-      if (categoryIds.length > 0) {
-        const categoryPromises = categoryIds.map(async (catId) => {
-          try {
-            const catDoc = await db.collection('roomCategories').doc(catId as string).get();
-            if (catDoc.exists) {
-              categoryMap[catId as string] = {
-                id: catDoc.id,
-                name: catDoc.data()?.name,
-                color: catDoc.data()?.color,
-              };
-            }
-          } catch (error) {
-            console.error(`Error fetching category ${catId}:`, error);
-          }
-        });
-        await Promise.all(categoryPromises);
-      }
+      const ratePlans = await prisma.ratePlan.findMany({
+        where,
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+        orderBy: {
+          name: 'asc',
+        },
+      });
 
-      // Add category info to rate plans
-      const ratePlansWithCategories = ratePlans.map(rp => ({
-        ...rp,
-        category: rp.categoryId ? categoryMap[rp.categoryId] || null : null,
+      // Transform to match expected format
+      const transformedRatePlans = ratePlans.map(rp => ({
+        id: rp.id,
+        name: rp.name,
+        description: rp.description,
+        baseRate: Number(rp.baseRate),
+        currency: rp.currency,
+        seasonalRules: rp.seasonalRules,
+        isActive: rp.isActive,
+        categoryId: rp.categoryId,
+        category: rp.category,
+        createdAt: rp.createdAt,
+        updatedAt: rp.updatedAt,
       }));
 
       res.json({
         success: true,
-        data: ratePlansWithCategories,
+        data: transformedRatePlans,
       });
     } catch (error: any) {
       console.error('Error fetching rate plans:', error);
@@ -108,54 +103,50 @@ ratePlanRouter.get(
       const tenantId = req.params.tenantId;
       const ratePlanId = req.params.id;
 
-      const ratePlanDoc = await db.collection('ratePlans').doc(ratePlanId).get();
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
 
-      if (!ratePlanDoc.exists) {
+      const ratePlan = await prisma.ratePlan.findUnique({
+        where: { id: ratePlanId },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          rooms: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      });
+
+      if (!ratePlan || ratePlan.tenantId !== tenantId) {
         throw new AppError('Rate plan not found', 404);
       }
 
-      const ratePlanData = ratePlanDoc.data();
-      if (ratePlanData?.tenantId !== tenantId) {
-        throw new AppError('Rate plan not found', 404);
-      }
-
-      // Get rooms using this rate plan
-      const roomsSnapshot = await db.collection('rooms')
-        .where('tenantId', '==', tenantId)
-        .where('ratePlanId', '==', ratePlanId)
-        .get();
-
-      // Fetch category if exists
-      let category: { id: string; name: string; color?: string } | null = null;
-      if (ratePlanData.categoryId) {
-        try {
-          const catDoc = await db.collection('roomCategories').doc(ratePlanData.categoryId).get();
-          if (catDoc.exists) {
-            category = {
-              id: catDoc.id,
-              name: catDoc.data()?.name,
-              color: catDoc.data()?.color,
-            };
-          }
-        } catch (error) {
-          console.error('Error fetching category:', error);
-        }
-      }
-
-      const ratePlan = {
-        id: ratePlanDoc.id,
-        ...ratePlanData,
-        baseRate: Number(ratePlanData.baseRate || 0),
-        categoryId: ratePlanData.categoryId || null,
-        category,
-        roomCount: roomsSnapshot.size,
-        createdAt: toDate(ratePlanData.createdAt),
-        updatedAt: toDate(ratePlanData.updatedAt),
+      const transformedRatePlan = {
+        id: ratePlan.id,
+        name: ratePlan.name,
+        description: ratePlan.description,
+        baseRate: Number(ratePlan.baseRate),
+        currency: ratePlan.currency,
+        seasonalRules: ratePlan.seasonalRules,
+        isActive: ratePlan.isActive,
+        categoryId: ratePlan.categoryId,
+        category: ratePlan.category,
+        roomCount: ratePlan.rooms.length,
+        createdAt: ratePlan.createdAt,
+        updatedAt: ratePlan.updatedAt,
       };
 
       res.json({
         success: true,
-        data: ratePlan,
+        data: transformedRatePlan,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -180,51 +171,68 @@ ratePlanRouter.post(
       const tenantId = req.params.tenantId;
       const data = createRatePlanSchema.parse(req.body);
 
-      // Check if rate plan name already exists
-      const existingSnapshot = await db.collection('ratePlans')
-        .where('tenantId', '==', tenantId)
-        .where('name', '==', data.name)
-        .limit(1)
-        .get();
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
 
-      if (!existingSnapshot.empty) {
+      // Check if rate plan name already exists
+      const existing = await prisma.ratePlan.findFirst({
+        where: {
+          tenantId,
+          name: data.name,
+        },
+      });
+
+      if (existing) {
         throw new AppError('Rate plan name already exists', 400);
       }
 
       // Validate category if provided
       if (data.categoryId) {
-        const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
-        if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+        const category = await prisma.roomCategory.findUnique({
+          where: { id: data.categoryId },
+        });
+        
+        if (!category || category.tenantId !== tenantId) {
           throw new AppError('Invalid category', 400);
         }
       }
 
       // Create rate plan
-      const ratePlanRef = db.collection('ratePlans').doc();
-      const ratePlanData: any = {
-        tenantId,
-        name: data.name,
-        description: data.description || null,
-        baseRate: data.baseRate,
-        currency: data.currency || 'NGN',
-        seasonalRules: data.seasonalRules || null,
-        isActive: data.isActive !== undefined ? data.isActive : true,
-        createdAt: now(),
-        updatedAt: now(),
-      };
+      const ratePlan = await prisma.ratePlan.create({
+        data: {
+          tenantId,
+          name: data.name,
+          description: data.description,
+          baseRate: data.baseRate,
+          currency: data.currency || 'NGN',
+          seasonalRules: data.seasonalRules,
+          isActive: data.isActive !== undefined ? data.isActive : true,
+          categoryId: data.categoryId,
+        },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+      });
 
-      if (data.categoryId) {
-        ratePlanData.categoryId = data.categoryId;
-      }
-
-      await ratePlanRef.set(ratePlanData);
-
-      const ratePlan = {
-        id: ratePlanRef.id,
-        ...ratePlanData,
-        baseRate: Number(ratePlanData.baseRate),
-        createdAt: toDate(ratePlanData.createdAt),
-        updatedAt: toDate(ratePlanData.updatedAt),
+      const transformedRatePlan = {
+        id: ratePlan.id,
+        name: ratePlan.name,
+        description: ratePlan.description,
+        baseRate: Number(ratePlan.baseRate),
+        currency: ratePlan.currency,
+        seasonalRules: ratePlan.seasonalRules,
+        isActive: ratePlan.isActive,
+        categoryId: ratePlan.categoryId,
+        category: ratePlan.category,
+        createdAt: ratePlan.createdAt,
+        updatedAt: ratePlan.updatedAt,
       };
 
       await createAuditLog({
@@ -232,13 +240,13 @@ ratePlanRouter.post(
         userId: req.user!.id,
         action: 'create_rate_plan',
         entityType: 'rate_plan',
-        entityId: ratePlanRef.id,
-        afterState: ratePlan,
+        entityId: ratePlan.id,
+        afterState: transformedRatePlan,
       });
 
       res.status(201).json({
         success: true,
-        data: ratePlan,
+        data: transformedRatePlan,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -264,95 +272,106 @@ ratePlanRouter.patch(
       const ratePlanId = req.params.id;
       const data = updateRatePlanSchema.parse(req.body);
 
-      const ratePlanDoc = await db.collection('ratePlans').doc(ratePlanId).get();
-
-      if (!ratePlanDoc.exists) {
-        throw new AppError('Rate plan not found', 404);
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
       }
 
-      const ratePlanData = ratePlanDoc.data();
-      if (ratePlanData?.tenantId !== tenantId) {
+      // Get existing rate plan
+      const existing = await prisma.ratePlan.findUnique({
+        where: { id: ratePlanId },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+      });
+
+      if (!existing || existing.tenantId !== tenantId) {
         throw new AppError('Rate plan not found', 404);
       }
 
       // Check name uniqueness if name is being updated
-      if (data.name && data.name !== ratePlanData.name) {
-        const existingSnapshot = await db.collection('ratePlans')
-          .where('tenantId', '==', tenantId)
-          .where('name', '==', data.name)
-          .limit(1)
-          .get();
+      if (data.name && data.name !== existing.name) {
+        const duplicate = await prisma.ratePlan.findFirst({
+          where: {
+            tenantId,
+            name: data.name,
+            id: { not: ratePlanId },
+          },
+        });
 
-        if (!existingSnapshot.empty) {
+        if (duplicate) {
           throw new AppError('Rate plan name already exists', 400);
         }
       }
 
-      const beforeState = {
-        id: ratePlanDoc.id,
-        ...ratePlanData,
-        baseRate: Number(ratePlanData.baseRate || 0),
-        createdAt: toDate(ratePlanData.createdAt),
-        updatedAt: toDate(ratePlanData.updatedAt),
-      };
-
-      // Update rate plan
-      const updateData: any = {
-        updatedAt: now(),
-      };
-
       // Validate category if being updated
       if (data.categoryId !== undefined) {
         if (data.categoryId) {
-          const categoryDoc = await db.collection('roomCategories').doc(data.categoryId).get();
-          if (!categoryDoc.exists || categoryDoc.data()?.tenantId !== tenantId) {
+          const category = await prisma.roomCategory.findUnique({
+            where: { id: data.categoryId },
+          });
+          
+          if (!category || category.tenantId !== tenantId) {
             throw new AppError('Invalid category', 400);
           }
-          updateData.categoryId = data.categoryId;
-        } else {
-          // Setting to null/empty removes category
-          updateData.categoryId = null;
         }
       }
 
+      const beforeState = {
+        id: existing.id,
+        name: existing.name,
+        description: existing.description,
+        baseRate: Number(existing.baseRate),
+        currency: existing.currency,
+        seasonalRules: existing.seasonalRules,
+        isActive: existing.isActive,
+        categoryId: existing.categoryId,
+        category: existing.category,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+      };
+
+      // Update rate plan
+      const updateData: any = {};
       if (data.name !== undefined) updateData.name = data.name;
-      if (data.description !== undefined) updateData.description = data.description || null;
+      if (data.description !== undefined) updateData.description = data.description;
       if (data.baseRate !== undefined) updateData.baseRate = data.baseRate;
       if (data.currency !== undefined) updateData.currency = data.currency;
-      if (data.seasonalRules !== undefined) updateData.seasonalRules = data.seasonalRules || null;
+      if (data.seasonalRules !== undefined) updateData.seasonalRules = data.seasonalRules;
       if (data.isActive !== undefined) updateData.isActive = data.isActive;
+      if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
 
-      await ratePlanDoc.ref.update(updateData);
+      const updated = await prisma.ratePlan.update({
+        where: { id: ratePlanId },
+        data: updateData,
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+        },
+      });
 
-      // Get updated rate plan
-      const updatedDoc = await db.collection('ratePlans').doc(ratePlanId).get();
-      const updatedData = updatedDoc.data();
-
-      // Fetch category if exists
-      let category: { id: string; name: string; color?: string } | null = null;
-      if (updatedData?.categoryId) {
-        try {
-          const catDoc = await db.collection('roomCategories').doc(updatedData.categoryId).get();
-          if (catDoc.exists) {
-            category = {
-              id: catDoc.id,
-              name: catDoc.data()?.name,
-              color: catDoc.data()?.color,
-            };
-          }
-        } catch (error) {
-          console.error('Error fetching category:', error);
-        }
-      }
-
-      const updated = {
-        id: updatedDoc.id,
-        ...updatedData,
-        baseRate: Number(updatedData?.baseRate || 0),
-        categoryId: updatedData?.categoryId || null,
-        category,
-        createdAt: toDate(updatedData?.createdAt),
-        updatedAt: toDate(updatedData?.updatedAt),
+      const afterState = {
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        baseRate: Number(updated.baseRate),
+        currency: updated.currency,
+        seasonalRules: updated.seasonalRules,
+        isActive: updated.isActive,
+        categoryId: updated.categoryId,
+        category: updated.category,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
       };
 
       await createAuditLog({
@@ -362,12 +381,12 @@ ratePlanRouter.patch(
         entityType: 'rate_plan',
         entityId: ratePlanId,
         beforeState,
-        afterState: updated,
+        afterState,
       });
 
       res.json({
         success: true,
-        data: updated,
+        data: afterState,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
@@ -392,37 +411,46 @@ ratePlanRouter.delete(
       const tenantId = req.params.tenantId;
       const ratePlanId = req.params.id;
 
-      const ratePlanDoc = await db.collection('ratePlans').doc(ratePlanId).get();
-
-      if (!ratePlanDoc.exists) {
-        throw new AppError('Rate plan not found', 404);
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
       }
 
-      const ratePlanData = ratePlanDoc.data();
-      if (ratePlanData?.tenantId !== tenantId) {
+      const ratePlan = await prisma.ratePlan.findUnique({
+        where: { id: ratePlanId },
+        include: {
+          rooms: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      });
+
+      if (!ratePlan || ratePlan.tenantId !== tenantId) {
         throw new AppError('Rate plan not found', 404);
       }
 
       // Check if rate plan is in use
-      const roomsSnapshot = await db.collection('rooms')
-        .where('tenantId', '==', tenantId)
-        .where('ratePlanId', '==', ratePlanId)
-        .limit(1)
-        .get();
-
-      if (!roomsSnapshot.empty) {
+      if (ratePlan.rooms.length > 0) {
         throw new AppError('Cannot delete rate plan that is assigned to rooms', 400);
       }
 
       const beforeState = {
-        id: ratePlanDoc.id,
-        ...ratePlanData,
-        baseRate: Number(ratePlanData.baseRate || 0),
-        createdAt: toDate(ratePlanData.createdAt),
-        updatedAt: toDate(ratePlanData.updatedAt),
+        id: ratePlan.id,
+        name: ratePlan.name,
+        description: ratePlan.description,
+        baseRate: Number(ratePlan.baseRate),
+        currency: ratePlan.currency,
+        seasonalRules: ratePlan.seasonalRules,
+        isActive: ratePlan.isActive,
+        categoryId: ratePlan.categoryId,
+        createdAt: ratePlan.createdAt,
+        updatedAt: ratePlan.updatedAt,
       };
 
-      await ratePlanDoc.ref.delete();
+      await prisma.ratePlan.delete({
+        where: { id: ratePlanId },
+      });
 
       await createAuditLog({
         tenantId,
@@ -431,7 +459,6 @@ ratePlanRouter.delete(
         entityType: 'rate_plan',
         entityId: ratePlanId,
         beforeState,
-        afterState: null,
       });
 
       res.json({

@@ -3,7 +3,7 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { getPaginationParams, createPaginationResult } from '../utils/pagination';
-import { db, now, toDate } from '../utils/firestore';
+import { prisma } from '../utils/prisma';
 
 export const alertRouter = Router({ mergeParams: true });
 
@@ -19,88 +19,66 @@ alertRouter.get(
 
       const { skip, take, page, limit } = getPaginationParams(req);
 
-      // Build query - Firestore doesn't support multiple orderBy without composite indexes
-      // So we'll fetch all and sort in memory
-      let query: FirebaseFirestore.Query = db.collection('alerts')
-        .where('tenantId', '==', tenantId);
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
+      // Build where clause
+      const where: any = { tenantId };
 
       if (status) {
-        query = query.where('status', '==', status);
+        where.status = status;
       }
 
       if (alertType) {
-        query = query.where('alertType', '==', alertType);
+        where.alertType = alertType;
       }
 
       if (severity) {
-        query = query.where('severity', '==', severity);
+        where.severity = severity;
       }
 
-      const snapshot = await query.get();
-      
-      // Transform and filter alerts
-      let alerts = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          tenantId: data.tenantId,
-          alertType: data.alertType,
-          severity: data.severity,
-          status: data.status || 'active',
-          title: data.title,
-          message: data.message,
-          metadata: data.metadata || null,
-          resolvedBy: data.resolvedBy || null,
-          resolvedAt: data.resolvedAt ? toDate(data.resolvedAt) : null,
-          createdAt: toDate(data.createdAt),
-          updatedAt: toDate(data.updatedAt),
-        };
-      });
+      // Get alerts with resolver information
+      const [alerts, total] = await Promise.all([
+        prisma.alert.findMany({
+          where,
+          include: {
+            resolver: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+          orderBy: [
+            { severity: 'desc' },
+            { createdAt: 'desc' },
+          ],
+          skip,
+          take,
+        }),
+        prisma.alert.count({ where }),
+      ]);
 
-      // Sort by severity (desc) then createdAt (desc)
-      alerts.sort((a, b) => {
-        const severityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-        const severityDiff = (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0);
-        if (severityDiff !== 0) return severityDiff;
-        
-        const aTime = a.createdAt?.getTime() || 0;
-        const bTime = b.createdAt?.getTime() || 0;
-        return bTime - aTime;
-      });
+      // Transform alerts to match expected format
+      const transformedAlerts = alerts.map(alert => ({
+        id: alert.id,
+        tenantId: alert.tenantId,
+        alertType: alert.alertType,
+        severity: alert.severity,
+        status: alert.status,
+        title: alert.title,
+        message: alert.message,
+        metadata: alert.metadata,
+        resolvedBy: alert.resolvedBy,
+        resolvedAt: alert.resolvedAt,
+        createdAt: alert.createdAt,
+        updatedAt: alert.updatedAt,
+        resolver: alert.resolver,
+      }));
 
-      // Get resolver information for resolved alerts
-      const alertsWithResolvers = await Promise.all(
-        alerts.map(async (alert) => {
-          if (alert.resolvedBy) {
-            try {
-              const resolverDoc = await db.collection('users').doc(alert.resolvedBy).get();
-              if (resolverDoc.exists) {
-                const resolverData = resolverDoc.data();
-                return {
-                  ...alert,
-                  resolver: {
-                    id: resolverDoc.id,
-                    firstName: resolverData?.firstName || null,
-                    lastName: resolverData?.lastName || null,
-                  },
-                };
-              }
-            } catch (error) {
-              console.warn('Error fetching resolver:', error);
-            }
-          }
-          return {
-            ...alert,
-            resolver: null,
-          };
-        })
-      );
-
-      // Apply pagination
-      const total = alertsWithResolvers.length;
-      const paginatedAlerts = alertsWithResolvers.slice(skip, skip + take);
-
-      const result = createPaginationResult(paginatedAlerts, total, page, limit);
+      const result = createPaginationResult(transformedAlerts, total, page, limit);
 
       res.json({
         success: true,
@@ -126,45 +104,57 @@ alertRouter.post(
       const tenantId = req.params.tenantId;
       const alertId = req.params.id;
 
-      const alertDoc = await db.collection('alerts').doc(alertId).get();
-
-      if (!alertDoc.exists) {
-        throw new AppError('Alert not found', 404);
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
       }
 
-      const alertData = alertDoc.data();
-      if (alertData?.tenantId !== tenantId) {
+      // Get the alert
+      const alert = await prisma.alert.findUnique({
+        where: { id: alertId },
+        include: {
+          resolver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (!alert || alert.tenantId !== tenantId) {
         throw new AppError('Alert not found', 404);
       }
 
       const beforeState = {
-        id: alertDoc.id,
-        ...alertData,
-        resolvedBy: alertData?.resolvedBy || null,
-        resolvedAt: alertData?.resolvedAt ? toDate(alertData.resolvedAt) : null,
-        createdAt: toDate(alertData?.createdAt),
-        updatedAt: toDate(alertData?.updatedAt),
+        id: alert.id,
+        ...alert,
+        resolver: alert.resolver,
       };
 
       // Update alert
-      await alertDoc.ref.update({
-        status: 'resolved',
-        resolvedBy: req.user!.id,
-        resolvedAt: now(),
-        updatedAt: now(),
+      const updatedAlert = await prisma.alert.update({
+        where: { id: alertId },
+        data: {
+          status: 'resolved',
+          resolvedBy: req.user!.id,
+          resolvedAt: new Date(),
+        },
+        include: {
+          resolver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
       });
 
-      // Get updated alert
-      const updatedDoc = await db.collection('alerts').doc(alertId).get();
-      const updatedData = updatedDoc.data();
-
-      const updated = {
-        id: updatedDoc.id,
-        ...updatedData,
-        resolvedBy: updatedData?.resolvedBy || null,
-        resolvedAt: updatedData?.resolvedAt ? toDate(updatedData.resolvedAt) : null,
-        createdAt: toDate(updatedData?.createdAt),
-        updatedAt: toDate(updatedData?.updatedAt),
+      const afterState = {
+        id: updatedAlert.id,
+        ...updatedAlert,
+        resolver: updatedAlert.resolver,
       };
 
       await createAuditLog({
@@ -174,12 +164,12 @@ alertRouter.post(
         entityType: 'alert',
         entityId: alertId,
         beforeState,
-        afterState: updated,
+        afterState,
       });
 
       res.json({
         success: true,
-        data: updated,
+        data: afterState,
       });
     } catch (error: any) {
       if (error instanceof AppError) {
