@@ -13,14 +13,14 @@ RUN npm install --include=dev
 FROM deps AS build
 COPY . .
 RUN npx prisma generate
-RUN npm run build
-# Don't prune devDependencies since we need them for the build
+# Skip TypeScript build - we'll use tsx directly
 
 FROM base AS runner
 WORKDIR /usr/src/app
 COPY --from=build /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/src ./src
+COPY --from=build /usr/src/app/prisma ./prisma
 COPY package*.json ./
 
 EXPOSE 8080
-CMD ["node", "dist/index.js"]
+CMD ["npm", "run", "start"]
