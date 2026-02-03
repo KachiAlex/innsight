@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
-import admin from 'firebase-admin';
+// import admin from 'firebase-admin';
 import { AppError } from '../middleware/errorHandler';
 import { prisma } from '../utils/prisma';
 import {
@@ -12,7 +12,7 @@ import {
   type AvailabilityQuery,
 } from '../utils/sharedAvailability';
 import { resolveTenantBySlug } from '../utils/tenantContext';
-import { db, now, toTimestamp, toDate } from '../utils/firestore';
+// import { db, now, toTimestamp, toDate } from '../utils/firestore';
 import {
   ensureGuestSession,
   markSessionConverted,

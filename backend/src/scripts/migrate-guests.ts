@@ -5,8 +5,8 @@
  * in the guests collection. It also links reservations to their respective guests.
  */
 
-import { db, toDate, toTimestamp, now } from '../utils/firestore';
-import admin from 'firebase-admin';
+// import { db, toDate, toTimestamp, now } from '../utils/firestore';
+// import admin from 'firebase-admin';
 
 interface GuestData {
   tenantId: string;

@@ -24,7 +24,7 @@ import {
   type TenantPaymentSettings,
 } from '../utils/publicPayments';
 import { v4 as uuidv4 } from 'uuid';
-import admin from 'firebase-admin';
+// import admin from 'firebase-admin';
 export const paymentRouter = Router({ mergeParams: true });
 
 const createPaymentSchema = z.object({

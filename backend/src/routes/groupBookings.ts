@@ -4,10 +4,10 @@ import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
 import { createAlert } from '../utils/alerts';
-import { db, now, toDate, toTimestamp } from '../utils/firestore';
+// import { db, now, toDate, toTimestamp } from '../utils/firestore';
 import { createRoomLog } from '../utils/roomLogs';
 import { v4 as uuidv4 } from 'uuid';
-import admin from 'firebase-admin';
+// import admin from 'firebase-admin';
 
 export const groupBookingRouter = Router({ mergeParams: true });
 
