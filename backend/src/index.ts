@@ -8,6 +8,7 @@ import rateLimit from 'express-rate-limit';
 import { errorHandler } from './middleware/errorHandler';
 import { authRouter } from './routes/auth';
 import { tenantRouter } from './routes/tenants';
+import { tenantAdminRouter } from './routes/tenant-admin';
 import { reservationRouter } from './routes/reservations';
 import { roomRouter } from './routes/rooms';
 import { folioRouter } from './routes/folios';
@@ -121,6 +122,7 @@ app.get('/api/health', (req, res) => {
 
 // API routes
 app.use('/api/auth', authRouter);
+app.use('/api/tenants', tenantAdminRouter); // Admin management routes (must be first)
 app.use('/api/tenants', tenantRouter);
 app.use('/api/tenants/:tenantId/reservations', reservationRouter);
 app.use('/api/tenants/:tenantId/rooms', roomRouter);
