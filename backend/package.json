@@ -14,6 +14,12 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "create-admin": "curl -X POST http://localhost:3001/api/auth/create-admin",
     "migrate:illuminate": "tsx scripts/migrate-illuminate-tenant.ts",
+    "migrate:illuminate-full": "tsx scripts/run-migration-with-credentials.ts",
+    "test:firebase": "tsx scripts/test-firebase-connection.ts",
+    "generate:rooms-csv": "tsx scripts/generate-rooms-csv.ts",
+    "import:rooms": "tsx scripts/import-rooms-from-csv.ts",
+    "import:170-rooms": "tsx scripts/import-170-rooms-direct.ts",
+    "quick-setup:illuminate": "tsx scripts/quick-setup-illuminate.ts",
     "backfill:order-journals": "tsx scripts/backfill-order-journals.ts"
   },
   "prisma": {
