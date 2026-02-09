@@ -5,6 +5,7 @@ import { AppError } from '../middleware/errorHandler';
 export type CustomerTokenPayload = {
   tenantId: string;
   guestId?: string | null;
+  guestAccountId?: string | null;
   sessionToken?: string | null;
   reservationId?: string | null;
 };

@@ -75,6 +75,8 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const WagePlansPage = lazy(() => import('./pages/WagePlansPage'));
 const IntegrationPage = lazy(() => import('./pages/IntegrationPage'));
 const PublicCheckoutPage = lazy(() => import('./pages/PublicCheckoutPage'));
+const PortalAccessPage = lazy(() => import('./pages/PortalAccessPage'));
+const PortalDashboardPage = lazy(() => import('./pages/PortalDashboardPage'));
 
 function App() {
   const PageLoader = () => (
@@ -258,6 +260,22 @@ function App() {
                     <TenantLoginPage />
                   </Suspense>
                 </TenantLoginRouteGuard>
+              }
+            />
+            <Route
+              path="/portal/:tenantSlug/access"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <PortalAccessPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/portal/:tenantSlug/dashboard"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <PortalDashboardPage />
+                </Suspense>
               }
             />
             <Route

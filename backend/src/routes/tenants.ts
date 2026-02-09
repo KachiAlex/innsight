@@ -28,6 +28,8 @@ const updateTenantAdminSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   phone: z.string().optional(),
+  password: z.string().min(6).optional(), // Added password field
+  isActive: z.boolean().optional(),
 });
 
 const resetPasswordSchema = z.object({
@@ -51,36 +53,37 @@ tenantRouter.get('/:id/admin', authenticate, requireRole('iitech_admin'), async 
     const tenantId = req.params.id;
 
     // Verify tenant exists
-    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-    if (!tenantDoc.exists) {
+    const tenant = await prisma?.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
       throw new AppError('Tenant not found', 404);
     }
 
     // Find tenant admin (owner role)
-    const adminSnapshot = await db.collection('users')
-      .where('tenantId', '==', tenantId)
-      .where('role', '==', 'owner')
-      .limit(1)
-      .get();
+    const admin = await prisma?.user.findFirst({
+      where: {
+        tenantId,
+        role: 'owner',
+      },
+    });
 
-    if (adminSnapshot.empty) {
+    if (!admin) {
       throw new AppError('Tenant admin not found', 404);
     }
 
-    const adminDoc = adminSnapshot.docs[0];
-    const adminData = adminDoc.data();
-
     const tenantAdmin = {
-      id: adminDoc.id,
-      email: adminData.email,
-      firstName: adminData.firstName,
-      lastName: adminData.lastName,
-      phone: adminData.phone || null,
-      role: adminData.role,
-      isActive: adminData.isActive,
-      lastLoginAt: adminData.lastLoginAt ? toDate(adminData.lastLoginAt) : null,
-      createdAt: toDate(adminData.createdAt),
-      updatedAt: toDate(adminData.updatedAt),
+      id: admin.id,
+      email: admin.email,
+      firstName: admin.firstName,
+      lastName: admin.lastName,
+      phone: admin.phone || null,
+      role: admin.role,
+      isActive: admin.isActive,
+      lastLogin: admin.lastLogin,
+      createdAt: admin.createdAt,
+      updatedAt: admin.updatedAt,
     };
 
     res.json({
@@ -103,72 +106,86 @@ tenantRouter.patch('/:id/admin', authenticate, requireRole('iitech_admin'), asyn
     const data = updateTenantAdminSchema.parse(req.body);
 
     // Verify tenant exists
-    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-    if (!tenantDoc.exists) {
+    const tenant = await prisma?.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
       throw new AppError('Tenant not found', 404);
     }
 
     // Find tenant admin (owner role)
-    const adminSnapshot = await db.collection('users')
-      .where('tenantId', '==', tenantId)
-      .where('role', '==', 'owner')
-      .limit(1)
-      .get();
+    const admin = await prisma?.user.findFirst({
+      where: {
+        tenantId,
+        role: 'owner',
+      },
+    });
 
-    if (adminSnapshot.empty) {
+    if (!admin) {
       throw new AppError('Tenant admin not found', 404);
     }
 
-    const adminDoc = adminSnapshot.docs[0];
-    const adminData = adminDoc.data();
     const beforeState = {
-      email: adminData.email,
-      firstName: adminData.firstName,
-      lastName: adminData.lastName,
-      phone: adminData.phone || null,
+      email: admin.email,
+      firstName: admin.firstName,
+      lastName: admin.lastName,
+      phone: admin.phone || null,
+      isActive: admin.isActive,
     };
 
     // Check if email is being changed and if it already exists
-    if (data.email && data.email !== adminData.email) {
-      const emailCheckSnapshot = await db.collection('users')
-        .where('email', '==', data.email)
-        .where('tenantId', '==', tenantId)
-        .limit(1)
-        .get();
+    if (data.email && data.email !== admin.email) {
+      const existingUser = await prisma?.user.findFirst({
+        where: {
+          email: data.email,
+          tenantId,
+          id: { not: admin.id },
+        },
+      });
 
-      if (!emailCheckSnapshot.empty) {
-        throw new AppError('Email already exists for this tenant', 400);
+      if (existingUser) {
+        throw new AppError('Email already exists in this tenant', 400);
       }
     }
 
     // Prepare update data
     const updateData: any = {
-      updatedAt: now(),
+      updatedAt: new Date(),
     };
 
     if (data.email !== undefined) updateData.email = data.email;
     if (data.firstName !== undefined) updateData.firstName = data.firstName;
     if (data.lastName !== undefined) updateData.lastName = data.lastName;
     if (data.phone !== undefined) updateData.phone = data.phone || null;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+
+    // Handle password update
+    if (data.password) {
+      updateData.passwordHash = await hashPassword(data.password);
+    }
 
     // Update admin
-    await adminDoc.ref.update(updateData);
+    const updatedAdmin = await prisma?.user.update({
+      where: { id: admin.id },
+      data: updateData,
+    });
 
-    // Get updated admin
-    const updatedDoc = await db.collection('users').doc(adminDoc.id).get();
-    const updatedData = updatedDoc.data();
+    if (!updatedAdmin) {
+      throw new AppError('Failed to update admin', 500);
+    }
 
     const updated = {
-      id: updatedDoc.id,
-      email: updatedData?.email,
-      firstName: updatedData?.firstName,
-      lastName: updatedData?.lastName,
-      phone: updatedData?.phone || null,
-      role: updatedData?.role,
-      isActive: updatedData?.isActive,
-      lastLoginAt: updatedData?.lastLoginAt ? toDate(updatedData.lastLoginAt) : null,
-      createdAt: toDate(updatedData?.createdAt),
-      updatedAt: toDate(updatedData?.updatedAt),
+      id: updatedAdmin.id,
+      email: updatedAdmin.email,
+      firstName: updatedAdmin.firstName,
+      lastName: updatedAdmin.lastName,
+      phone: updatedAdmin.phone || null,
+      role: updatedAdmin.role,
+      isActive: updatedAdmin.isActive,
+      lastLogin: updatedAdmin.lastLogin,
+      createdAt: updatedAdmin.createdAt,
+      updatedAt: updatedAdmin.updatedAt,
     };
 
     // Create audit log
@@ -178,13 +195,15 @@ tenantRouter.patch('/:id/admin', authenticate, requireRole('iitech_admin'), asyn
         userId: req.user!.id,
         action: 'update_tenant_admin',
         entityType: 'user',
-        entityId: adminDoc.id,
+        entityId: admin.id,
         beforeState,
         afterState: {
           email: updated.email,
           firstName: updated.firstName,
           lastName: updated.lastName,
-          phone: updated.phone,
+          phone: updated.phone || null,
+          isActive: updated.isActive,
+          passwordChanged: !!data.password,
         },
       });
     } catch (auditError) {
@@ -194,6 +213,7 @@ tenantRouter.patch('/:id/admin', authenticate, requireRole('iitech_admin'), asyn
     res.json({
       success: true,
       data: updated,
+      message: data.password ? 'Admin details and password updated successfully' : 'Admin details updated successfully',
     });
   } catch (error: any) {
     if (error instanceof AppError) {

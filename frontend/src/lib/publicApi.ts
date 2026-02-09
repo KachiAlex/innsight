@@ -63,6 +63,13 @@ export const clearCustomerToken = () => {
   localStorage.removeItem(CUSTOMER_TOKEN_STORAGE_KEY);
 };
 
+export const hasCustomerToken = () => Boolean(getCustomerToken());
+
+export const clearCustomerAuthState = () => {
+  clearCustomerToken();
+  clearGuestSessionToken();
+};
+
 export const buildGuestHeaders = (): Record<string, string> => {
   const token = getGuestSessionToken();
   return token ? { 'x-guest-session': token } : {};

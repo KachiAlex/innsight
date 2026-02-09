@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
-// import admin from 'firebase-admin';
 import { AppError } from '../middleware/errorHandler';
 import { prisma } from '../utils/prisma';
 import {
@@ -12,7 +11,7 @@ import {
   type AvailabilityQuery,
 } from '../utils/sharedAvailability';
 import { resolveTenantBySlug } from '../utils/tenantContext';
-// import { db, now, toTimestamp, toDate } from '../utils/firestore';
+import { db, now, toTimestamp, toDate, adminSdk } from '../utils/firestore';
 import {
   ensureGuestSession,
   markSessionConverted,
@@ -49,6 +48,7 @@ import {
   resolveTenantUserId,
   type CreateReservationBatchInput,
 } from '../utils/reservationBatch';
+import { hashPassword, comparePassword } from '../utils/password';
 
 const reservationLoginSchema = z.object({
   reservationNumber: z.string().min(4),
@@ -68,6 +68,19 @@ const otpVerifySchema = z.object({
 
 const customerRequestSchema = z.object({
   guestToken: z.string().optional(),
+});
+
+const customerSignupSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+  phone: z.string().optional(),
+  password: z.string().min(6),
+  marketingOptIn: z.boolean().optional(),
+});
+
+const customerPasswordLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
 });
 
 const GUEST_SESSION_HEADER = 'x-guest-session';
@@ -147,6 +160,7 @@ const serializeReservationForCustomer = (reservation: any) => ({
   balance: reservation.balance ? decimalToNumber(reservation.balance) : null,
 });
 
+
 const fetchReservationForLogin = async (tenantId: string, reservationNumber: string) => {
   if (!prisma) {
     throw new AppError('Database connection not initialized', 500);
@@ -195,6 +209,151 @@ const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() ??
 
 const normalizePhone = (phone?: string | null) =>
   phone?.replace(/[^0-9+]/g, '').trim() ?? null;
+
+const serializeGuestAccount = (account: any) => ({
+  id: account.id,
+  email: account.email,
+  phone: account.phone,
+  isEmailVerified: account.isEmailVerified,
+  isPhoneVerified: account.isPhoneVerified,
+  marketingOptIn: account.marketingOptIn,
+  lastLoginAt: account.lastLoginAt?.toISOString?.() ?? account.lastLoginAt ?? null,
+});
+
+type GuestAccountLookup = {
+  guestId?: string | null;
+  email?: string | null;
+};
+
+const guestAccountInclude = {
+  guest: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+    },
+  },
+};
+
+const findGuestAccountForReservation = async (
+  tenantId: string,
+  { guestId, email }: GuestAccountLookup
+) => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  if (!guestId && !email) {
+    return null;
+  }
+
+  const where: Record<string, any> = {
+    tenantId,
+  };
+
+  const conditions: Record<string, any>[] = [];
+  if (guestId) {
+    conditions.push({ guestId });
+  }
+  if (email) {
+    conditions.push({ email: normalizeEmail(email) ?? undefined });
+  }
+
+  if (conditions.length) {
+    where.OR = conditions;
+  }
+
+  return prisma.guestAccount.findFirst({
+    where,
+    include: guestAccountInclude,
+  });
+};
+
+const maybeLinkGuestAccountToGuest = async (guestAccount: any, guestId?: string | null) => {
+  if (!prisma || !guestAccount || !guestId || guestAccount.guestId === guestId) {
+    return guestAccount;
+  }
+
+  return prisma.guestAccount.update({
+    where: { id: guestAccount.id },
+    data: { guestId },
+    include: guestAccountInclude,
+  });
+};
+
+const findGuestAccountByEmail = async (tenantId: string, email: string) => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  return prisma.guestAccount.findFirst({
+    where: {
+      tenantId,
+      email: normalizeEmail(email),
+    },
+    include: guestAccountInclude,
+  });
+};
+
+const fetchGuestAccountById = async (tenantId: string, guestAccountId: string) => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  return prisma.guestAccount.findFirst({
+    where: {
+      tenantId,
+      id: guestAccountId,
+    },
+    include: guestAccountInclude,
+  });
+};
+
+const fetchReservationsForGuestAccount = async (
+  tenantId: string,
+  guestAccount: any,
+  limit = 10
+) => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  const filters: Prisma.ReservationWhereInput[] = [];
+  if (guestAccount.guestId) {
+    filters.push({ guestId: guestAccount.guestId });
+  }
+  if (guestAccount.email) {
+    filters.push({ guestEmail: normalizeEmail(guestAccount.email) });
+  }
+
+  const where: Prisma.ReservationWhereInput = {
+    tenantId,
+  };
+
+  if (filters.length) {
+    where.OR = filters;
+  }
+
+  const reservations = await prisma.reservation.findMany({
+    where,
+    include: {
+      room: {
+        select: {
+          id: true,
+          roomNumber: true,
+          roomType: true,
+        },
+      },
+    },
+    orderBy: {
+      checkInDate: 'desc',
+    },
+    take: limit,
+  });
+
+  return reservations.map(serializeReservationForCustomer);
+};
 
 const ensureContactMatch = (
   reservation: any,
@@ -329,9 +488,20 @@ const issueCustomerAuthResponse = async ({
     lastReservationId: reservation.id,
   });
 
+  let linkedGuestAccount = await findGuestAccountForReservation(tenantId, {
+    guestId: reservation.guestId,
+    email: reservation.guestEmail ?? reservation.guest?.email,
+  });
+
+  linkedGuestAccount = await maybeLinkGuestAccountToGuest(
+    linkedGuestAccount,
+    reservation.guestId
+  );
+
   const customerToken = issueCustomerToken({
     tenantId,
     guestId: reservation.guestId ?? null,
+    guestAccountId: linkedGuestAccount?.id ?? null,
     sessionToken: ensuredToken,
     reservationId: reservation.id ?? null,
   });
@@ -343,11 +513,52 @@ const issueCustomerAuthResponse = async ({
     token: customerToken,
     guestSessionToken: ensuredToken,
     reservation: serializeReservationForCustomer(reservation),
+    guestAccount: linkedGuestAccount ? serializeGuestAccount(linkedGuestAccount) : null,
+  };
+};
+
+const issueGuestAccountAuthResponse = async ({
+  tenantId,
+  guestAccount,
+  req,
+  res,
+}: {
+  tenantId: string;
+  guestAccount: any;
+  req: any;
+  res: any;
+}) => {
+  const sessionToken = getGuestSessionToken(req);
+  const { sessionToken: ensuredToken } = await ensureGuestSession({
+    tenantId,
+    sessionToken,
+    guest: {
+      id: guestAccount.guestId ?? undefined,
+      name: guestAccount.guest?.name ?? undefined,
+      email: guestAccount.email ?? guestAccount.guest?.email ?? undefined,
+      phone: guestAccount.phone ?? guestAccount.guest?.phone ?? undefined,
+    },
+  });
+
+  const customerToken = issueCustomerToken({
+    tenantId,
+    guestId: guestAccount.guestId ?? null,
+    guestAccountId: guestAccount.id,
+    sessionToken: ensuredToken,
+    reservationId: null,
+  });
+
+  setCustomerTokenCookie(res, customerToken);
+  setGuestSessionCookie(res, ensuredToken);
+
+  return {
+    token: customerToken,
+    guestSessionToken: ensuredToken,
   };
 };
 
 const getOtpDocRef = (tenantId: string, reservationNumber: string) =>
-  db.collection(OTP_COLLECTION).doc(`${tenantId}_${reservationNumber}`);
+  db!.collection(OTP_COLLECTION).doc(`${tenantId}_${reservationNumber}`);
 
 const generateOtpCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -370,7 +581,7 @@ const decimalToNumber = (value?: Prisma.Decimal | number | null) =>
 
 const fetchFirestoreRoomCategories = async (tenantId: string) => {
   try {
-    const snapshot = await db
+    const snapshot = await db!
       .collection('roomCategories')
       .where('tenantId', '==', tenantId)
       .get();
@@ -395,7 +606,7 @@ const fetchFirestoreRoomCategories = async (tenantId: string) => {
 
 const fetchFirestoreRatePlans = async (tenantId: string) => {
   try {
-    const snapshot = await db
+    const snapshot = await db!
       .collection('ratePlans')
       .where('tenantId', '==', tenantId)
       .where('isActive', '==', true)
@@ -734,7 +945,7 @@ publicPortalRouter.post('/:tenantSlug/checkout/intent', async (req, res) => {
 
   const amountMinor = convertMajorToMinor(amountMajor);
   const { settings, gateway, currency, credentials } = await resolveCheckoutPaymentConfig(tenant.id, booking);
-  const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + CHECKOUT_INTENT_TTL_MS);
+  const expiresAt = adminSdk.firestore.Timestamp.fromMillis(Date.now() + CHECKOUT_INTENT_TTL_MS);
 
   const sessionToken = getGuestSessionToken(req);
   const { sessionToken: ensuredToken } = await ensureGuestSession({
@@ -747,7 +958,7 @@ publicPortalRouter.post('/:tenantSlug/checkout/intent', async (req, res) => {
     },
   });
 
-  const docRef = db.collection(CHECKOUT_INTENT_COLLECTION).doc();
+  const docRef = db!.collection(CHECKOUT_INTENT_COLLECTION).doc();
   const paymentReference = `CKO-${Date.now()}-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
   const paymentInit = await initializeGatewayPayment({
     gateway,
@@ -1004,7 +1215,7 @@ publicPortalRouter.post('/:tenantSlug/checkout/confirm', async (req, res) => {
     createdBy,
   });
 
-  const paymentDocRef = db.collection('payments').doc();
+  const paymentDocRef = db!.collection('payments').doc();
   const paymentTimestamp = now();
   await paymentDocRef.set({
     tenantId: tenant.id,
@@ -1058,6 +1269,116 @@ publicPortalRouter.post('/:tenantSlug/checkout/confirm', async (req, res) => {
       reservation: authResponse.reservation,
       customerToken: authResponse.token,
       guestSessionToken: authResponse.guestSessionToken,
+    },
+  });
+});
+
+publicPortalRouter.post('/:tenantSlug/signup', async (req, res) => {
+  const tenant = await resolveTenantBySlug(req.params.tenantSlug);
+
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  const parsed = customerSignupSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError('Invalid signup payload', 400);
+  }
+
+  const { name, email, phone, password, marketingOptIn = true } = parsed.data;
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new AppError('Valid email is required', 400);
+  }
+
+  const existingAccount = await findGuestAccountByEmail(tenant.id, normalizedEmail);
+  if (existingAccount) {
+    throw new AppError('Account already exists. Please log in instead.', 409);
+  }
+
+  const guestProfile = await upsertGuestProfile({
+    tenantId: tenant.id,
+    name,
+    email: normalizedEmail,
+    phone,
+  });
+
+  const passwordHash = await hashPassword(password);
+  const guestAccount = await prisma.guestAccount.create({
+    data: {
+      tenantId: tenant.id,
+      guestId: guestProfile?.id ?? null,
+      email: normalizedEmail,
+      phone: normalizePhone(phone),
+      passwordHash,
+      marketingOptIn,
+      isEmailVerified: false,
+      isPhoneVerified: false,
+    },
+    include: guestAccountInclude,
+  });
+
+  const authResponse = await issueGuestAccountAuthResponse({
+    tenantId: tenant.id,
+    guestAccount,
+    req,
+    res,
+  });
+
+  res.status(201).json({
+    success: true,
+    data: {
+      ...authResponse,
+      guestAccount: serializeGuestAccount(guestAccount),
+    },
+  });
+});
+
+publicPortalRouter.post('/:tenantSlug/login/password', async (req, res) => {
+  const tenant = await resolveTenantBySlug(req.params.tenantSlug);
+
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  const parsed = customerPasswordLoginSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new AppError('Invalid login payload', 400);
+  }
+
+  const { email, password } = parsed.data;
+  const guestAccount = await findGuestAccountByEmail(tenant.id, email);
+
+  if (!guestAccount) {
+    throw new AppError('Account not found', 404);
+  }
+
+  const passwordMatches = await comparePassword(password, guestAccount.passwordHash);
+  if (!passwordMatches) {
+    throw new AppError('Invalid credentials', 401);
+  }
+
+  await prisma.guestAccount.update({
+    where: { id: guestAccount.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  const authResponse = await issueGuestAccountAuthResponse({
+    tenantId: tenant.id,
+    guestAccount,
+    req,
+    res,
+  });
+
+  const reservations = await fetchReservationsForGuestAccount(tenant.id, guestAccount);
+
+  res.json({
+    success: true,
+    data: {
+      ...authResponse,
+      guestAccount: serializeGuestAccount(guestAccount),
+      reservations,
     },
   });
 });
@@ -1121,7 +1442,7 @@ publicPortalRouter.post('/:tenantSlug/login/otp/request', async (req, res) => {
 
   const code = generateOtpCode();
   const codeHash = await bcrypt.hash(code, 10);
-  const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + OTP_TTL_MS));
+  const expiresAt = adminSdk.firestore.Timestamp.fromDate(new Date(Date.now() + OTP_TTL_MS));
   const otpDocRef = getOtpDocRef(tenant.id, reservationNumber);
 
   await otpDocRef.set({
@@ -1167,7 +1488,7 @@ publicPortalRouter.post('/:tenantSlug/login/otp/verify', async (req, res) => {
     reservationId: string;
     codeHash: string;
     attempts: number;
-    expiresAt: admin.firestore.Timestamp;
+    expiresAt: adminSdk.firestore.Timestamp;
   };
 
   const nowDate = new Date();
@@ -1184,7 +1505,7 @@ publicPortalRouter.post('/:tenantSlug/login/otp/verify', async (req, res) => {
   const isValid = await bcrypt.compare(code, data.codeHash);
   if (!isValid) {
     await otpDocRef.update({
-      attempts: admin.firestore.FieldValue.increment(1),
+      attempts: adminSdk.firestore.FieldValue.increment(1),
       updatedAt: now(),
     });
     throw new AppError('Invalid OTP code', 401);
@@ -1214,19 +1535,54 @@ publicPortalRouter.get('/:tenantSlug/me', async (req, res) => {
   const tenant = await resolveTenantBySlug(req.params.tenantSlug);
   const payload = await customerAuthMiddleware(req, tenant.id);
 
-  if (!payload.reservationId) {
-    throw new AppError('Reservation context missing in token', 400);
+  let reservationData: ReturnType<typeof serializeReservationForCustomer> | null = null;
+  let guestAccountData: ReturnType<typeof serializeGuestAccount> | null = null;
+  let accountReservations: ReturnType<typeof serializeReservationForCustomer>[] = [];
+
+  if (payload.guestAccountId) {
+    const guestAccount = await fetchGuestAccountById(tenant.id, payload.guestAccountId);
+    if (!guestAccount) {
+      throw new AppError('Guest account not found', 404);
+    }
+    guestAccountData = serializeGuestAccount(guestAccount);
+    accountReservations = await fetchReservationsForGuestAccount(tenant.id, guestAccount);
   }
 
-  const reservation = await fetchReservationById(tenant.id, payload.reservationId);
-  if (!reservation) {
-    throw new AppError('Reservation not found', 404);
+  if (payload.reservationId) {
+    const reservation = await fetchReservationById(tenant.id, payload.reservationId);
+    if (!reservation) {
+      throw new AppError('Reservation not found', 404);
+    }
+    reservationData = serializeReservationForCustomer(reservation);
+
+    if (!guestAccountData) {
+      const linkedGuestAccount = await findGuestAccountForReservation(tenant.id, {
+        guestId: reservation.guestId,
+        email: reservation.guestEmail ?? reservation.guest?.email,
+      });
+      if (linkedGuestAccount) {
+        guestAccountData = serializeGuestAccount(linkedGuestAccount);
+        accountReservations = await fetchReservationsForGuestAccount(tenant.id, linkedGuestAccount);
+      }
+    }
   }
+
+  if (!reservationData && !guestAccountData) {
+    throw new AppError('Customer context missing in token', 400);
+  }
+
+  const reservationsList = guestAccountData
+    ? accountReservations
+    : reservationData
+    ? [reservationData]
+    : [];
 
   res.json({
     success: true,
     data: {
-      reservation: serializeReservationForCustomer(reservation),
+      reservation: reservationData,
+      guestAccount: guestAccountData,
+      reservations: reservationsList,
       guestSessionToken: payload.sessionToken ?? null,
     },
   });
@@ -1294,9 +1650,9 @@ publicPortalRouter.post('/:tenantSlug/service-requests', async (req, res) => {
     updatedAt: timestamp,
   };
 
-  const docRef = await db.collection('guest_requests').add(requestRecord);
+  const docRef = await db!.collection('guest_requests').add(requestRecord);
 
-  await db.collection('guest_request_updates').add({
+  await db!.collection('guest_request_updates').add({
     tenantId: tenant.id,
     guestRequestId: docRef.id,
     previousStatus: null,

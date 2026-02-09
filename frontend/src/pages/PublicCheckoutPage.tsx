@@ -18,6 +18,8 @@ import 'react-datepicker/dist/react-datepicker.css';
 import { addDays, format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { publicApi, suppressToastHeaders } from '../lib/publicApi';
+import GuestSignupModal from '../components/GuestSignupModal';
+import { useCustomerAuthStore } from '../store/customerAuthStore';
 
 type PublicGateway = 'paystack' | 'flutterwave' | 'stripe';
 
@@ -225,6 +227,11 @@ const toIsoDateTime = (value?: string) => {
 const PublicCheckoutPage = () => {
   const navigate = useNavigate();
   const { tenantSlug } = useParams<{ tenantSlug: string }>();
+  const { guestAccount, customerToken, setAuthFromResponse } = useCustomerAuthStore((state) => ({
+    guestAccount: state.guestAccount,
+    customerToken: state.customerToken,
+    setAuthFromResponse: state.setAuthFromResponse,
+  }));
   const [tenant, setTenant] = useState<TenantSummary | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [intentLoading, setIntentLoading] = useState(false);
@@ -236,6 +243,9 @@ const PublicCheckoutPage = () => {
   const [checkoutIntent, setCheckoutIntent] = useState<CheckoutIntentState | null>(null);
   const [confirmation, setConfirmation] = useState<CheckoutConfirmation | null>(null);
   const [intentCountdown, setIntentCountdown] = useState('');
+  const [signupOpen, setSignupOpen] = useState(false);
+  const [signupAutoRedirect, setSignupAutoRedirect] = useState(false);
+  const [signupDefaults, setSignupDefaults] = useState({ name: '', email: '', phone: '' });
 
   const [form, setForm] = useState({
     checkInDate: '',
@@ -298,6 +308,48 @@ const PublicCheckoutPage = () => {
     };
     fetchCatalog();
   }, [tenantSlug]);
+
+  const triggerSignupModal = (defaults?: Partial<typeof signupDefaults>, autoRedirect?: boolean) => {
+    setSignupDefaults({
+      name: defaults?.name ?? '',
+      email: defaults?.email ?? '',
+      phone: defaults?.phone ?? '',
+    });
+    setSignupAutoRedirect(Boolean(autoRedirect));
+    setSignupOpen(true);
+  };
+
+  const inlineSignupDefaults = useMemo(
+    () => ({
+      name: form.guestName?.trim() || guestAccount?.email || '',
+      email: form.guestEmail?.trim() || guestAccount?.email || '',
+      phone: form.guestPhone?.trim() || guestAccount?.phone || '',
+    }),
+    [form.guestEmail, form.guestName, form.guestPhone, guestAccount]
+  );
+
+  const handleInlineSignup = () => {
+    triggerSignupModal(inlineSignupDefaults, false);
+  };
+
+  const handlePostConfirmationSignup = () => {
+    triggerSignupModal(
+      {
+        name: confirmation?.reservation?.guestName || inlineSignupDefaults.name,
+        email: form.guestEmail || inlineSignupDefaults.email,
+        phone: form.guestPhone || inlineSignupDefaults.phone,
+      },
+      true
+    );
+  };
+
+  const handleNavigateToDashboard = () => {
+    if (!tenantSlug) {
+      toast.error('Missing property context. Please reload.');
+      return;
+    }
+    navigate(`/portal/${tenantSlug}/dashboard`);
+  };
 
   const fetchAvailability = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -537,7 +589,17 @@ const PublicCheckoutPage = () => {
             headers: silent ? suppressToastHeaders() : undefined,
           }
         );
-        setConfirmation(response.data.data);
+        const confirmationPayload = response.data.data;
+        setConfirmation(confirmationPayload);
+        if (confirmationPayload && (confirmationPayload.customerToken || confirmationPayload.guestSessionToken)) {
+          setAuthFromResponse(tenantSlug, {
+            token: confirmationPayload.customerToken,
+            guestSessionToken: confirmationPayload.guestSessionToken,
+            data: {
+              reservation: confirmationPayload.reservation ?? null,
+            },
+          });
+        }
         if (!silent) {
           toast.success('Payment confirmed! Your reservation is ready.');
         }
@@ -717,6 +779,37 @@ const PublicCheckoutPage = () => {
           rows={3}
           style={{ ...inputStyle, resize: 'vertical' }}
         />
+      </div>
+      <div
+        style={{
+          borderRadius: '20px',
+          padding: '1rem',
+          background: 'rgba(15,23,42,0.05)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
+        }}
+      >
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Want faster checkouts?</p>
+          <p style={{ margin: '0.25rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+            Save your contact info once and reuse it for every stay.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleInlineSignup}
+          style={{
+            ...accentButtonStyle,
+            background: '#0f172a',
+            color: '#fff',
+            padding: '0.65rem 1.4rem',
+          }}
+        >
+          Secure my details
+        </button>
       </div>
     </div>
   );
@@ -1125,17 +1218,32 @@ const PublicCheckoutPage = () => {
               </h1>
             </div>
           </div>
-          <button
-            style={{
-              ...accentButtonStyle,
-              background: 'rgba(15,23,42,0.9)',
-              color: '#fff',
-              padding: '0.85rem 1.5rem',
-            }}
-            onClick={() => navigate('/')}
-          >
-            Back to InnSight
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {tenantSlug && (customerToken || guestAccount) && (
+              <button
+                style={{
+                  ...accentButtonStyle,
+                  background: 'rgba(15,23,42,0.08)',
+                  color: '#0f172a',
+                  padding: '0.65rem 1.4rem',
+                }}
+                onClick={() => navigate(`/portal/${tenantSlug}/access`)}
+              >
+                My trips
+              </button>
+            )}
+            <button
+              style={{
+                ...accentButtonStyle,
+                background: 'rgba(15,23,42,0.9)',
+                color: '#fff',
+                padding: '0.85rem 1.5rem',
+              }}
+              onClick={() => navigate('/')}
+            >
+              Back to InnSight
+            </button>
+          </div>
         </header>
 
         <div style={{ marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
@@ -1329,56 +1437,102 @@ const PublicCheckoutPage = () => {
             )}
 
             {confirmation && (
-                <div
-                  style={{
-                    marginTop: '1.25rem',
-                    padding: '1.25rem',
-                    borderRadius: '18px',
-                    background: 'rgba(21, 128, 61, 0.15)',
-                    border: '1px solid rgba(187, 247, 208, 0.2)',
-                  }}
-                >
-                  <p style={{ margin: 0, letterSpacing: '0.08em', fontSize: '0.85rem', color: '#4ade80' }}>
-                    STATUS · {confirmation.status.toUpperCase()}
-                  </p>
-                  {confirmation.reservation && (
-                    <>
-                      <h3 style={{ margin: '0.75rem 0 0.25rem' }}>
-                        Reservation {confirmation.reservation.reservationNumber || confirmation.reservation.id}
-                      </h3>
-                      <p style={{ margin: 0, color: 'rgba(255,255,255,0.7)' }}>
-                        {confirmation.reservation.guestName} ·{' '}
-                        {confirmation.reservation.room?.roomNumber
-                          ? `Room ${confirmation.reservation.room.roomNumber}`
-                          : confirmation.reservation.room?.roomType}
-                      </p>
-                      <p style={{ margin: '0.25rem 0 0', color: 'rgba(255,255,255,0.7)' }}>
-                        {confirmation.reservation.checkInDate &&
-                          new Date(confirmation.reservation.checkInDate).toLocaleDateString()}{' '}
-                        →{' '}
-                        {confirmation.reservation.checkOutDate &&
-                          new Date(confirmation.reservation.checkOutDate).toLocaleDateString()}
-                      </p>
-                    </>
-                  )}
-                  {confirmation.customerToken && (
-                    <div
-                      style={{
-                        marginTop: '1rem',
-                        padding: '0.75rem 1rem',
-                        borderRadius: '14px',
-                        background: 'rgba(15,23,42,0.6)',
-                        border: '1px dashed rgba(56,189,248,0.4)',
-                      }}
-                    >
-                      <p style={{ margin: 0, fontSize: '0.85rem', color: '#bae6fd' }}>Customer token</p>
-                      <p style={{ margin: '0.25rem 0 0', wordBreak: 'break-all' }}>
-                        {confirmation.customerToken}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div
+                style={{
+                  marginTop: '1.25rem',
+                  padding: '1.25rem',
+                  borderRadius: '18px',
+                  background: 'rgba(21, 128, 61, 0.15)',
+                  border: '1px solid rgba(187, 247, 208, 0.2)',
+                }}
+              >
+                <p style={{ margin: 0, letterSpacing: '0.08em', fontSize: '0.85rem', color: '#4ade80' }}>
+                  STATUS · {confirmation.status.toUpperCase()}
+                </p>
+                {confirmation.reservation && (
+                  <>
+                    <h3 style={{ margin: '0.75rem 0 0.25rem' }}>
+                      Reservation {confirmation.reservation.reservationNumber || confirmation.reservation.id}
+                    </h3>
+                    <p style={{ margin: 0, color: 'rgba(255,255,255,0.7)' }}>
+                      {confirmation.reservation.guestName} ·{' '}
+                      {confirmation.reservation.room?.roomNumber
+                        ? `Room ${confirmation.reservation.room.roomNumber}`
+                        : confirmation.reservation.room?.roomType}
+                    </p>
+                    <p style={{ margin: '0.25rem 0 0', color: 'rgba(255,255,255,0.7)' }}>
+                      {confirmation.reservation.checkInDate &&
+                        new Date(confirmation.reservation.checkInDate).toLocaleDateString()}{' '}
+                      →{' '}
+                      {confirmation.reservation.checkOutDate &&
+                        new Date(confirmation.reservation.checkOutDate).toLocaleDateString()}
+                    </p>
+                  </>
+                )}
+                {confirmation.customerToken && (
+                  <div
+                    style={{
+                      marginTop: '1rem',
+                      padding: '0.75rem 1rem',
+                      borderRadius: '14px',
+                      background: 'rgba(15,23,42,0.6)',
+                      border: '1px dashed rgba(56,189,248,0.4)',
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#bae6fd' }}>Customer token</p>
+                    <p style={{ margin: '0.25rem 0 0', wordBreak: 'break-all' }}>
+                      {confirmation.customerToken}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {confirmation && (
+              <div
+                style={{
+                  marginTop: '1rem',
+                  padding: '1rem',
+                  borderRadius: '18px',
+                  background: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  display: 'grid',
+                  gap: '0.75rem',
+                }}
+              >
+                <p style={{ margin: 0, color: '#e0f2fe', fontWeight: 600 }}>Next steps</p>
+                <p style={{ margin: 0, color: 'rgba(255,255,255,0.75)' }}>
+                  {guestAccount
+                    ? 'Jump into your dashboard to manage itineraries, balances, and future stays.'
+                    : 'Create a password to keep this reservation handy and reuse your profile next time.'}
+                </p>
+                {guestAccount ? (
+                  <button
+                    style={{
+                      ...accentButtonStyle,
+                      background: '#fff',
+                      color: '#0f172a',
+                      fontWeight: 700,
+                    }}
+                    onClick={handleNavigateToDashboard}
+                  >
+                    Open my dashboard
+                  </button>
+                ) : (
+                  <button
+                    style={{
+                      ...accentButtonStyle,
+                      background: '#a5f3fc',
+                      color: '#0f172a',
+                      fontWeight: 700,
+                    }}
+                    onClick={handlePostConfirmationSignup}
+                  >
+                    Create account now
+                  </button>
+                )}
+              </div>
+            )}
 
             {nights && selectedRoom && (
               <div
