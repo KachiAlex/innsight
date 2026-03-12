@@ -5,9 +5,52 @@ import { hashPassword } from '../utils/password';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { createAuditLog } from '../utils/audit';
-// import { db, toDate, now } from '../utils/firestore';
+import { invalidateTenantSlugCache } from '../utils/tenantContext';
+import { initializeTenant } from '../utils/tenantInitialization';
 
 export const tenantRouter = Router();
+
+const ensurePrismaClient = () => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+  return prisma;
+};
+
+/**
+ * Helper to format error response with specific error codes
+ */
+const formatErrorResponse = (code: string, message: string, field?: string) => {
+  return {
+    success: false,
+    error: {
+      code,
+      message,
+      field,
+    },
+  };
+};
+
+const formatTenantResponse = (tenant: any) => ({
+  id: tenant.id,
+  name: tenant.name,
+  slug: tenant.slug,
+  email: tenant.email,
+  phone: tenant.phone || null,
+  address: tenant.address || null,
+  branding: tenant.branding || null,
+  taxSettings: tenant.taxSettings || null,
+  subscriptionStatus: tenant.subscriptionStatus,
+  createdAt: tenant.createdAt,
+  updatedAt: tenant.updatedAt,
+  _count: tenant._count
+    ? {
+        users: tenant._count.users ?? 0,
+        rooms: tenant._count.rooms ?? 0,
+        reservations: tenant._count.reservations ?? 0,
+      }
+    : tenant._count,
+});
 
 const createTenantSchema = z.object({
   name: z.string().min(1),
@@ -28,12 +71,8 @@ const updateTenantAdminSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   phone: z.string().optional(),
-  password: z.string().min(6).optional(), // Added password field
+  password: z.string().min(6).optional(),
   isActive: z.boolean().optional(),
-});
-
-const resetPasswordSchema = z.object({
-  newPassword: z.string().min(6),
 });
 
 const updateTenantSchema = z.object({
@@ -45,6 +84,173 @@ const updateTenantSchema = z.object({
   branding: z.any().optional(),
   taxSettings: z.any().optional(),
   subscriptionStatus: z.enum(['active', 'suspended', 'cancelled']).optional(),
+});
+
+const resetPasswordSchema = z.object({
+  newPassword: z.string().min(6),
+});
+
+// GET /api/tenants/check-slug/:slug - Check if slug is available
+tenantRouter.get('/check-slug/:slug', async (req: AuthRequest, res) => {
+  try {
+    const { slug } = req.params;
+    const normalizedSlug = slug.toLowerCase().trim();
+
+    if (!normalizedSlug || normalizedSlug.length < 2) {
+      res.json({
+        available: false,
+        reason: 'Slug must be at least 2 characters',
+      });
+      return;
+    }
+
+    const prismaClient = ensurePrismaClient();
+    const existingTenant = await prismaClient.tenant.findUnique({
+      where: { slug: normalizedSlug },
+    });
+
+    res.json({
+      available: !existingTenant,
+      suggestion: existingTenant
+        ? `Try "${normalizedSlug}-${Math.floor(Math.random() * 1000)}" or similar`
+        : undefined,
+    });
+  } catch (error: any) {
+    console.error('Error checking slug availability:', error);
+    throw new AppError(`Failed to check slug availability: ${error.message}`, 500);
+  }
+});
+
+// POST /api/tenants - Create new tenant (IITECH admin only)
+tenantRouter.post('/', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {
+  try {
+    const prismaClient = ensurePrismaClient();
+    const data = createTenantSchema.parse(req.body);
+
+    const existingTenant = await prismaClient.tenant.findUnique({
+      where: { slug: data.slug },
+    });
+
+    if (existingTenant) {
+      res.status(400).json(
+        formatErrorResponse(
+          'DUPLICATE_SLUG',
+          `Slug "${data.slug}" is already in use. Choose a different slug.`,
+          'slug'
+        )
+      );
+      return;
+    }
+
+    // Check for duplicate owner email across all tenants
+    const existingOwner = await prismaClient.user.findFirst({
+      where: {
+        email: data.ownerEmail,
+      },
+    });
+
+    if (existingOwner) {
+      res.status(400).json(
+        formatErrorResponse(
+          'DUPLICATE_OWNER_EMAIL',
+          `Email "${data.ownerEmail}" is already registered as a user.`,
+          'ownerEmail'
+        )
+      );
+      return;
+    }
+
+    const passwordHash = await hashPassword(data.ownerPassword);
+
+    const result = await prismaClient.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          name: data.name,
+          slug: data.slug,
+          email: data.email,
+          phone: data.phone || null,
+          address: data.address || null,
+          branding: data.branding || null,
+          taxSettings: data.taxSettings || null,
+          subscriptionStatus: 'active',
+        },
+      });
+
+      const owner = await tx.user.create({
+        data: {
+          tenantId: tenant.id,
+          email: data.ownerEmail,
+          passwordHash,
+          firstName: data.ownerFirstName,
+          lastName: data.ownerLastName,
+          role: 'owner',
+          isActive: true,
+        },
+      });
+
+      return { tenant, owner };
+    });
+
+    // Initialize tenant with default data (non-blocking)
+    initializeTenant(result.tenant.id).catch((error) => {
+      console.error('Tenant initialization warning:', error);
+      // Don't fail the request - initialization is optional
+    });
+
+    // Invalidate tenant slug cache
+    invalidateTenantSlugCache(data.slug);
+
+    try {
+      await createAuditLog({
+        tenantId: result.tenant.id,
+        userId: req.user!.id,
+        action: 'create_tenant',
+        entityType: 'tenant',
+        entityId: result.tenant.id,
+        afterState: {
+          name: result.tenant.name,
+          slug: result.tenant.slug,
+          email: result.tenant.email,
+          phone: result.tenant.phone,
+          address: result.tenant.address,
+          subscriptionStatus: result.tenant.subscriptionStatus,
+        },
+      });
+    } catch (auditError) {
+      console.error('Failed to create audit log:', auditError);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        tenant: formatTenantResponse({ ...result.tenant, _count: { users: 1, rooms: 0, reservations: 0 } }),
+        owner: {
+          id: result.owner.id,
+          email: result.owner.email,
+          firstName: result.owner.firstName,
+          lastName: result.owner.lastName,
+        },
+      },
+      message: 'Tenant created successfully. Owner account setup complete.',
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (error.name === 'ZodError') {
+      const fieldError = error.errors[0];
+      res.status(400).json(
+        formatErrorResponse(
+          'VALIDATION_ERROR',
+          `Invalid ${fieldError.path.join('.')}: ${fieldError.message}`,
+          fieldError.path.join('.')
+        )
+      );
+      return;
+    }
+    console.error('Error creating tenant:', error);
+    throw new AppError(`Failed to create tenant: ${error.message}`, 500);
+  }
 });
 
 // GET /api/tenants/:id/admin - Get tenant admin details (IITECH admin only)
@@ -230,45 +436,46 @@ tenantRouter.post('/:id/admin/reset-password', authenticate, requireRole('iitech
     const tenantId = req.params.id;
     const { newPassword } = resetPasswordSchema.parse(req.body);
 
-    // Verify tenant exists
-    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-    if (!tenantDoc.exists) {
+    const prismaClient = ensurePrismaClient();
+
+    const tenant = await prismaClient.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
       throw new AppError('Tenant not found', 404);
     }
 
-    // Find tenant admin (owner role)
-    const adminSnapshot = await db.collection('users')
-      .where('tenantId', '==', tenantId)
-      .where('role', '==', 'owner')
-      .limit(1)
-      .get();
+    const adminUser = await prismaClient.user.findFirst({
+      where: {
+        tenantId,
+        role: 'owner',
+      },
+    });
 
-    if (adminSnapshot.empty) {
+    if (!adminUser) {
       throw new AppError('Tenant admin not found', 404);
     }
 
-    const adminDoc = adminSnapshot.docs[0];
-    const adminData = adminDoc.data();
-
-    // Hash new password
     const passwordHash = await hashPassword(newPassword);
 
-    // Update password
-    await adminDoc.ref.update({
-      passwordHash,
-      updatedAt: now(),
+    await prismaClient.user.update({
+      where: { id: adminUser.id },
+      data: {
+        passwordHash,
+        updatedAt: new Date(),
+      },
     });
 
-    // Create audit log
     try {
       await createAuditLog({
         tenantId,
         userId: req.user!.id,
         action: 'reset_tenant_admin_password',
         entityType: 'user',
-        entityId: adminDoc.id,
+        entityId: adminUser.id,
         metadata: {
-          email: adminData.email,
+          email: adminUser.email,
         },
       });
     } catch (auditError) {
@@ -288,142 +495,41 @@ tenantRouter.post('/:id/admin/reset-password', authenticate, requireRole('iitech
   }
 });
 
-// POST /api/tenants - Create new tenant (IITECH admin only)
-tenantRouter.post('/', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {
-  try {
-    const data = createTenantSchema.parse(req.body);
-
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
-    }
-    const db = admin.firestore();
-
-    // Check if slug exists
-    const existingTenantSnapshot = await db.collection('tenants')
-      .where('slug', '==', data.slug)
-      .limit(1)
-      .get();
-
-    if (!existingTenantSnapshot.empty) {
-      throw new AppError('Tenant slug already exists', 400);
-    }
-
-    // Create tenant and owner user
-    const now = admin.firestore.Timestamp.now();
-    
-    // Create tenant
-    const tenantRef = db.collection('tenants').doc();
-    const tenantData = {
-      name: data.name,
-      slug: data.slug,
-      email: data.email,
-      phone: data.phone || null,
-      address: data.address || null,
-      branding: data.branding || null,
-      taxSettings: data.taxSettings || null,
-      subscriptionStatus: 'active',
-      createdAt: now,
-      updatedAt: now,
-    };
-    await tenantRef.set(tenantData);
-
-    // Create owner user
-    const passwordHash = await hashPassword(data.ownerPassword);
-    const ownerRef = db.collection('users').doc();
-    const ownerData = {
-      tenantId: tenantRef.id,
-      email: data.ownerEmail,
-      passwordHash,
-      firstName: data.ownerFirstName,
-      lastName: data.ownerLastName,
-      role: 'owner',
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-    await ownerRef.set(ownerData);
-
-    // Create audit log (if audit logging is needed)
-    try {
-      await createAuditLog({
-        tenantId: tenantRef.id,
-        userId: req.user!.id,
-        action: 'create_tenant',
-        entityType: 'tenant',
-        entityId: tenantRef.id,
-        afterState: tenantData,
-      });
-    } catch (auditError) {
-      // Log but don't fail if audit logging fails
-      console.error('Failed to create audit log:', auditError);
-    }
-
-    res.status(201).json({
-      success: true,
-      data: {
-        tenant: {
-          id: tenantRef.id,
-          ...tenantData,
-          createdAt: tenantData.createdAt.toDate().toISOString(),
-          updatedAt: tenantData.updatedAt.toDate().toISOString(),
-        },
-        owner: {
-          id: ownerRef.id,
-          email: ownerData.email,
-          firstName: ownerData.firstName,
-          lastName: ownerData.lastName,
-        },
-      },
-    });
-  } catch (error: any) {
-    if (error instanceof AppError) {
-      throw error;
-    }
-    console.error('Error creating tenant:', error);
-    throw new AppError(`Failed to create tenant: ${error.message}`, 500);
-  }
-});
-
 // PATCH /api/tenants/:id - Update tenant details (IITECH admin only)
 tenantRouter.patch('/:id', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {
   try {
     const tenantId = req.params.id;
+    const prismaClient = ensurePrismaClient();
     const data = updateTenantSchema.parse(req.body);
 
-    // Verify tenant exists
-    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-    if (!tenantDoc.exists) {
+    const tenant = await prismaClient.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
       throw new AppError('Tenant not found', 404);
     }
 
-    const tenantData = tenantDoc.data();
-    const beforeState = {
-      name: tenantData?.name,
-      slug: tenantData?.slug,
-      email: tenantData?.email,
-      phone: tenantData?.phone || null,
-      address: tenantData?.address || null,
-      subscriptionStatus: tenantData?.subscriptionStatus,
-    };
+    if (data.slug && data.slug !== tenant.slug) {
+      const slugCheck = await prismaClient.tenant.findUnique({
+        where: { slug: data.slug },
+      });
 
-    // Check if slug is being changed and if it already exists
-    if (data.slug && data.slug !== tenantData?.slug) {
-      const slugCheckSnapshot = await db.collection('tenants')
-        .where('slug', '==', data.slug)
-        .limit(1)
-        .get();
-
-      if (!slugCheckSnapshot.empty) {
+      if (slugCheck && slugCheck.id !== tenantId) {
         throw new AppError('Tenant slug already exists', 400);
       }
     }
 
-    // Prepare update data
-    const updateData: any = {
-      updatedAt: now(),
+    const beforeState = {
+      name: tenant.name,
+      slug: tenant.slug,
+      email: tenant.email,
+      phone: tenant.phone || null,
+      address: tenant.address || null,
+      subscriptionStatus: tenant.subscriptionStatus,
     };
+
+    const updateData: any = {};
 
     if (data.name !== undefined) updateData.name = data.name;
     if (data.slug !== undefined) updateData.slug = data.slug;
@@ -434,40 +540,22 @@ tenantRouter.patch('/:id', authenticate, requireRole('iitech_admin'), async (req
     if (data.taxSettings !== undefined) updateData.taxSettings = data.taxSettings || null;
     if (data.subscriptionStatus !== undefined) updateData.subscriptionStatus = data.subscriptionStatus;
 
-    // Update tenant
-    await tenantDoc.ref.update(updateData);
-
-    // Get updated tenant
-    const updatedDoc = await db.collection('tenants').doc(tenantId).get();
-    const updatedData = updatedDoc.data();
-
-    // Get counts
-    const [usersSnapshot, roomsSnapshot, reservationsSnapshot] = await Promise.all([
-      db.collection('users').where('tenantId', '==', tenantId).get(),
-      db.collection('rooms').where('tenantId', '==', tenantId).get(),
-      db.collection('reservations').where('tenantId', '==', tenantId).get(),
-    ]);
-
-    const updated = {
-      id: tenantId,
-      name: updatedData?.name,
-      slug: updatedData?.slug,
-      email: updatedData?.email,
-      phone: updatedData?.phone || null,
-      address: updatedData?.address || null,
-      branding: updatedData?.branding || null,
-      taxSettings: updatedData?.taxSettings || null,
-      subscriptionStatus: updatedData?.subscriptionStatus,
-      createdAt: updatedData?.createdAt?.toDate?.()?.toISOString() || updatedData?.createdAt,
-      updatedAt: updatedData?.updatedAt?.toDate?.()?.toISOString() || updatedData?.updatedAt,
-      _count: {
-        users: usersSnapshot.size,
-        rooms: roomsSnapshot.size,
-        reservations: reservationsSnapshot.size,
+    const updatedTenant = await prismaClient.tenant.update({
+      where: { id: tenantId },
+      data: updateData,
+      include: {
+        _count: {
+          select: {
+            users: true,
+            rooms: true,
+            reservations: true,
+          },
+        },
       },
-    };
+    });
 
-    // Create audit log
+    const formattedTenant = formatTenantResponse(updatedTenant);
+
     try {
       await createAuditLog({
         tenantId,
@@ -477,12 +565,12 @@ tenantRouter.patch('/:id', authenticate, requireRole('iitech_admin'), async (req
         entityId: tenantId,
         beforeState,
         afterState: {
-          name: updated.name,
-          slug: updated.slug,
-          email: updated.email,
-          phone: updated.phone || null,
-          address: updated.address || null,
-          subscriptionStatus: updated.subscriptionStatus,
+          name: formattedTenant.name,
+          slug: formattedTenant.slug,
+          email: formattedTenant.email,
+          phone: formattedTenant.phone,
+          address: formattedTenant.address,
+          subscriptionStatus: formattedTenant.subscriptionStatus,
         },
       });
     } catch (auditError) {
@@ -491,7 +579,7 @@ tenantRouter.patch('/:id', authenticate, requireRole('iitech_admin'), async (req
 
     res.json({
       success: true,
-      data: updated,
+      data: formattedTenant,
     });
   } catch (error: any) {
     if (error instanceof AppError) {
@@ -505,44 +593,28 @@ tenantRouter.patch('/:id', authenticate, requireRole('iitech_admin'), async (req
 // GET /api/tenants/:id
 tenantRouter.get('/:id', authenticate, requireRole('iitech_admin'), async (req, res) => {
   try {
-    // Use Firestore instead of Prisma
-    const admin = require('firebase-admin');
-    if (!admin.apps.length) {
-      admin.initializeApp();
-    }
-    const db = admin.firestore();
+    const prismaClient = ensurePrismaClient();
 
-    const tenantDoc = await db.collection('tenants').doc(req.params.id).get();
+    const tenant = await prismaClient.tenant.findUnique({
+      where: { id: req.params.id },
+      include: {
+        _count: {
+          select: {
+            users: true,
+            rooms: true,
+            reservations: true,
+          },
+        },
+      },
+    });
 
-    if (!tenantDoc.exists) {
+    if (!tenant) {
       throw new AppError('Tenant not found', 404);
     }
 
-    const tenantData = tenantDoc.data();
-    const tenantId = tenantDoc.id;
-
-    // Get counts
-    const [usersSnapshot, roomsSnapshot, reservationsSnapshot] = await Promise.all([
-      db.collection('users').where('tenantId', '==', tenantId).get(),
-      db.collection('rooms').where('tenantId', '==', tenantId).get(),
-      db.collection('reservations').where('tenantId', '==', tenantId).get(),
-    ]);
-
-    const tenant = {
-      id: tenantId,
-      ...tenantData,
-      createdAt: tenantData?.createdAt?.toDate?.()?.toISOString() || tenantData?.createdAt,
-      updatedAt: tenantData?.updatedAt?.toDate?.()?.toISOString() || tenantData?.updatedAt,
-      _count: {
-        users: usersSnapshot.size,
-        rooms: roomsSnapshot.size,
-        reservations: reservationsSnapshot.size,
-      },
-    };
-
     res.json({
       success: true,
-      data: tenant,
+      data: formatTenantResponse(tenant),
     });
   } catch (error: any) {
     if (error instanceof AppError) {

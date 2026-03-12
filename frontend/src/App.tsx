@@ -58,7 +58,7 @@ const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const AlertsPage = lazy(() => import('./pages/AlertsPage'));
 const MaintenancePage = lazy(() => import('./pages/MaintenancePage'));
 const PaymentsPage = lazy(() => import('./pages/PaymentsPage'));
-const TenantsPage = lazy(() => import('./pages/TenantsPage'));
+const TenantsPage = lazy(() => import('./pages/TenantsPageNew'));
 const RatePlansPage = lazy(() => import('./pages/RatePlansPage'));
 const GuestProfilePage = lazy(() => import('./pages/GuestProfilePageEnhanced'));
 const GuestsPage = lazy(() => import('./pages/GuestsPage'));
