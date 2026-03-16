@@ -41,6 +41,7 @@ import { wagePlanRouter } from './routes/wagePlans';
 import { meetingHallRouter } from './routes/halls';
 import { publicPortalRouter } from './routes/public-portal';
 import { publicPaymentsRouter } from './routes/public-payments';
+import { superadminRouter } from './routes/superadmin';
 
 dotenv.config();
 
@@ -158,6 +159,7 @@ app.use('/api/iot', iotRouter);
 app.use('/api/tenants/:tenantId/iot', iotRouter);
 app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);
 app.use('/api/public/portal', publicPortalRouter);
+app.use('/api/superadmin', superadminRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);

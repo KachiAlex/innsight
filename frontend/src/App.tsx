@@ -11,9 +11,9 @@ function LoginRouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   
   if (isAuthenticated) {
-    // IITECH admins go to tenants page, others go to dashboard
+    // IITECH admins go to superadmin dashboard, others go to dashboard
     if (user?.role === 'iitech_admin') {
-      return <Navigate to="/tenants" replace />;
+      return <Navigate to="/superadmin-dashboard" replace />;
     }
     return <Navigate to="/dashboard" replace />;
   }
@@ -27,7 +27,7 @@ function TenantLoginRouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   
   if (isAuthenticated && user?.role === 'iitech_admin') {
-    return <Navigate to="/tenants" replace />;
+    return <Navigate to="/superadmin-dashboard" replace />;
   }
   
   return <>{children}</>;
@@ -39,7 +39,7 @@ function TenantRouteHandler() {
   const { user } = useAuthStore();
   
   if (isAuthenticated && user?.role === 'iitech_admin') {
-    return <Navigate to="/tenants" replace />;
+    return <Navigate to="/superadmin-dashboard" replace />;
   }
   
   return <Navigate to="/tenant/login" replace />;
@@ -77,6 +77,7 @@ const IntegrationPage = lazy(() => import('./pages/IntegrationPage'));
 const PublicCheckoutPage = lazy(() => import('./pages/PublicCheckoutPage'));
 const PortalAccessPage = lazy(() => import('./pages/PortalAccessPage'));
 const PortalDashboardPage = lazy(() => import('./pages/PortalDashboardPage'));
+const SuperadminDashboardPage = lazy(() => import('./pages/SuperadminDashboardPage'));
 
 function App() {
   const PageLoader = () => (
@@ -234,6 +235,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <AlertsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/superadmin-dashboard"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SuperadminDashboardPage />
                   </Suspense>
                 </ProtectedRoute>
               }
