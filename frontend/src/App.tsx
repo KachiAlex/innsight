@@ -82,6 +82,10 @@ const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
 const SuperadminUsersPage = lazy(() => import('./pages/SuperadminUsersPage'));
 const BillingManagementPage = lazy(() => import('./pages/BillingManagementPage'));
 const PlatformAnalyticsPage = lazy(() => import('./pages/PlatformAnalyticsPage'));
+const SupportTicketsPage = lazy(() => import('./pages/SupportTicketsPage'));
+const ApiManagementPage = lazy(() => import('./pages/ApiManagementPage'));
+const BackupRestorePage = lazy(() => import('./pages/BackupRestorePage'));
+const CommunicationsPage = lazy(() => import('./pages/CommunicationsPage'));
 
 function App() {
   const PageLoader = () => (
@@ -289,6 +293,46 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <PlatformAnalyticsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/support-tickets"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SupportTicketsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/api-management"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <ApiManagementPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/backup-restore"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <BackupRestorePage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/communications"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <CommunicationsPage />
                   </Suspense>
                 </ProtectedRoute>
               }

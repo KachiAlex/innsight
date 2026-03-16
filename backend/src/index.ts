@@ -46,6 +46,10 @@ import { settingsRouter as settingsAdminRouter } from './routes/settings-admin';
 import { superadminUsersRouter } from './routes/superadmin-users';
 import { billingRouter } from './routes/billing';
 import { platformAnalyticsRouter } from './routes/platform-analytics';
+import { supportRouter } from './routes/support';
+import { apiKeysRouter } from './routes/api-keys';
+import { backupRouter } from './routes/backup';
+import { communicationsRouter } from './routes/communications';
 
 dotenv.config();
 
@@ -168,6 +172,10 @@ app.use('/api/superadmin/users', superadminUsersRouter);
 app.use('/api/superadmin/settings', settingsAdminRouter);
 app.use('/api/superadmin/billing', billingRouter);
 app.use('/api/superadmin/analytics', platformAnalyticsRouter);
+app.use('/api/superadmin/support', supportRouter);
+app.use('/api/superadmin/api-keys', apiKeysRouter);
+app.use('/api/superadmin/backup', backupRouter);
+app.use('/api/superadmin/communications', communicationsRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);
