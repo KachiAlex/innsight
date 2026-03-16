@@ -42,6 +42,10 @@ import { meetingHallRouter } from './routes/halls';
 import { publicPortalRouter } from './routes/public-portal';
 import { publicPaymentsRouter } from './routes/public-payments';
 import { superadminRouter } from './routes/superadmin';
+import { settingsRouter as settingsAdminRouter } from './routes/settings-admin';
+import { superadminUsersRouter } from './routes/superadmin-users';
+import { billingRouter } from './routes/billing';
+import { platformAnalyticsRouter } from './routes/platform-analytics';
 
 dotenv.config();
 
@@ -160,6 +164,10 @@ app.use('/api/tenants/:tenantId/iot', iotRouter);
 app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);
 app.use('/api/public/portal', publicPortalRouter);
 app.use('/api/superadmin', superadminRouter);
+app.use('/api/superadmin/users', superadminUsersRouter);
+app.use('/api/superadmin/settings', settingsAdminRouter);
+app.use('/api/superadmin/billing', billingRouter);
+app.use('/api/superadmin/analytics', platformAnalyticsRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);

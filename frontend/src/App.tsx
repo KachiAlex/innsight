@@ -78,6 +78,10 @@ const PublicCheckoutPage = lazy(() => import('./pages/PublicCheckoutPage'));
 const PortalAccessPage = lazy(() => import('./pages/PortalAccessPage'));
 const PortalDashboardPage = lazy(() => import('./pages/PortalDashboardPage'));
 const SuperadminDashboardPage = lazy(() => import('./pages/SuperadminDashboardPage'));
+const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
+const SuperadminUsersPage = lazy(() => import('./pages/SuperadminUsersPage'));
+const BillingManagementPage = lazy(() => import('./pages/BillingManagementPage'));
+const PlatformAnalyticsPage = lazy(() => import('./pages/PlatformAnalyticsPage'));
 
 function App() {
   const PageLoader = () => (
@@ -245,6 +249,46 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <SuperadminDashboardPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/system-settings"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SystemSettingsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/superadmin-users"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SuperadminUsersPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/billing"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <BillingManagementPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/platform-analytics"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <PlatformAnalyticsPage />
                   </Suspense>
                 </ProtectedRoute>
               }

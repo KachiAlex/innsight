@@ -23,9 +23,13 @@ interface Tenant {
 }
 
 interface ValidationState {
+  name?: string;
   slug?: string;
   email?: string;
   password?: string;
+  ownerEmail?: string;
+  ownerFirstName?: string;
+  ownerLastName?: string;
 }
 
 export default function TenantsPageNew() {

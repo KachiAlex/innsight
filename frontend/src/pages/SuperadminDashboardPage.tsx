@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Activity,
   Zap,
-  CheckCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
@@ -229,9 +228,9 @@ export default function SuperadminDashboardPage() {
             color="blue"
           />
           <KPICard
-            title="Active Users"
-            value={metrics.userMetrics.totalActiveUsers}
-            subtitle={`${metrics.userMetrics.averageUsersPerTenant.toFixed(1)} per tenant`}
+            title="Platform Users"
+            value={metrics.totalStats.totalUsers}
+            subtitle="All active users"
             icon={Users}
             color="green"
           />
