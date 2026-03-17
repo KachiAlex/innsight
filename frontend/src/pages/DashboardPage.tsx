@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo, memo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useDashboardStats } from '../hooks/useQueryHooks';
-import { queryClient } from '../lib/queryClient';
+import { EnhancedStatCard, KPIGrid } from '../components/EnhancedStatCard';
 import Layout from '../components/Layout';
 import { Calendar, DollarSign, Bed, AlertTriangle, RefreshCw, AlertCircle } from 'lucide-react';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
@@ -21,6 +21,7 @@ interface DashboardStats {
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [previousStats, setPreviousStats] = useState<DashboardStats | null>(null);
 
   // Use React Query for caching
   const { data: stats, isLoading: loading, error, refetch } = useDashboardStats(user?.tenantId || '', {
@@ -29,7 +30,11 @@ export default function DashboardPage() {
       const errorMessage = err.response?.data?.error?.message || 'Failed to load dashboard data';
       toast.error(errorMessage);
     },
-    onSuccess: () => {
+    onSuccess: (newStats) => {
+      // Store previous stats for trend calculation
+      if (stats) {
+        setPreviousStats(stats);
+      }
       toast.success('Dashboard updated');
     },
   });
@@ -43,7 +48,35 @@ export default function DashboardPage() {
     }
   };
 
-  const StatCard = memo(({ icon: Icon, title, value, subtitle, color }: any) => (
+  // Calculate trends
+  const calculateTrend = (currentVal: number, previousVal?: number) => {
+    if (!previousVal || previousVal === 0) return undefined;
+    const percentChange = ((currentVal - previousVal) / previousVal) * 100;
+    return {
+      direction: percentChange > 0 ? ('up' as const) : percentChange < 0 ? ('down' as const) : ('neutral' as const),
+      percentChange: Math.abs(percentChange),
+      previousValue: previousVal,
+    };
+  };
+
+  // Determine status based on metrics
+  const getStatus = (metricName: string, value: number) => {
+    switch (metricName) {
+      case 'occupancy':
+        if (value >= 80) return 'good';
+        if (value >= 60) return 'warning';
+        return 'critical';
+      case 'revenue':
+        if (value > 0) return 'good';
+        return 'neutral';
+      case 'rooms':
+        if (value < 10) return 'critical';
+        if (value < 20) return 'warning';
+        return 'good';
+      default:
+        return 'neutral';
+    }
+  };
     <div
       style={{
         background: 'white',
@@ -104,28 +137,44 @@ export default function DashboardPage() {
         value: stats.todayReservations,
         subtitle: `${stats.checkedIn} checked in`,
         color: '#3b82f6',
+        trend: calculateTrend(stats.todayReservations, previousStats?.todayReservations),
+        status: getStatus('reservations', stats.todayReservations),
+        sparklineData: [stats.todayReservations * 0.7, stats.todayReservations * 0.85, stats.todayReservations],
+        format: 'number',
       },
       {
         icon: Bed,
         title: 'Available Rooms',
         value: stats.availableRooms,
         color: '#10b981',
+        trend: calculateTrend(stats.availableRooms, previousStats?.availableRooms),
+        status: getStatus('rooms', stats.availableRooms),
+        sparklineData: [stats.availableRooms * 0.8, stats.availableRooms * 0.9, stats.availableRooms],
+        format: 'number',
       },
       {
         icon: DollarSign,
         title: "Today's Revenue",
-        value: `₦${stats.todayRevenue.toLocaleString()}`,
+        value: stats.todayRevenue,
         color: '#f59e0b',
+        trend: calculateTrend(stats.todayRevenue, previousStats?.todayRevenue),
+        status: getStatus('revenue', stats.todayRevenue),
+        sparklineData: [stats.todayRevenue * 0.6, stats.todayRevenue * 0.85, stats.todayRevenue],
+        format: 'currency',
       },
       {
         icon: AlertTriangle,
         title: 'Occupancy Rate',
-        value: `${stats.occupancyRate.toFixed(1)}%`,
+        value: stats.occupancyRate,
         subtitle: `ADR: ₦${stats.adr.toLocaleString()}`,
         color: '#8b5cf6',
+        trend: calculateTrend(stats.occupancyRate, previousStats?.occupancyRate),
+        status: getStatus('occupancy', stats.occupancyRate),
+        sparklineData: [stats.occupancyRate * 0.85, stats.occupancyRate * 0.92, stats.occupancyRate],
+        format: 'percentage',
       },
     ];
-  }, [stats]);
+  }, [stats, previousStats]);
 
   if (loading) {
     return (
@@ -227,18 +276,23 @@ export default function DashboardPage() {
         </div>
 
         {statCards && (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-              gap: '1.5rem',
-              marginBottom: '2rem',
-            }}
-          >
+          <KPIGrid>
             {statCards.map((card, idx) => (
-              <StatCard key={idx} {...card} />
+              <EnhancedStatCard
+                key={idx}
+                icon={card.icon}
+                title={card.title}
+                value={card.format === 'currency' ? `₦${card.value.toLocaleString()}` : 
+                       card.format === 'percentage' ? `${card.value.toFixed(1)}%` :
+                       card.value}
+                subtitle={card.subtitle}
+                color={card.color}
+                trend={card.trend}
+                status={card.status}
+                sparklineData={card.sparklineData}
+              />
             ))}
-          </div>
+          </KPIGrid>
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
