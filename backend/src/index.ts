@@ -4,8 +4,10 @@ import dotenv from 'dotenv';
 import path from 'path';
 import 'express-async-errors';
 import rateLimit from 'express-rate-limit';
+import { createServer } from 'http';
 
 import { errorHandler } from './middleware/errorHandler';
+import { ws } from './utils/websocket';
 import { authRouter } from './routes/auth';
 import { tenantRouter } from './routes/tenants';
 import { tenantAdminRouter } from './routes/tenant-admin';
@@ -201,9 +203,18 @@ const isContainerEnvironment = process.env.NODE_ENV === 'production';
 const shouldStartServer = process.env.RUN_LOCAL_SERVER === 'true' || isContainerEnvironment;
 
 if (shouldStartServer) {
-  app.listen(PORT, () => {
+  // Create HTTP server with Express
+  const httpServer = createServer(app);
+
+  // Initialize WebSocket
+  const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+  ws.initializeServer(httpServer, corsOrigin);
+
+  // Start server
+  httpServer.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔧 Server mode: ${isContainerEnvironment ? 'Container (Render)' : 'Local'}`);
+    console.log(`🔌 WebSocket enabled on ws://localhost:${PORT}`);
   });
 }
