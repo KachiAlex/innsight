@@ -27,6 +27,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { CommandPalette, Command } from './CommandPalette';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -64,11 +65,34 @@ export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  // Build commands from menu items
+  const commands: Command[] = menuItems.map(item => ({
+    id: item.path,
+    title: item.label,
+    category: 'Navigation',
+    action: () => navigate(item.path),
+    icon: item.icon ? <item.icon size={16} /> : undefined,
+  }));
+
+  // Keyboard shortcut for command palette: Cmd+K or Ctrl+K
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsPaletteOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Don't show tenant sidebar for IITECH admin
   const isIITechAdmin = user?.role === 'iitech_admin';
@@ -85,6 +109,13 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#f5f5f5' }}>
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={isPaletteOpen}
+        onClose={() => setIsPaletteOpen(false)}
+        commands={commands}
+      />
+
       {/* Sidebar - Only show for tenant users */}
       {showTenantSidebar && (
       <aside
