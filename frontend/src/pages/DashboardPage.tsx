@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback, useMemo, memo } from 'react';
+import { useEffect, useState, useMemo, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { api } from '../lib/api';
+import { useDashboardStats } from '../hooks/useQueryHooks';
+import { queryClient } from '../lib/queryClient';
 import Layout from '../components/Layout';
 import { Calendar, DollarSign, Bed, AlertTriangle, RefreshCw, AlertCircle } from 'lucide-react';
 import { DashboardSkeleton } from '../components/LoadingSkeleton';
@@ -19,65 +20,28 @@ interface DashboardStats {
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchStats = useCallback(async (showRefreshing = false) => {
-    if (!user?.tenantId) return;
-
-    try {
-      if (showRefreshing) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
-
-      const today = new Date().toISOString().split('T')[0];
-      const [reservationsRes, roomsRes, revenueRes, occupancyRes] = await Promise.all([
-        api.get(`/tenants/${user.tenantId}/reservations`, {
-          params: { startDate: today, endDate: today },
-        }),
-        api.get(`/tenants/${user.tenantId}/rooms`),
-        api.get(`/tenants/${user.tenantId}/reports/revenue`, {
-          params: { startDate: today, endDate: today },
-        }),
-        api.get(`/tenants/${user.tenantId}/reports/occupancy`, {
-          params: { startDate: today, endDate: today },
-        }),
-      ]);
-
-      const reservations = reservationsRes.data.data || [];
-      const rooms = roomsRes.data.data || [];
-      const revenue = revenueRes.data.data || {};
-      const occupancy = occupancyRes.data.data || {};
-
-      setStats({
-        todayReservations: reservations.length,
-        checkedIn: reservations.filter((r: any) => r.status === 'checked_in').length,
-        availableRooms: rooms.filter((r: any) => r.status === 'available').length,
-        todayRevenue: revenue.totalRevenue || 0,
-        occupancyRate: occupancy.occupancyRate || 0,
-        adr: occupancy.adr || 0,
-        revpar: occupancy.revpar || 0,
-      });
-      toast.success('Dashboard updated');
-    } catch (error: any) {
-      console.error('Failed to fetch stats:', error);
-      const errorMessage = error.response?.data?.error?.message || 'Failed to load dashboard data';
-      setError(errorMessage);
+  // Use React Query for caching
+  const { data: stats, isLoading: loading, error, refetch } = useDashboardStats(user?.tenantId || '', {
+    enabled: !!user?.tenantId,
+    onError: (err: any) => {
+      const errorMessage = err.response?.data?.error?.message || 'Failed to load dashboard data';
       toast.error(errorMessage);
+    },
+    onSuccess: () => {
+      toast.success('Dashboard updated');
+    },
+  });
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.tenantId]);
-
-  useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+  };
 
   const StatCard = memo(({ icon: Icon, title, value, subtitle, color }: any) => (
     <div
@@ -232,7 +196,7 @@ export default function DashboardPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h1 style={{ color: '#1e293b' }}>Dashboard</h1>
           <button
-            onClick={() => fetchStats(true)}
+            onClick={handleRefresh}
             disabled={refreshing}
             style={{
               padding: '0.5rem 1rem',

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { AppError } from '../middleware/errorHandler';
 import { authenticate, requireTenantAccess, AuthRequest } from '../middleware/auth';
 import { db, toDate, toTimestamp, now } from '../utils/firestore';
+import { getCachedData, cacheKeys, invalidateCache } from '../utils/caching';
 import admin from 'firebase-admin';
 
 export const analyticsRouter = Router({ mergeParams: true });
@@ -37,13 +38,20 @@ analyticsRouter.get('/dashboard', authenticate, requireTenantAccess, async (req:
         startDate.setDate(endDate.getDate() - 30);
     }
 
-    // Get key metrics
-    const dashboardData = await Promise.all([
-      getRevenueMetrics(tenantId, startDate, endDate),
-      getOccupancyMetrics(tenantId, startDate, endDate),
-      getGuestSatisfactionMetrics(tenantId, startDate, endDate),
-      getOperationalMetrics(tenantId, startDate, endDate),
-    ]);
+    // Use caching for dashboard metrics (20-minute cache)
+    const cacheKey = cacheKeys.dashboardMetrics(tenantId, `${period}`);
+    const dashboardData = await getCachedData(
+      cacheKey,
+      async () => {
+        return await Promise.all([
+          getRevenueMetrics(tenantId, startDate, endDate),
+          getOccupancyMetrics(tenantId, startDate, endDate),
+          getGuestSatisfactionMetrics(tenantId, startDate, endDate),
+          getOperationalMetrics(tenantId, startDate, endDate),
+        ]);
+      },
+      20 * 60 // 20 minutes cache
+    );
 
     const [revenue, occupancy, satisfaction, operational] = dashboardData;
 
