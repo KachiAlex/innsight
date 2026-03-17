@@ -50,6 +50,9 @@ import { supportRouter } from './routes/support';
 import { apiKeysRouter } from './routes/api-keys';
 import { backupRouter } from './routes/backup';
 import { communicationsRouter } from './routes/communications';
+import { auditLogsRouter } from './routes/audit-logs';
+import { tenantQuickActionsRouter } from './routes/tenant-quick-actions';
+import { systemHealthRouter } from './routes/system-health';
 
 dotenv.config();
 
@@ -176,6 +179,9 @@ app.use('/api/superadmin/support', supportRouter);
 app.use('/api/superadmin/api-keys', apiKeysRouter);
 app.use('/api/superadmin/backup', backupRouter);
 app.use('/api/superadmin/communications', communicationsRouter);
+app.use('/api/superadmin/audit-logs', auditLogsRouter);
+app.use('/api/superadmin/tenant-actions', tenantQuickActionsRouter);
+app.use('/api/superadmin/health', systemHealthRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);

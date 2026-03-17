@@ -86,6 +86,7 @@ const SupportTicketsPage = lazy(() => import('./pages/SupportTicketsPage'));
 const ApiManagementPage = lazy(() => import('./pages/ApiManagementPage'));
 const BackupRestorePage = lazy(() => import('./pages/BackupRestorePage'));
 const CommunicationsPage = lazy(() => import('./pages/CommunicationsPage'));
+const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
 
 function App() {
   const PageLoader = () => (
@@ -333,6 +334,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <CommunicationsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/audit-logs"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <AuditLogsPage />
                   </Suspense>
                 </ProtectedRoute>
               }
