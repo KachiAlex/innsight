@@ -87,6 +87,10 @@ const ApiManagementPage = lazy(() => import('./pages/ApiManagementPage'));
 const BackupRestorePage = lazy(() => import('./pages/BackupRestorePage'));
 const CommunicationsPage = lazy(() => import('./pages/CommunicationsPage'));
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
+const TenantQuotasPage = lazy(() => import('./pages/TenantQuotasPage'));
+const DataRetentionPage = lazy(() => import('./pages/DataRetentionPage'));
+const IntegrationManagementPage = lazy(() => import('./pages/IntegrationManagementPage'));
+const SLADashboardPage = lazy(() => import('./pages/SLADashboardPage'));
 
 function App() {
   const PageLoader = () => (
@@ -344,6 +348,46 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <AuditLogsPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/tenant-quotas"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <TenantQuotasPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/data-retention"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <DataRetentionPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/integrations"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <IntegrationManagementPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/sla-dashboard"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SLADashboardPage />
                   </Suspense>
                 </ProtectedRoute>
               }

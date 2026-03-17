@@ -53,6 +53,10 @@ import { communicationsRouter } from './routes/communications';
 import { auditLogsRouter } from './routes/audit-logs';
 import { tenantQuickActionsRouter } from './routes/tenant-quick-actions';
 import { systemHealthRouter } from './routes/system-health';
+import resourceQuotasRouter from './routes/resource-quotas';
+import dataRetentionRouter from './routes/data-retention';
+import integrationsRouter from './routes/integrations';
+import slaRouter from './routes/sla';
 
 dotenv.config();
 
@@ -182,6 +186,10 @@ app.use('/api/superadmin/communications', communicationsRouter);
 app.use('/api/superadmin/audit-logs', auditLogsRouter);
 app.use('/api/superadmin/tenant-actions', tenantQuickActionsRouter);
 app.use('/api/superadmin/health', systemHealthRouter);
+app.use('/api/superadmin/tenant-quotas', resourceQuotasRouter);
+app.use('/api/superadmin/retention-policies', dataRetentionRouter);
+app.use('/api/superadmin/integrations', integrationsRouter);
+app.use('/api/superadmin/sla', slaRouter);
 
 // Error handling (must be last)
 app.use(errorHandler);
