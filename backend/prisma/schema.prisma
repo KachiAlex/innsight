@@ -111,34 +111,36 @@ model User {
 }
 
 model Room {
-  id                 String              @id @default(uuid())
-  tenantId           String
-  roomNumber         String
-  roomType           String
-  floor              Int?
-  status             String              @default("available")
-  maxOccupancy       Int
-  amenities          Json?
-  ratePlanId         String?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  categoryId         String?
-  description        String?
-  lastLogAt          DateTime?
-  lastLogSummary     String?
-  lastLogType        String?
-  lastLogUserName    String?
-  customRate         Decimal?            @db.Decimal(10, 2)
-  folios             Folio[]
-  housekeepingTasks  HousekeepingTask[]
-  iotEvents          IoTEvent[]
-  iotSensors         IoTSensor[]
-  maintenanceTickets MaintenanceTicket[]
-  reservations       Reservation[]
-  roomLogs           RoomLog[]
-  category           RoomCategory?       @relation(fields: [categoryId], references: [id])
-  ratePlan           RatePlan?           @relation(fields: [ratePlanId], references: [id])
-  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                    String              @id @default(uuid())
+  tenantId              String
+  roomNumber            String
+  roomType              String
+  floor                 Int?
+  status                String              @default("available")
+  maxOccupancy          Int
+  amenities             Json?
+  ratePlanId            String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  categoryId            String?
+  description           String?
+  lastLogAt             DateTime?
+  lastLogSummary        String?
+  lastLogType           String?
+  lastLogUserName       String?
+  customRate            Decimal?            @db.Decimal(10, 2)
+  lastStatusUpdate      DateTime?
+  lastStatusUpdateBy    String?
+  folios                Folio[]
+  housekeepingTasks     HousekeepingTask[]
+  iotEvents             IoTEvent[]
+  iotSensors            IoTSensor[]
+  maintenanceTickets    MaintenanceTicket[]
+  reservations          Reservation[]
+  roomLogs              RoomLog[]
+  category              RoomCategory?       @relation(fields: [categoryId], references: [id])
+  ratePlan              RatePlan?           @relation(fields: [ratePlanId], references: [id])
+  tenant                Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, roomNumber])
   @@index([tenantId, status])

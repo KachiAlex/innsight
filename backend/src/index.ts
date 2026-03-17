@@ -59,6 +59,7 @@ import resourceQuotasRouter from './routes/resource-quotas';
 import dataRetentionRouter from './routes/data-retention';
 import integrationsRouter from './routes/integrations';
 import slaRouter from './routes/sla';
+import roomStatusRouter from './routes/roomStatus';
 
 dotenv.config();
 
@@ -144,6 +145,7 @@ app.use('/api/tenants', tenantAdminRouter); // Admin management routes (must be 
 app.use('/api/tenants', tenantRouter);
 app.use('/api/tenants/:tenantId/reservations', reservationRouter);
 app.use('/api/tenants/:tenantId/rooms', roomRouter);
+app.use('/api/rooms', roomStatusRouter);
 app.use('/api/tenants/:tenantId/folios', folioRouter);
 app.use('/api/tenants/:tenantId/payments', paymentRouter);
 app.use('/api/tenants/:tenantId/housekeeping', housekeepingRouter);
