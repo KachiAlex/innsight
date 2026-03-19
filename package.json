@@ -30,6 +30,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@google-cloud/firestore": "^6.8.0"
+    "@google-cloud/firestore": "^6.8.0",
+    "es-object-atoms": "^1.1.1"
   }
 }

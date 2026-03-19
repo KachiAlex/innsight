@@ -77,56 +77,6 @@ export default function DashboardPage() {
         return 'neutral';
     }
   };
-    <div
-      style={{
-        background: 'white',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-        border: `1px solid ${color}20`,
-        borderLeft: `4px solid ${color}`,
-        transition: 'transform 0.2s, box-shadow 0.2s',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-2px)';
-        e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '0.5rem' }}>
-            {title}
-          </div>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#1e293b' }}>
-            {value}
-          </div>
-          {subtitle && (
-            <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-              {subtitle}
-            </div>
-          )}
-        </div>
-        <div
-          style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: '8px',
-            background: `${color}20`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color,
-          }}
-        >
-          <Icon size={24} />
-        </div>
-      </div>
-    </div>
-  ));
 
   const statCards = useMemo(() => {
     if (!stats) return null;
