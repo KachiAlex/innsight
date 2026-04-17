@@ -19,12 +19,12 @@
       "dest": "/backend/api/index.ts"
     },
     {
-      "src": "/frontend/(.*)",
-      "dest": "/frontend/$1"
+      "src": "/assets/(.*)",
+      "dest": "/frontend/dist/assets/$1"
     },
     {
       "src": "/(.*)",
-      "dest": "/frontend/index.html"
+      "dest": "/frontend/dist/index.html"
     }
   ]
 }
