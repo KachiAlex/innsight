@@ -1,6 +1,6 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
-import { createApp } from '../../backend/dist/bundle.js';
+import { createApp } from './bundle.js';
 
 const app = createApp();
 
