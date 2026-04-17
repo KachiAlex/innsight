@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "dependencies": {
+    "tsx": "^4.7.0"
+  }
+}
