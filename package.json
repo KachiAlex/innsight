@@ -32,5 +32,8 @@
   "dependencies": {
     "@google-cloud/firestore": "^6.8.0",
     "es-object-atoms": "^1.1.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "https://registry.npmjs.org/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.60.1.tgz"
   }
 }

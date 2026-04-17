@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
+import type { Socket, ManagerOptions, SocketOptions } from 'socket.io-client';
 import toast from 'react-hot-toast';
 
 export interface RealTimeEvent {
@@ -48,15 +49,17 @@ export const useWebSocket = (options: UseWebSocketOptions = {}) => {
     if (!enabled || !token) return;
 
     try {
-      const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-      socketRef.current = io(baseUrl, {
+      const baseUrl = import.meta.env.VITE_API_URL || process.env.REACT_APP_API_URL || 'http://localhost:3001';
+      const connectionOptions: Partial<ManagerOptions & SocketOptions> = {
         auth: { token },
         reconnection: autoReconnect,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
         reconnectionAttempts: 5,
         transports: ['websocket', 'polling'],
-      });
+      };
+
+      socketRef.current = io(baseUrl, connectionOptions);
 
       // Connection handlers
       socketRef.current.on('connect', () => {

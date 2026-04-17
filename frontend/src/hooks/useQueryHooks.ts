@@ -1,6 +1,8 @@
 import { useQuery, UseQueryOptions } from 'react-query';
-import { api } from './api';
-import { CACHE_STRATEGIES, queryKeys } from './queryClient';
+import { api } from '../lib/api';
+import { CACHE_STRATEGIES, queryKeys } from '../lib/queryClient';
+
+type AnyQueryOptions = UseQueryOptions<any, unknown, any, any>;
 
 /**
  * Custom hooks for cached data fetching with React Query
@@ -11,7 +13,7 @@ import { CACHE_STRATEGIES, queryKeys } from './queryClient';
 // DASHBOARD HOOKS
 // ============================================
 
-export const useDashboardStats = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useDashboardStats = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.dashboard.stats(tenantId),
     async () => {
@@ -40,7 +42,7 @@ export const useDashboardStats = (tenantId: string, options?: UseQueryOptions<an
   );
 };
 
-export const useDashboardMetrics = (tenantId: string, period: '7d' | '30d' | '90d' | '1y' = '30d', options?: UseQueryOptions<any>) => {
+export const useDashboardMetrics = (tenantId: string, period: '7d' | '30d' | '90d' | '1y' = '30d', options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.dashboard.metrics(tenantId),
     async () => {
@@ -58,7 +60,7 @@ export const useDashboardMetrics = (tenantId: string, period: '7d' | '30d' | '90
 // ROOMS HOOKS
 // ============================================
 
-export const useRoomsList = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useRoomsList = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.rooms.list(tenantId),
     async () => {
@@ -72,7 +74,7 @@ export const useRoomsList = (tenantId: string, options?: UseQueryOptions<any>) =
   );
 };
 
-export const useRoomStatus = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useRoomStatus = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.rooms.status(tenantId),
     async () => {
@@ -86,7 +88,7 @@ export const useRoomStatus = (tenantId: string, options?: UseQueryOptions<any>) 
   );
 };
 
-export const useAvailableRooms = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useAvailableRooms = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.rooms.available(tenantId),
     async () => {
@@ -110,7 +112,7 @@ export const useReservationsList = (
     startDate?: string;
     endDate?: string;
   },
-  queryOptions?: UseQueryOptions<any>
+  queryOptions?: AnyQueryOptions
 ) => {
   return useQuery(
     queryKeys.reservations.list(tenantId, options),
@@ -125,7 +127,7 @@ export const useReservationsList = (
   );
 };
 
-export const useTodayReservations = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useTodayReservations = (tenantId: string, options?: AnyQueryOptions) => {
   const today = new Date().toISOString().split('T')[0];
   return useReservationsList(
     tenantId,
@@ -141,7 +143,7 @@ export const useTodayReservations = (tenantId: string, options?: UseQueryOptions
 // GUESTS HOOKS
 // ============================================
 
-export const useGuestsList = (tenantId: string, page?: number, options?: UseQueryOptions<any>) => {
+export const useGuestsList = (tenantId: string, page?: number, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.guests.list(tenantId, page),
     async () => {
@@ -155,7 +157,7 @@ export const useGuestsList = (tenantId: string, page?: number, options?: UseQuer
   );
 };
 
-export const useGuestSearch = (tenantId: string, query: string, options?: UseQueryOptions<any>) => {
+export const useGuestSearch = (tenantId: string, query: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.guests.search(tenantId, query),
     async () => {
@@ -178,7 +180,7 @@ export const useGuestSearch = (tenantId: string, query: string, options?: UseQue
 export const useOccupancyReport = (
   tenantId: string,
   dateRange: { start: string; end: string },
-  options?: UseQueryOptions<any>
+  options?: AnyQueryOptions
 ) => {
   return useQuery(
     queryKeys.reports.occupancy(tenantId, dateRange),
@@ -196,7 +198,7 @@ export const useOccupancyReport = (
 export const useRevenueReport = (
   tenantId: string,
   dateRange: { start: string; end: string },
-  options?: UseQueryOptions<any>
+  options?: AnyQueryOptions
 ) => {
   return useQuery(
     queryKeys.reports.revenue(tenantId, dateRange),
@@ -215,7 +217,7 @@ export const useRevenueReport = (
 // HOUSEKEEPING HOOKS
 // ============================================
 
-export const useHousekeepingTasks = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useHousekeepingTasks = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.housekeeping.tasks(tenantId),
     async () => {
@@ -233,7 +235,7 @@ export const useHousekeepingTasks = (tenantId: string, options?: UseQueryOptions
 // STAFF HOOKS
 // ============================================
 
-export const useStaffList = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useStaffList = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.staff.list(tenantId),
     async () => {
@@ -251,7 +253,7 @@ export const useStaffList = (tenantId: string, options?: UseQueryOptions<any>) =
 // RATE PLANS HOOKS
 // ============================================
 
-export const useRatePlansList = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const useRatePlansList = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.ratePlans.list(tenantId),
     async () => {
@@ -269,7 +271,7 @@ export const useRatePlansList = (tenantId: string, options?: UseQueryOptions<any
 // SETTINGS HOOKS
 // ============================================
 
-export const usePropertySettings = (tenantId: string, options?: UseQueryOptions<any>) => {
+export const usePropertySettings = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.settings.property(tenantId),
     async () => {

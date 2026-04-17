@@ -1,17 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  HardDrive,
-  Download,
-  Upload,
-  Plus,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  RotateCcw,
-  Trash2,
-  Calendar,
-  Database,
-} from 'lucide-react';
+import { HardDrive, Download, Plus, Clock, CheckCircle, AlertCircle, RotateCcw, Trash2, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api';
 

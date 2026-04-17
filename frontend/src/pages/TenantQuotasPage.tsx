@@ -3,16 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import {
-  BarChart3,
-  Plus,
-  Edit2,
-  Save,
-  X,
-  AlertTriangle,
-  TrendingUp,
-  RefreshCw,
-} from 'lucide-react';
+import { BarChart3, Edit2, Save, X, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Tenant {

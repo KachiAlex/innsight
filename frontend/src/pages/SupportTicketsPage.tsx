@@ -434,6 +434,26 @@ export default function SupportTicketsPage() {
           </div>
         </div>
       )}
+
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center p-4 z-40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
+            <div className="p-6 space-y-4">
+              <h2 className="text-2xl font-semibold text-gray-900">Create Support Ticket</h2>
+              <p className="text-gray-600">
+                This interface is being finalized. Please continue using existing channels to create tickets in the
+                meantime.
+              </p>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

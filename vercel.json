@@ -1,9 +1,5 @@
 {
-  "version": 2,
-  "env": {
-    "NODE_ENV": "production",
-    "PORT": "3001"
-  },
+  "version": 3,
   "builds": [
     {
       "src": "frontend/package.json",
@@ -13,19 +9,21 @@
       }
     },
     {
-      "src": "backend/package.json",
+      "src": "backend/api/index.ts",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "backend/index.js",
-      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      "dest": "/backend/api/index.ts"
     },
     {
       "src": "/(.*)",
-      "dest": "frontend/index.html"
+      "dest": "/frontend/dist/$1"
+    },
+    {
+      "handle": "filesystem"
     }
   ]
 }

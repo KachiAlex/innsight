@@ -183,7 +183,7 @@ export default function AuditLogsPage() {
 
         {/* Metrics */}
         {metrics && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="bg-white rounded-lg shadow p-6">
               <p className="text-sm text-gray-600">Total Actions</p>
               <p className="text-3xl font-bold text-gray-900">{metrics.totalLogs}</p>
@@ -219,6 +219,24 @@ export default function AuditLogsPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Filter className="h-4 w-4 inline mr-1" /> Entity Type
+              </label>
+              <select
+                value={entityTypeFilter}
+                onChange={(e) => setEntityTypeFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">All Entities</option>
+                <option value="tenant">Tenant</option>
+                <option value="reservation">Reservation</option>
+                <option value="room">Room</option>
+                <option value="user">User</option>
+                <option value="system">System</option>
+              </select>
             </div>
 
             <div>

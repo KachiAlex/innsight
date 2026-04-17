@@ -118,11 +118,107 @@ firebase deploy --only functions
 firebase deploy
 ```
 
-## Alternative Backend Deployment Options
+## Vercel Deployment (Recommended)
 
-Since Firebase Functions might have limitations for Express apps with PostgreSQL, consider these alternatives:
+This guide covers deploying InnSight PMS to Vercel with both frontend and backend.
 
-### Option 1: Railway (Recommended)
+### Prerequisites
+
+1. Vercel CLI installed: `npm install -g vercel`
+2. Vercel account: https://vercel.com/
+3. Node.js 18+ installed
+4. PostgreSQL database (Vercel Postgres or external)
+
+### Setup Steps
+
+#### 1. Initialize Vercel Project
+
+```bash
+# Login to Vercel
+vercel login
+
+# Initialize Vercel (from project root)
+vercel
+
+# Select:
+# - Link to existing project or create new
+# - Confirm project settings
+```
+
+#### 2. Configure Environment Variables
+
+In Vercel dashboard (Settings > Environment Variables) or via CLI:
+
+```bash
+# Backend variables
+vercel env add DATABASE_URL
+vercel env add JWT_SECRET
+vercel env add JWT_REFRESH_SECRET
+vercel env add CORS_ORIGIN
+
+# Frontend variables
+vercel env add VITE_API_URL
+```
+
+Required environment variables:
+
+```env
+DATABASE_URL=postgresql://user:password@host:port/database
+JWT_SECRET=your-secret-key
+JWT_REFRESH_SECRET=your-refresh-secret-key
+CORS_ORIGIN=https://your-frontend-url.vercel.app
+VITE_API_URL=https://your-backend-url.vercel.app/api
+```
+
+#### 3. Database Setup
+
+##### Option A: Vercel Postgres (Recommended)
+
+1. Go to Vercel dashboard
+2. Create new Postgres database
+3. Copy connection string
+4. Add to environment variables as `DATABASE_URL`
+
+##### Option B: External PostgreSQL (Railway, Supabase, etc.)
+
+1. Set up PostgreSQL database on external service
+2. Get connection string
+3. Add to environment variables as `DATABASE_URL`
+
+#### 4. Build and Deploy
+
+```bash
+# Deploy to preview
+vercel
+
+# Deploy to production
+vercel --prod
+```
+
+### Project Structure
+
+The project is configured as a monorepo with:
+- `frontend/` - React application (static build)
+- `backend/` - Express API (serverless function)
+
+### Vercel Configuration
+
+`vercel.json` at the root defines:
+- Frontend build using `@vercel/static-build`
+- Backend API function using `@vercel/node`
+- Routes to direct `/api/*` to backend and other paths to frontend
+
+### Important Notes
+
+- **WebSocket Support**: Vercel serverless functions do not support WebSockets. The backend's WebSocket functionality will not work in Vercel deployment. Consider using a separate service like Railway or Render for real-time features if needed.
+- **File Uploads**: Serverless functions have size limits. For large file uploads, consider using Vercel Blob or external storage.
+- **Database Connections**: Use connection pooling for better performance in serverless environments.
+
+### Alternative Backend Deployment Options
+
+If you need WebSocket support or prefer a traditional server deployment:
+
+### Option 1: Railway
 
 1. Sign up at https://railway.app/
 2. Create new project
@@ -141,12 +237,10 @@ Since Firebase Functions might have limitations for Express apps with PostgreSQL
 6. Add PostgreSQL database
 7. Set environment variables
 
-### Option 3: Vercel
+### Option 3: Firebase Functions
 
-1. Sign up at https://vercel.com/
-2. Import GitHub repository
-3. Configure backend as serverless function
-4. Add PostgreSQL database (via Vercel Postgres or external)
+1. Follow Firebase deployment guide above
+2. Note: Firebase Functions have limitations for Express apps with PostgreSQL
 
 ## Environment Variables Reference
 

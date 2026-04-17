@@ -3,15 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import {
-  Trash2,
-  Plus,
-  RefreshCw,
-  AlertCircle,
-  Clock,
-  Calendar,
-  Toggle,
-} from 'lucide-react';
+import { Trash2, Plus, RefreshCw, AlertCircle, Clock, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface RetentionPolicy {

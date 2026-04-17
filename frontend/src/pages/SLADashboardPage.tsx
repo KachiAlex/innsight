@@ -11,7 +11,6 @@ import {
   RefreshCw,
   TrendingUp,
   Zap,
-  BarChart2,
   AlertCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';

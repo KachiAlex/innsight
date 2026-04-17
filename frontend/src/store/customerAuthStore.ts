@@ -30,7 +30,12 @@ type CustomerAuthState = {
   clear: () => void;
 };
 
-const storage = createJSONStorage<CustomerAuthState>(() => localStorage);
+type PersistedCustomerAuthState = Pick<
+  CustomerAuthState,
+  'tenantSlug' | 'customerToken' | 'guestSessionToken' | 'guestAccount' | 'primaryReservationId' | 'reservations'
+>;
+
+const storage = createJSONStorage<PersistedCustomerAuthState>(() => localStorage);
 
 export const useCustomerAuthStore = create<CustomerAuthState>()(
   persist(
@@ -81,7 +86,7 @@ export const useCustomerAuthStore = create<CustomerAuthState>()(
     {
       name: 'customer-auth-store',
       storage,
-      partialize: (state) => ({
+      partialize: (state): PersistedCustomerAuthState => ({
         tenantSlug: state.tenantSlug,
         customerToken: state.customerToken,
         guestSessionToken: state.guestSessionToken,

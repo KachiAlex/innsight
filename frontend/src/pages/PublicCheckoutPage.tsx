@@ -2,7 +2,6 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Calendar,
-  CreditCard,
   ShieldCheck,
   ExternalLink,
   RefreshCcw,
@@ -234,7 +233,6 @@ const PublicCheckoutPage = () => {
   }));
   const [tenant, setTenant] = useState<TenantSummary | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [intentLoading, setIntentLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [availableRooms, setAvailableRooms] = useState<AvailableRoom[]>([]);
   const [categories, setCategories] = useState<RoomCategory[]>([]);
@@ -245,6 +243,7 @@ const PublicCheckoutPage = () => {
   const [intentCountdown, setIntentCountdown] = useState('');
   const [signupOpen, setSignupOpen] = useState(false);
   const [signupAutoRedirect, setSignupAutoRedirect] = useState(false);
+  const [intentLoading, setIntentLoading] = useState(false);
   const [signupDefaults, setSignupDefaults] = useState({ name: '', email: '', phone: '' });
 
   const [form, setForm] = useState({
@@ -478,16 +477,6 @@ const PublicCheckoutPage = () => {
     }
   }, [allowedGateways, form.gateway]);
 
-  const buildSpecialRequests = () => {
-    const details = [
-      form.guestAddress ? `Guest address: ${form.guestAddress.trim()}` : null,
-      form.specialRequests ? `Notes: ${form.specialRequests.trim()}` : null,
-      form.hallEventName ? `Hall event: ${form.hallEventName.trim()}` : null,
-      form.hallNotes ? `Hall notes: ${form.hallNotes.trim()}` : null,
-    ].filter(Boolean);
-    return details.join('\n');
-  };
-
   const validateStep = (stepIndex: number) => {
     switch (stepIndex) {
       case 0:
@@ -517,7 +506,7 @@ const PublicCheckoutPage = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 0));
   };
 
-  const handleCreateIntent = async () => {
+  const handleCreateIntent = useCallback(async () => {
     if (!tenantSlug) return;
     if (!form.roomId) {
       toast.error('Please select a room to continue.');
@@ -530,6 +519,15 @@ const PublicCheckoutPage = () => {
     setIntentLoading(true);
     setConfirmation(null);
     try {
+      const specialRequests = [
+        form.guestAddress ? `Guest address: ${form.guestAddress.trim()}` : null,
+        form.specialRequests ? `Notes: ${form.specialRequests.trim()}` : null,
+        form.hallEventName ? `Hall event: ${form.hallEventName.trim()}` : null,
+        form.hallNotes ? `Hall notes: ${form.hallNotes.trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
       const payload = {
         roomId: form.roomId,
         checkInDate: form.checkInDate,
@@ -541,7 +539,7 @@ const PublicCheckoutPage = () => {
         guestPhone: form.guestPhone || undefined,
         gateway: form.gateway || undefined,
         payDepositOnly: form.payDepositOnly,
-        specialRequests: buildSpecialRequests() || undefined,
+        specialRequests: specialRequests || undefined,
         source: 'web_portal' as const,
       };
 
@@ -568,7 +566,13 @@ const PublicCheckoutPage = () => {
     } finally {
       setIntentLoading(false);
     }
-  };
+  }, [tenantSlug, form]);
+
+  useEffect(() => {
+    if (currentStep === STEP_LABELS.length - 1 && !checkoutIntent && !intentLoading) {
+      void handleCreateIntent();
+    }
+  }, [currentStep, checkoutIntent, intentLoading, handleCreateIntent]);
 
   const confirmPayment = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -1128,27 +1132,11 @@ const PublicCheckoutPage = () => {
           </p>
           {selectedRoomRate !== null && nights && (
             <p style={{ margin: '0.35rem 0 0', color: '#0f172a', fontWeight: 600 }}>
-              {formatCurrency(selectedRoomRate * nights, summaryCurrency)} total · {nights} night{nights === 1 ? '' : 's'}
+              · {formatCurrency(selectedRoomRate, summaryCurrency)} / night
             </p>
           )}
         </div>
       )}
-      <button
-        type="button"
-        disabled={intentLoading || !validateStep(4)}
-        onClick={handleCreateIntent}
-        style={{
-          ...accentButtonStyle,
-          background: accentGradient,
-          color: '#fff',
-          fontSize: '1.05rem',
-          marginTop: '0.5rem',
-          opacity: intentLoading ? 0.7 : 1,
-        }}
-      >
-        <CreditCard size={20} />
-        {intentLoading ? 'Starting checkout...' : 'Launch secure payment'}
-      </button>
     </div>
   );
 
@@ -1172,8 +1160,9 @@ const PublicCheckoutPage = () => {
   const canAdvance = validateStep(currentStep);
 
   return (
-    <div style={gradientBackground}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem 3rem' }}>
+    <>
+      <div style={gradientBackground}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 1.5rem 3rem' }}>
         <header
           style={{
             display: 'flex',
@@ -1534,37 +1523,30 @@ const PublicCheckoutPage = () => {
               </div>
             )}
 
-            {nights && selectedRoom && (
-              <div
-                style={{
-                  marginTop: '1.5rem',
-                  padding: '1rem',
-                  borderRadius: '20px',
-                  background: 'rgba(255,255,255,0.08)',
-                }}
-              >
-                <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '0.75rem', color: '#c7d2fe' }}>
-                  Stay summary
-                </p>
-                <p style={{ margin: '0.25rem 0', fontSize: '1.1rem', fontWeight: 600 }}>
-                  {nights} night{nights > 1 ? 's' : ''} · Room {selectedRoom.roomNumber || '—'}
-                </p>
-                <p style={{ margin: 0, color: 'rgba(255,255,255,0.7)' }}>
-                  {selectedRoom.ratePlan?.name || selectedRoom.roomType || 'Standard room'}
-                  {selectedRoomRate !== null && (
-                    <>
-                      {' '}
-                      · {formatCurrency(selectedRoomRate, summaryCurrency)} / night
-                    </>
-                  )}
-                </p>
-              </div>
-            )}
+            {/* Duplicate stay-summary block removed; kept earlier correct rendering */}
           </section>
         </div>
       </div>
     </div>
+
+    <GuestSignupModal
+      tenantSlug={tenantSlug}
+      open={signupOpen}
+      onClose={() => setSignupOpen(false)}
+      defaultName={signupDefaults.name}
+      defaultEmail={signupDefaults.email}
+      defaultPhone={signupDefaults.phone}
+      autoRedirect={signupAutoRedirect}
+      onSuccess={(response) => {
+        if (tenantSlug) {
+          setAuthFromResponse(tenantSlug, response);
+        }
+        toast.success('Guest account saved for quicker checkout');
+        setSignupOpen(false);
+      }}
+    />
+  </>
   );
-};
+}
 
 export default PublicCheckoutPage;

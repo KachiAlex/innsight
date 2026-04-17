@@ -3,17 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import {
-  Plus,
-  Edit,
-  Trash2,
-  RefreshCw,
-  AlertCircle,
-  CheckCircle,
-  ExternalLink,
-  Settings,
-  Zap,
-} from 'lucide-react';
+import { Plus, Edit, Trash2, RefreshCw, AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Integration {
@@ -36,9 +26,14 @@ export default function IntegrationManagementPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    type: Integration['type'];
+    apiKey: string;
+    config: string;
+  }>({
     name: '',
-    type: 'payment' as const,
+    type: 'payment',
     apiKey: '',
     config: '',
   });
@@ -191,7 +186,7 @@ export default function IntegrationManagementPage() {
               />
               <select
                 value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, type: e.target.value as Integration['type'] })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="payment">Payment</option>

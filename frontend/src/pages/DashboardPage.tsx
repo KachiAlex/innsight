@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useDashboardStats } from '../hooks/useQueryHooks';
@@ -26,14 +27,15 @@ export default function DashboardPage() {
   // Use React Query for caching
   const { data: stats, isLoading: loading, error, refetch } = useDashboardStats(user?.tenantId || '', {
     enabled: !!user?.tenantId,
-    onError: (err: any) => {
-      const errorMessage = err.response?.data?.error?.message || 'Failed to load dashboard data';
+    onError: (err: unknown) => {
+      const errorMessage =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ||
+        (err instanceof Error ? err.message : 'Failed to load dashboard data');
       toast.error(errorMessage);
     },
     onSuccess: (newStats) => {
-      // Store previous stats for trend calculation
-      if (stats) {
-        setPreviousStats(stats);
+      if (newStats) {
+        setPreviousStats(newStats);
       }
       toast.success('Dashboard updated');
     },
@@ -48,6 +50,10 @@ export default function DashboardPage() {
     }
   };
 
+  const fetchStats = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
   // Calculate trends
   const calculateTrend = (currentVal: number, previousVal?: number) => {
     if (!previousVal || previousVal === 0) return undefined;
@@ -60,12 +66,15 @@ export default function DashboardPage() {
   };
 
   // Determine status based on metrics
-  const getStatus = (metricName: string, value: number) => {
+  type StatusSeverity = 'good' | 'warning' | 'critical' | 'neutral';
+
+  const getStatus = (metricName: string, value: number): StatusSeverity => {
     switch (metricName) {
       case 'occupancy':
         if (value >= 80) return 'good';
         if (value >= 60) return 'warning';
         return 'critical';
+
       case 'revenue':
         if (value > 0) return 'good';
         return 'neutral';
@@ -89,7 +98,7 @@ export default function DashboardPage() {
         color: '#3b82f6',
         trend: calculateTrend(stats.todayReservations, previousStats?.todayReservations),
         status: getStatus('reservations', stats.todayReservations),
-        sparklineData: [stats.todayReservations * 0.7, stats.todayReservations * 0.85, stats.todayReservations],
+        sparkData: [stats.todayReservations * 0.7, stats.todayReservations * 0.85, stats.todayReservations],
         format: 'number',
       },
       {
@@ -99,7 +108,7 @@ export default function DashboardPage() {
         color: '#10b981',
         trend: calculateTrend(stats.availableRooms, previousStats?.availableRooms),
         status: getStatus('rooms', stats.availableRooms),
-        sparklineData: [stats.availableRooms * 0.8, stats.availableRooms * 0.9, stats.availableRooms],
+        sparkData: [stats.availableRooms * 0.8, stats.availableRooms * 0.9, stats.availableRooms],
         format: 'number',
       },
       {
@@ -109,7 +118,7 @@ export default function DashboardPage() {
         color: '#f59e0b',
         trend: calculateTrend(stats.todayRevenue, previousStats?.todayRevenue),
         status: getStatus('revenue', stats.todayRevenue),
-        sparklineData: [stats.todayRevenue * 0.6, stats.todayRevenue * 0.85, stats.todayRevenue],
+        sparkData: [stats.todayRevenue * 0.6, stats.todayRevenue * 0.85, stats.todayRevenue],
         format: 'currency',
       },
       {
@@ -120,7 +129,7 @@ export default function DashboardPage() {
         color: '#8b5cf6',
         trend: calculateTrend(stats.occupancyRate, previousStats?.occupancyRate),
         status: getStatus('occupancy', stats.occupancyRate),
-        sparklineData: [stats.occupancyRate * 0.85, stats.occupancyRate * 0.92, stats.occupancyRate],
+        sparkData: [stats.occupancyRate * 0.85, stats.occupancyRate * 0.92, stats.occupancyRate],
         format: 'percentage',
       },
     ];
@@ -144,7 +153,7 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h1 style={{ color: '#1e293b' }}>Dashboard</h1>
             <button
-              onClick={() => fetchStats()}
+              onClick={() => refetch()}
               style={{
                 padding: '0.5rem 1rem',
                 background: '#3b82f6',
@@ -169,7 +178,13 @@ export default function DashboardPage() {
             color: '#64748b',
           }}>
             <AlertCircle size={48} style={{ margin: '0 auto 1rem', color: '#ef4444' }} />
-            <p style={{ marginBottom: '1rem' }}>{error}</p>
+            <p style={{ marginBottom: '1rem' }}>
+              {typeof error === 'string'
+                ? error
+                : error instanceof Error
+                ? error.message
+                : 'Unable to load dashboard data'}
+            </p>
             <button
               onClick={() => fetchStats()}
               style={{
@@ -239,7 +254,7 @@ export default function DashboardPage() {
                 color={card.color}
                 trend={card.trend}
                 status={card.status}
-                sparklineData={card.sparklineData}
+                sparkData={card.sparkData}
               />
             ))}
           </KPIGrid>
