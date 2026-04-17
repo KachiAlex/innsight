@@ -1,6 +1,13 @@
 {
   "type": "module",
+  "scripts": {
+    "build": "tsc --skipLibCheck --noEmitOnError false"
+  },
   "dependencies": {
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "@vercel/node": "^3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
   }
 }

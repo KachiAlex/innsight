@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "echo 'No build needed for deployment'",
+    "build": "npx -y esbuild src/app.ts --bundle --platform=node --target=node18 --outfile=dist/bundle.js --external:@prisma/client --external:firebase-admin --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=cjs",
     "start": "tsx src/index.ts",
     "test": "jest",
     "prisma:generate": "prisma generate",
