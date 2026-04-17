@@ -19,11 +19,11 @@
       "dest": "/backend/api/index.ts"
     },
     {
-      "src": "/(.*)",
-      "dest": "/frontend/$1"
+      "handle": "filesystem"
     },
     {
-      "handle": "filesystem"
+      "src": "/(.*)",
+      "dest": "/frontend/index.html"
     }
   ]
 }
