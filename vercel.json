@@ -6,8 +6,11 @@
       "use": "@vercel/static-build"
     },
     {
-      "src": "api/index.ts",
-      "use": "@vercel/node"
+      "src": "backend/package.json",
+      "use": "@vercel/node",
+      "config": {
+        "installCommand": "cd backend && npm install && npm run build"
+      }
     }
   ],
   "routes": [
