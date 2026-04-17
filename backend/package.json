@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "npx -y cpy \"src/**/*\" dist --cwd=. --parents",
     "start": "tsx src/index.ts",
     "test": "jest",
     "prisma:generate": "prisma generate",
