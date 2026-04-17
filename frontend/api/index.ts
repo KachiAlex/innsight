@@ -4,4 +4,6 @@ import { createApp } from '../../backend/src/app';
 
 const app = createApp();
 
-export default (req: VercelRequest, res: VercelResponse) => app(req, res);
+export default async (req: VercelRequest, res: VercelResponse) => {
+  return app(req, res);
+};
