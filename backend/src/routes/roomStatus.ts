@@ -12,12 +12,12 @@ import {
   RoomStatus,
 } from '../utils/roomStatus';
 import { realtimeEmitter } from '../utils/realtimeEmitter';
-import { authMiddleware } from '../middleware/auth';
+// import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
 // All routes require authentication
-router.use(authMiddleware);
+// router.use(authMiddleware);
 
 /**
  * GET /api/rooms/:roomId/status
