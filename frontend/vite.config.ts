@@ -39,6 +39,6 @@ export default defineConfig({
   },
   // Define API URL for production
   define: {
-    __VITE_API_URL__: JSON.stringify(process.env.VITE_API_URL || 'https://innsight-backend.onrender.com'),
+    __VITE_API_URL__: JSON.stringify(process.env.VITE_API_URL || '/api'),
   },
 })

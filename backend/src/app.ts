@@ -62,7 +62,8 @@ const defaultOrigins = [
   'https://innsight-2025.web.app',
   'https://innsight-frontend.onrender.com',
   'https://innsightpms.netlify.app',
-  'https://innsight-pms.vercel.app'
+  'https://innsight-pms.vercel.app',
+  'https://innsight-theta.vercel.app'
 ];
 
 const buildAllowedOrigins = () => {

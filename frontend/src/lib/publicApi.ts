@@ -4,18 +4,19 @@ import toast from 'react-hot-toast';
 const HOSTING_ORIGINS = new Set([
   'https://innsight-2025.web.app',
   'https://innsight-2025.firebaseapp.com',
+  'https://innsight-theta.vercel.app',
 ]);
 
 const resolveApiBaseUrl = () => {
   const envUrl = (import.meta as any).env?.VITE_API_URL;
   if (typeof window === 'undefined') {
-    return envUrl || 'https://innsight-backend.onrender.com/api';
+    return envUrl || '/api';
   }
   const origin = window.location.origin;
   if (HOSTING_ORIGINS.has(origin)) {
-    return 'https://innsight-backend.onrender.com/api';
+    return '/api';
   }
-  return envUrl || 'https://innsight-backend.onrender.com/api';
+  return envUrl || '/api';
 };
 
 const API_BASE_URL = resolveApiBaseUrl().replace(/\/$/, '') || '/api';
