@@ -32,7 +32,7 @@ export interface NotificationChannel {
       fromNumber: string;
     };
     push?: {
-      provider: 'firebase' | 'onesignal';
+      provider: 'onesignal';
       appId: string;
     };
     webhook?: {

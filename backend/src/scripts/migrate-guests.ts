@@ -5,9 +5,6 @@
  * in the guests collection. It also links reservations to their respective guests.
  */
 
-// import { db, toDate, toTimestamp, now } from '../utils/firestore';
-// import admin from 'firebase-admin';
-
 interface GuestData {
   tenantId: string;
   name: string;
@@ -19,8 +16,8 @@ interface GuestData {
   totalStays: number;
   totalNights: number;
   totalSpent: number;
-  firstStayDate: admin.firestore.Timestamp | null;
-  lastStayDate: admin.firestore.Timestamp | null;
+  firstStayDate: Date | null;
+  lastStayDate: Date | null;
   preferredRoomType?: string;
   reservationIds: string[];
 }
@@ -207,7 +204,7 @@ async function migrateGuests() {
 
         batchCount++;
 
-        // Commit batch every 400 operations (Firestore limit is 500)
+        // Commit batch every 400 operations
         if (batchCount >= 400) {
           await batch.commit();
           console.log(`  💾 Committed batch of ${batchCount} operations`);
