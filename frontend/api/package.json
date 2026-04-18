@@ -1,7 +1,8 @@
 {
   "scripts": {
     "prebuild": "cd ../../backend && npx prisma generate",
-    "build": "npx -y esbuild ../../backend/src/app.ts --bundle --platform=node --target=node18 --outfile=bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=cjs --ignore-annotations --log-level=warning"
+    "build": "npx -y esbuild ../../backend/src/app.ts --bundle --platform=node --target=node18 --outfile=bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=cjs --ignore-annotations --log-level=warning",
+    "postinstall": "cd ../../backend && npx prisma generate"
   },
   "dependencies": {
     "tsx": "^4.7.0",
@@ -10,10 +11,13 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "cors": "^2.8.5",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "@prisma/client": "^5.7.1",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "typescript": "^5.3.3",
-    "esbuild": "^0.19.12"
+    "esbuild": "^0.19.12",
+    "prisma": "^5.7.1"
   }
 }
