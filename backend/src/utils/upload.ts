@@ -3,10 +3,23 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const preferredUploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+const fallbackUploadsDir = path.join(process.env.TEMP || '/tmp', 'uploads');
+
+const ensureDirectory = (dir: string) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  } catch (error) {
+    return null;
+  }
+};
+
+const resolvedPreferred = ensureDirectory(preferredUploadsDir);
+const uploadsDir = resolvedPreferred || ensureDirectory(fallbackUploadsDir) || preferredUploadsDir;
+
+if (!resolvedPreferred && uploadsDir !== preferredUploadsDir) {
+  console.warn(`Uploads directory default path was not writable; using fallback at ${uploadsDir}`);
 }
 
 // Configure storage
@@ -51,4 +64,6 @@ export const deleteFile = (filename: string): void => {
     fs.unlinkSync(filePath);
   }
 };
+
+export { uploadsDir };
 

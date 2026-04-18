@@ -1,8 +1,9 @@
 {
   "scripts": {
-    "prebuild": "cd ../../backend && npx prisma generate",
+    "prepare:prisma": "node scripts/prepare-prisma-schema.js && npx prisma generate --schema prisma/schema.prisma",
+    "prebuild": "npm run prepare:prisma",
     "build": "npx -y esbuild ../../backend/src/app.ts --bundle --platform=node --target=node18 --outfile=bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=cjs --ignore-annotations --log-level=warning",
-    "postinstall": "cd ../../backend && npx prisma generate"
+    "postinstall": "npm run prepare:prisma"
   },
   "dependencies": {
     "tsx": "^4.7.0",

@@ -19,6 +19,7 @@ import { alertRouter } from './routes/alerts';
 import { reportsRouter } from './routes/reports';
 import { iotRouter } from './routes/iot';
 import { uploadRouter } from './routes/upload';
+import { uploadsDir } from './utils/upload';
 import { ratePlanRouter } from './routes/ratePlans';
 import { guestRouter } from './routes/guests';
 import { guestEnhancedRouter } from './routes/guests-enhanced';
@@ -116,7 +117,7 @@ export const createApp = () => {
   app.use('/api/public/payments', publicPaymentsRouter);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
+  app.use('/api/uploads', express.static(uploadsDir));
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });

@@ -41,3 +41,4 @@ backend/serviceAccount*.json
 # Uploads
 backend/uploads/
 frontend/dist/
+frontend/api/prisma/schema.prisma
