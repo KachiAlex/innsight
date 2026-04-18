@@ -66,11 +66,7 @@ authRouter.post('/login', async (req, res) => {
       throw new AppError('Invalid credentials', 401);
     }
 
-    // Update last login
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
+    // Skip lastLoginAt update to avoid database locks in serverless environment
 
     const tokenPayload = {
       id: user.id,

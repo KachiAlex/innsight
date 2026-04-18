@@ -68863,7 +68863,7 @@ var isPrismaAvailable = () => {
 // ../../backend/src/utils/password.ts
 var import_bcryptjs = __toESM(require_bcryptjs());
 var hashPassword = async (password) => {
-  const saltRounds = 12;
+  const saltRounds = 10;
   return import_bcryptjs.default.hash(password, saltRounds);
 };
 var comparePassword = async (password, hash) => {
@@ -68997,10 +68997,6 @@ authRouter.post("/login", async (req, res) => {
     if (!isValidPassword) {
       throw new AppError("Invalid credentials", 401);
     }
-    await prisma2.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: /* @__PURE__ */ new Date() }
-    });
     const tokenPayload = {
       id: user.id,
       tenantId: user.tenantId,
