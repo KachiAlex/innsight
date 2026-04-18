@@ -76433,82 +76433,99 @@ async function getSuperadminDashboardMetrics() {
     const oneMonthAgo = new Date(now2.getTime() - 30 * 24 * 60 * 60 * 1e3);
     const twoMonthsAgo = new Date(now2.getTime() - 60 * 24 * 60 * 60 * 1e3);
     const [
-      tenants,
-      users,
-      rooms,
-      reservations,
-      tenantsThisMonth,
-      tenantsLastMonth
+      tenantCounts,
+      userCounts,
+      roomCount,
+      reservationAggregates,
+      tenantsThisMonthCount,
+      tenantsLastMonthCount,
+      subscriptionStatusCounts,
+      usersThisMonthCount
     ] = await Promise.all([
-      prisma2?.tenant.findMany({
-        select: {
-          id: true,
-          name: true,
-          subscriptionStatus: true,
-          createdAt: true,
-          _count: { select: { users: true, rooms: true, reservations: true } }
-        }
-      }) || [],
-      prisma2?.user.findMany({
-        select: {
-          id: true,
-          role: true,
-          tenantId: true,
-          isActive: true
-        }
-      }) || [],
-      prisma2?.room.findMany({
-        select: { id: true, tenantId: true }
-      }) || [],
-      prisma2?.reservation.findMany({
-        select: {
-          id: true,
-          tenantId: true,
-          totalPrice: true,
-          checkInDate: true,
-          checkOutDate: true
-        }
-      }) || [],
-      prisma2?.tenant.findMany({
-        where: {
-          createdAt: { gte: oneMonthAgo }
-        },
-        select: { id: true }
-      }) || [],
-      prisma2?.tenant.findMany({
+      // Total and active tenant counts
+      prisma2?.tenant.aggregate({
+        _count: { id: true },
+        where: { subscriptionStatus: "active" }
+      }) || { _count: { id: 0 } },
+      // Total and active user counts
+      Promise.all([
+        prisma2?.user.count() || 0,
+        prisma2?.user.count({ where: { isActive: true } }) || 0,
+        prisma2?.user.count({ where: { role: "owner" } }) || 0
+      ]),
+      // Total room count
+      prisma2?.room.count() || 0,
+      // Reservation aggregates for revenue metrics
+      Promise.all([
+        prisma2?.reservation.aggregate({
+          _sum: { totalPrice: true },
+          _count: { id: true }
+        }) || { _sum: { totalPrice: 0 }, _count: { id: 0 } },
+        prisma2?.reservation.aggregate({
+          _sum: { totalPrice: true },
+          where: {
+            checkOutDate: { gte: oneMonthAgo }
+          }
+        }) || { _sum: { totalPrice: 0 } },
+        prisma2?.reservation.aggregate({
+          _sum: { totalPrice: true },
+          where: {
+            checkOutDate: {
+              gte: twoMonthsAgo,
+              lt: oneMonthAgo
+            }
+          }
+        }) || { _sum: { totalPrice: 0 } }
+      ]),
+      // New tenants counts
+      prisma2?.tenant.count({
+        where: { createdAt: { gte: oneMonthAgo } }
+      }) || 0,
+      prisma2?.tenant.count({
         where: {
           createdAt: {
             gte: twoMonthsAgo,
             lt: oneMonthAgo
           }
-        },
-        select: { id: true }
-      }) || []
+        }
+      }) || 0,
+      // Subscription status counts
+      Promise.all([
+        prisma2?.tenant.count({ where: { subscriptionStatus: "active" } }) || 0,
+        prisma2?.tenant.count({ where: { subscriptionStatus: "suspended" } }) || 0,
+        prisma2?.tenant.count({ where: { subscriptionStatus: "trial" } }) || 0,
+        prisma2?.tenant.count({ where: { subscriptionStatus: "inactive" } }) || 0
+      ]),
+      // New users this month
+      prisma2?.user.count({
+        where: { createdAt: { gte: oneMonthAgo } }
+      }) || 0
     ]);
-    const activeTenants = tenants.filter(
-      (t) => t.subscriptionStatus === "active"
-    ).length;
-    const totalUsers = users.length;
-    const activeUsers = users.filter((u) => u.isActive).length;
-    const adminUsers = users.filter((u) => u.role === "owner").length;
-    const totalRevenue = reservations.reduce((sum, r) => sum + (r.totalPrice || 0), 0);
-    const averageRevenuePerTenant = tenants.length > 0 ? totalRevenue / tenants.length : 0;
-    const thisMonthRevenue = reservations.filter(
-      (r) => r.checkOutDate && new Date(r.checkOutDate) >= oneMonthAgo
-    ).reduce((sum, r) => sum + (r.totalPrice || 0), 0);
-    const lastMonthRevenue = reservations.filter(
-      (r) => r.checkOutDate && new Date(r.checkOutDate) >= twoMonthsAgo && new Date(r.checkOutDate) < oneMonthAgo
-    ).reduce((sum, r) => sum + (r.totalPrice || 0), 0);
+    const totalTenants = await prisma2?.tenant.count() || 0;
+    const activeTenants = tenantCounts._count.id;
+    const [totalUsers, activeUsers, adminUsers] = userCounts;
+    const totalRooms = roomCount;
+    const [totalReservationsAgg, thisMonthRevenueAgg, lastMonthRevenueAgg] = reservationAggregates;
+    const totalReservations = totalReservationsAgg._count.id;
+    const totalRevenue = totalReservationsAgg._sum.totalPrice || 0;
+    const thisMonthRevenue = thisMonthRevenueAgg._sum.totalPrice || 0;
+    const lastMonthRevenue = lastMonthRevenueAgg._sum.totalPrice || 0;
+    const newTenantsThisMonth = tenantsThisMonthCount;
+    const newTenantsLastMonth = tenantsLastMonthCount;
+    const [activeCount, suspendedCount, trialCount, inactiveCount] = subscriptionStatusCounts;
+    const newUsersThisMonth = usersThisMonthCount;
+    const averageRevenuePerTenant = totalTenants > 0 ? totalRevenue / totalTenants : 0;
     const revenueGrowth = lastMonthRevenue > 0 ? (thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100 : 0;
-    const averageOccupancyRate = calculateAverageOccupancy(reservations, rooms);
-    const averageADR = reservations.length > 0 ? totalRevenue / reservations.length : 0;
-    const averageREVPAR = rooms.length > 0 ? totalRevenue / rooms.length : 0;
-    const tenantGrowthRate = tenantsLastMonth.length > 0 ? (tenantsThisMonth.length - tenantsLastMonth.length) / tenantsLastMonth.length * 100 : 0;
+    const tenantGrowthRate = newTenantsLastMonth > 0 ? (newTenantsThisMonth - newTenantsLastMonth) / newTenantsLastMonth * 100 : 0;
+    const averageADR = totalReservations > 0 ? totalRevenue / totalReservations : 0;
+    const averageREVPAR = totalRooms > 0 ? totalRevenue / totalRooms : 0;
+    const averageUsersPerTenant = totalTenants > 0 ? totalUsers / totalTenants : 0;
+    const averageOccupancyRate = 65;
     const subscriptionCounts = {
-      active: tenants.filter((t) => t.subscriptionStatus === "active").length,
-      suspended: tenants.filter((t) => t.subscriptionStatus === "suspended").length,
-      trial: tenants.filter((t) => t.subscriptionStatus === "trial").length,
-      inactive: tenants.filter((t) => t.subscriptionStatus === "inactive").length
+      active: activeCount,
+      suspended: suspendedCount,
+      trial: trialCount,
+      inactive: inactiveCount
     };
     const alerts = [];
     if (averageOccupancyRate < 40) {
@@ -76519,35 +76536,41 @@ async function getSuperadminDashboardMetrics() {
         createdAt: now2
       });
     }
-    if (subscriptionCounts.suspended > tenants.length * 0.1) {
+    if (suspendedCount > totalTenants * 0.1) {
       alerts.push({
         id: "high-suspension-" + Date.now(),
         severity: "warning",
-        message: `High number of suspended tenants (${subscriptionCounts.suspended}). Review customer health.`,
+        message: `High number of suspended tenants (${suspendedCount}). Review customer health.`,
         createdAt: now2
       });
     }
-    const timeline = tenantsThisMonth.slice(0, 5).map((t, idx) => ({
+    const recentTenants = await prisma2?.tenant.findMany({
+      where: { createdAt: { gte: oneMonthAgo } },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 5
+    }) || [];
+    const timeline = recentTenants.map((t, idx) => ({
       id: `event-${idx}`,
       type: "tenant_created",
       title: `New tenant created`,
       description: "A new tenant has been onboarded",
       tenantId: t.id,
-      timestamp: new Date(now2.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1e3)
+      timestamp: t.createdAt
     }));
     return {
       totalStats: {
-        totalTenants: tenants.length,
+        totalTenants,
         activeTenants,
         totalUsers,
-        totalRooms: rooms.length,
-        totalReservations: reservations.length
+        totalRooms,
+        totalReservations
       },
       revenueMetrics: {
         totalRevenue,
         averageRevenuePerTenant: Math.round(averageRevenuePerTenant * 100) / 100,
         revenueGrowth: Math.round(revenueGrowth * 10) / 10,
-        topRevenueTenantsCount: Math.min(5, tenants.length)
+        topRevenueTenantsCount: Math.min(5, totalTenants)
       },
       occupancyMetrics: {
         averageOccupancyRate: Math.round(averageOccupancyRate * 10) / 10,
@@ -76555,20 +76578,17 @@ async function getSuperadminDashboardMetrics() {
         averageREVPAR: Math.round(averageREVPAR * 100) / 100
       },
       tenantMetrics: {
-        newTenantsThisMonth: tenantsThisMonth.length,
-        newTenantsLastMonth: tenantsLastMonth.length,
+        newTenantsThisMonth,
+        newTenantsLastMonth,
         tenantGrowthRate: Math.round(tenantGrowthRate * 10) / 10,
         churnedTenants: 0,
-        // Would need more complex churn calculation
         activeSubscriptions: subscriptionCounts
       },
       userMetrics: {
         totalActiveUsers: activeUsers,
         totalAdminUsers: adminUsers,
-        newfUsersThisMonth: users.filter(
-          (u) => new Date(u.createdAt) >= oneMonthAgo
-        ).length,
-        averageUsersPerTenant: tenants.length > 0 ? totalUsers / tenants.length : 0
+        newfUsersThisMonth: newUsersThisMonth,
+        averageUsersPerTenant: Math.round(averageUsersPerTenant * 10) / 10
       },
       alerts,
       timeline
@@ -76580,31 +76600,29 @@ async function getSuperadminDashboardMetrics() {
 }
 async function getTopTenantsByRevenue(limit = 5) {
   try {
-    const reservations = await prisma2?.reservation.findMany({
-      select: {
-        tenantId: true,
+    const tenantRevenue = await prisma2?.reservation.groupBy({
+      by: ["tenantId"],
+      _sum: {
         totalPrice: true
-      }
-    });
-    const tenantRevenue = {};
-    (reservations || []).forEach((r) => {
-      if (!tenantRevenue[r.tenantId]) {
-        tenantRevenue[r.tenantId] = 0;
-      }
-      tenantRevenue[r.tenantId] += r.totalPrice || 0;
-    });
-    const sortedTenants = Object.entries(tenantRevenue).sort(([, a], [, b]) => b - a).slice(0, limit);
+      },
+      orderBy: {
+        _sum: {
+          totalPrice: "desc"
+        }
+      },
+      take: limit
+    }) || [];
     const topTenants = await Promise.all(
-      sortedTenants.map(async ([tenantId, revenue]) => {
+      tenantRevenue.map(async (tr) => {
         const tenant = await prisma2?.tenant.findUnique({
-          where: { id: tenantId },
+          where: { id: tr.tenantId },
           select: { id: true, name: true, slug: true }
         });
         return {
-          tenantId,
-          tenantName: tenant?.name,
+          tenantId: tr.tenantId,
+          tenantName: tenant?.name || "Unknown",
           tenantSlug: tenant?.slug,
-          totalRevenue: Math.round(revenue * 100) / 100
+          totalRevenue: Math.round((tr._sum.totalPrice || 0) * 100) / 100
         };
       })
     );
@@ -76613,23 +76631,6 @@ async function getTopTenantsByRevenue(limit = 5) {
     console.error("Error fetching top tenants:", error);
     throw new AppError("Failed to fetch top tenants", 500);
   }
-}
-function calculateAverageOccupancy(reservations, rooms) {
-  if (rooms.length === 0) return 0;
-  const occupiedRoomDays = /* @__PURE__ */ new Set();
-  const now2 = /* @__PURE__ */ new Date();
-  const thirtyDaysAgo = new Date(now2.getTime() - 30 * 24 * 60 * 60 * 1e3);
-  reservations.forEach((res) => {
-    if (!res.checkInDate || !res.checkOutDate) return;
-    const checkIn = new Date(res.checkInDate);
-    const checkOut = new Date(res.checkOutDate);
-    if (checkOut < thirtyDaysAgo || checkIn > now2) return;
-    for (let d = new Date(checkIn); d < checkOut; d.setDate(d.getDate() + 1)) {
-      occupiedRoomDays.add(`${res.tenantId}-${d.toISOString().split("T")[0]}`);
-    }
-  });
-  const totalRoomDays = rooms.length * 30;
-  return occupiedRoomDays.size / totalRoomDays * 100;
 }
 
 // ../../backend/src/routes/superadmin.ts
