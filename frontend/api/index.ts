@@ -1,9 +1,8 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
-
-import { createApp } from './bundle.js';
+const { VercelRequest, VercelResponse } = require('@vercel/node');
+const { createApp } = require('./bundle.js');
 
 const app = createApp();
 
-export default async (req: VercelRequest, res: VercelResponse) => {
+module.exports = async (req, res) => {
   return app(req, res);
 };

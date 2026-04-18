@@ -2,7 +2,7 @@
   "type": "module",
   "scripts": {
     "prebuild": "cd ../../backend && npx prisma generate",
-    "build": "npx -y esbuild ../../backend/src/app.ts --bundle --platform=node --target=node18 --outfile=bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=esm --ignore-annotations --log-level=warning"
+    "build": "npx -y esbuild ../../backend/src/app.ts --bundle --platform=node --target=node18 --outfile=bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=cjs --ignore-annotations --log-level=warning"
   },
   "dependencies": {
     "tsx": "^4.7.0",
