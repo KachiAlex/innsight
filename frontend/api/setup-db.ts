@@ -11,20 +11,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Run migrations
-    console.log('Running Prisma migrations...');
-    const { execSync } = require('child_process');
-    execSync('npx prisma migrate deploy', { cwd: '/var/task/backend', stdio: 'inherit' });
-    console.log('Migrations completed');
-
-    // Seed the database
     console.log('Seeding database...');
     await seedDatabase();
     console.log('Database seeded successfully');
 
     res.status(200).json({ 
       success: true, 
-      message: 'Database setup completed successfully',
+      message: 'Database seeding completed successfully',
       credentials: {
         admin: 'admin@iitech.com / admin123',
         owner: 'owner@grandhotel.com / password123',
@@ -35,7 +28,8 @@ module.exports = async (req, res) => {
     console.error('Database setup failed:', error);
     res.status(500).json({ 
       success: false, 
-      error: error.message 
+      error: error.message,
+      details: 'Note: Database migrations must be run separately using: npx prisma migrate deploy'
     });
   } finally {
     await prisma.$disconnect();
