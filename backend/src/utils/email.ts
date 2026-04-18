@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { db, toDate } from './firestore';
+import { prisma } from './prisma';
 
 export interface EmailOptions {
   to: string | string[];
@@ -660,18 +660,31 @@ export const generatePaymentReceiptEmail = (data: PaymentReceiptData): string =>
 
 export const getTenantEmailSettings = async (tenantId: string) => {
   try {
-    const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-    if (!tenantDoc.exists) {
+    if (!prisma) {
       return null;
     }
 
-    const tenantData = tenantDoc.data();
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        name: true,
+        address: true,
+        phone: true,
+        email: true,
+        branding: true,
+      },
+    });
+
+    if (!tenant) {
+      return null;
+    }
+
     return {
-      propertyName: tenantData?.name || 'InnSight Property',
-      propertyAddress: tenantData?.address || null,
-      propertyPhone: tenantData?.phone || null,
-      propertyEmail: tenantData?.email || null,
-      branding: tenantData?.branding || null,
+      propertyName: tenant.name || 'InnSight Property',
+      propertyAddress: tenant.address || null,
+      propertyPhone: tenant.phone || null,
+      propertyEmail: tenant.email || null,
+      branding: tenant.branding || null,
     };
   } catch (error) {
     console.error('Error fetching tenant email settings:', error);

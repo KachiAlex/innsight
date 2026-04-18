@@ -2,9 +2,8 @@ import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
 import { URL } from 'url';
-import { db, now } from './firestore';
+import { prisma } from './prisma';
 
-export const TENANT_WEBHOOK_COLLECTION = 'tenant_webhooks';
 export const TENANT_WEBHOOK_EVENT_TYPES = ['reservation.confirmed', 'payment.completed', '*'] as const;
 
 export type TenantWebhookEventType = (typeof TENANT_WEBHOOK_EVENT_TYPES)[number];
@@ -80,50 +79,8 @@ export const triggerTenantWebhookEvent = async ({
   eventType: TenantWebhookEventType;
   payload: Record<string, any>;
 }) => {
-  const snapshot = await db
-    .collection(TENANT_WEBHOOK_COLLECTION)
-    .where('tenantId', '==', tenantId)
-    .where('active', '==', true)
-    .get();
-
-  if (snapshot.empty) {
-    return;
-  }
-
-  const bodyBase = {
-    tenantId,
-    eventType,
-    sentAt: new Date().toISOString(),
-    data: payload,
-  };
-  const bodyString = JSON.stringify(bodyBase);
-
-  const deliveries = snapshot.docs.map(async (doc) => {
-    const data = doc.data() as TenantWebhookDoc;
-    if (!matchesEvent(data.eventTypes, eventType)) {
-      return;
-    }
-    const secret = data.secret;
-    const signature = crypto.createHmac('sha256', secret).update(bodyString).digest('hex');
-    try {
-      await sendWebhookRequest(data.url, bodyString, {
-        'x-innsight-signature': signature,
-      });
-      await doc.ref.update({
-        lastTriggeredAt: now(),
-        lastStatus: 'ok',
-        lastEventType: eventType,
-        lastError: null,
-      });
-    } catch (error: any) {
-      await doc.ref.update({
-        lastTriggeredAt: now(),
-        lastStatus: 'failed',
-        lastEventType: eventType,
-        lastError: error?.message?.slice(0, 500) ?? 'unknown_error',
-      });
-    }
-  });
-
-  await Promise.allSettled(deliveries);
+  // TODO: Implement webhook storage in PostgreSQL via Prisma
+  // This is a stub - webhooks are not currently implemented in the new system
+  console.warn(`Webhook event ${eventType} for tenant ${tenantId} - webhook system not yet migrated to PostgreSQL`);
+  return;
 };
