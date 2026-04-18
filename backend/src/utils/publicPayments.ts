@@ -1,5 +1,3 @@
-// import admin from 'firebase-admin';
-// import { db } from './firestore';
 import { AppError } from '../middleware/errorHandler';
 import {
   paymentGatewayService,
@@ -10,7 +8,6 @@ import {
   type GatewayCredentialSet,
 } from './paymentGateway';
 
-export const PAYMENT_SETTINGS_COLLECTION = 'tenant_payment_settings';
 
 export type TenantPaymentSettingsDoc = {
   tenantId: string;
@@ -29,8 +26,8 @@ export type TenantPaymentSettingsDoc = {
   stripePublicKey?: string;
   stripeSecretKey?: string;
   allowedGateways?: PaymentGateway[];
-  updatedAt?: FirebaseFirestore.Timestamp;
-  createdAt?: FirebaseFirestore.Timestamp;
+  updatedAt?: Date;
+  createdAt?: Date;
 };
 
 export type TenantPaymentSettings = {
@@ -77,37 +74,40 @@ const DEFAULT_GATEWAY = (process.env.PUBLIC_PAYMENT_DEFAULT_GATEWAY || 'paystack
 const DEFAULT_CURRENCY = process.env.PUBLIC_PAYMENT_DEFAULT_CURRENCY || 'NGN';
 const DEFAULT_CALLBACK_URL = process.env.PUBLIC_PAYMENT_CALLBACK_URL;
 
-export const getTenantPaymentSettingsDoc = (tenantId: string) =>
-  db.collection(PAYMENT_SETTINGS_COLLECTION).doc(tenantId);
-
 export const getTenantPaymentSettings = async (tenantId: string): Promise<TenantPaymentSettings> => {
-  const doc = await getTenantPaymentSettingsDoc(tenantId).get();
-  const data = doc.exists ? (doc.data() as TenantPaymentSettingsDoc) : undefined;
-
-  const defaultGateway = (data?.defaultGateway || DEFAULT_GATEWAY) as PaymentGateway;
-  const allowedGateways = (data?.allowedGateways && data.allowedGateways.length > 0
-    ? data.allowedGateways
-    : [defaultGateway]
-  ).filter((gateway) => ['paystack', 'flutterwave', 'stripe'].includes(gateway)) as PaymentGateway[];
+  // TODO: Implement using Prisma/PostgreSQL instead of Firebase
+  // For now, return default settings from environment variables
+  const defaultGateway = DEFAULT_GATEWAY;
+  const allowedGateways = [defaultGateway].filter((gateway) => 
+    ['paystack', 'flutterwave', 'stripe'].includes(gateway)
+  ) as PaymentGateway[];
 
   return {
     tenantId,
     defaultGateway,
-    currency: data?.currency || DEFAULT_CURRENCY,
-    callbackUrl: data?.callbackUrl || DEFAULT_CALLBACK_URL || undefined,
-    paystackPublicKey: data?.paystackPublicKey || process.env.PAYSTACK_PUBLIC_KEY,
-    paystackSecretKey: data?.paystackSecretKey || process.env.PAYSTACK_SECRET_KEY,
-    flutterwavePublicKey: data?.flutterwavePublicKey || process.env.FLUTTERWAVE_PUBLIC_KEY,
-    flutterwaveSecretKey: data?.flutterwaveSecretKey || process.env.FLUTTERWAVE_SECRET_KEY,
-    monnifyApiKey: data?.monnifyApiKey || process.env.MONNIFY_API_KEY,
-    monnifySecretKey: data?.monnifySecretKey || process.env.MONNIFY_SECRET_KEY,
-    monnifyContractCode: data?.monnifyContractCode || process.env.MONNIFY_CONTRACT_CODE,
-    monnifyCollectionAccount: data?.monnifyCollectionAccount || process.env.MONNIFY_COLLECTION_ACCOUNT,
-    monnifyBaseUrl: data?.monnifyBaseUrl || process.env.MONNIFY_BASE_URL,
-    stripePublicKey: data?.stripePublicKey || process.env.STRIPE_PUBLIC_KEY,
-    stripeSecretKey: data?.stripeSecretKey || process.env.STRIPE_SECRET_KEY,
+    currency: DEFAULT_CURRENCY,
+    callbackUrl: DEFAULT_CALLBACK_URL || undefined,
+    paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY,
+    paystackSecretKey: process.env.PAYSTACK_SECRET_KEY,
+    flutterwavePublicKey: process.env.FLUTTERWAVE_PUBLIC_KEY,
+    flutterwaveSecretKey: process.env.FLUTTERWAVE_SECRET_KEY,
+    monnifyApiKey: process.env.MONNIFY_API_KEY,
+    monnifySecretKey: process.env.MONNIFY_SECRET_KEY,
+    monnifyContractCode: process.env.MONNIFY_CONTRACT_CODE,
+    monnifyCollectionAccount: process.env.MONNIFY_COLLECTION_ACCOUNT,
+    monnifyBaseUrl: process.env.MONNIFY_BASE_URL,
+    stripePublicKey: process.env.STRIPE_PUBLIC_KEY,
+    stripeSecretKey: process.env.STRIPE_SECRET_KEY,
     allowedGateways: allowedGateways.length > 0 ? Array.from(new Set(allowedGateways)) : [defaultGateway],
   };
+};
+
+export const upsertTenantPaymentSettings = async (
+  tenantId: string,
+  updates: TenantPaymentSettingsUpdate
+) => {
+  // TODO: Implement using Prisma/PostgreSQL instead of Firebase
+  throw new Error('upsertTenantPaymentSettings is not yet implemented for PostgreSQL');
 };
 
 export const buildGatewayCredentialSet = (
@@ -131,28 +131,6 @@ export const buildGatewayCredentialSet = (
     default:
       return undefined;
   }
-};
-
-export const upsertTenantPaymentSettings = async (
-  tenantId: string,
-  updates: TenantPaymentSettingsUpdate
-) => {
-  const docRef = getTenantPaymentSettingsDoc(tenantId);
-  const payload: TenantPaymentSettingsUpdate & { updatedAt: FirebaseFirestore.Timestamp } = {
-    ...updates,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp() as FirebaseFirestore.Timestamp,
-  };
-
-  await docRef.set(
-    {
-      tenantId,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      ...payload,
-    },
-    { merge: true }
-  );
-
-  return getTenantPaymentSettings(tenantId);
 };
 
 export const ensureGatewayConfigured = (

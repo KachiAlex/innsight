@@ -1,11 +1,12 @@
-// import admin from 'firebase-admin';
-import { AppError } from '../middleware/errorHandler';
-// import { db, now } from './firestore';
+// Checkout intents feature uses Firebase for storage
+// This needs to be migrated to PostgreSQL via Prisma
+// TODO: Implement checkout intents using Prisma/PostgreSQL
 
-export const CHECKOUT_INTENT_COLLECTION = 'public_checkout_intents';
+import { AppError } from '../middleware/errorHandler';
+
+export const CHECKOUT_INTENT_COLLECTION = 'checkout_intents';
 
 export type PricingSummary = {
-  effectiveRate: number;
   nights: number;
   totalRoomAmount: number;
 };
@@ -24,7 +25,7 @@ export type CheckoutIntentDoc<TBooking = any> = {
   reference: string;
   authorizationUrl: string;
   accessCode: string;
-  expiresAt: admin.firestore.Timestamp;
+  expiresAt: Date;
   guest: {
     name: string;
     email: string;
@@ -39,8 +40,8 @@ export type CheckoutIntentDoc<TBooking = any> = {
   reservationId?: string;
   folioId?: string;
   paymentDocumentId?: string;
-  createdAt: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 export type CheckoutIntentRecord<TBooking = any> = CheckoutIntentDoc<TBooking> & {
@@ -50,28 +51,13 @@ export type CheckoutIntentRecord<TBooking = any> = CheckoutIntentDoc<TBooking> &
 export const loadCheckoutIntent = async <TBooking = any>(
   intentId: string
 ): Promise<CheckoutIntentRecord<TBooking>> => {
-  const snapshot = await db.collection(CHECKOUT_INTENT_COLLECTION).doc(intentId).get();
-  if (!snapshot.exists) {
-    throw new AppError('Checkout intent not found', 404);
-  }
-  return { id: snapshot.id, ...(snapshot.data() as CheckoutIntentDoc<TBooking>) };
+  throw new Error('loadCheckoutIntent is not yet implemented for PostgreSQL');
 };
 
 export const findCheckoutIntentByReference = async <TBooking = any>(
   reference: string
 ): Promise<CheckoutIntentRecord<TBooking> | null> => {
-  const snapshot = await db
-    .collection(CHECKOUT_INTENT_COLLECTION)
-    .where('reference', '==', reference)
-    .limit(1)
-    .get();
-
-  if (snapshot.empty) {
-    return null;
-  }
-
-  const doc = snapshot.docs[0];
-  return { id: doc.id, ...(doc.data() as CheckoutIntentDoc<TBooking>) };
+  throw new Error('findCheckoutIntentByReference is not yet implemented for PostgreSQL');
 };
 
 export const markIntentStatus = async (
@@ -79,9 +65,5 @@ export const markIntentStatus = async (
   status: CheckoutIntentDoc['status'],
   updates?: Record<string, any>
 ) => {
-  await db.collection(CHECKOUT_INTENT_COLLECTION).doc(intentId).update({
-    status,
-    updatedAt: now(),
-    ...(updates || {}),
-  });
+  throw new Error('markIntentStatus is not yet implemented for PostgreSQL');
 };
