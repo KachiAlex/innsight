@@ -1,7 +1,28 @@
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcryptjs');
+// Prisma is optional - only used if DATABASE_URL is set
+const hasDatabaseUrl = !!process.env.DATABASE_URL;
 
-const prisma = new PrismaClient();
+let PrismaClient = null;
+let prismaInstance = null;
+
+// Initialize Prisma client synchronously for ESM compatibility
+if (hasDatabaseUrl) {
+  try {
+    // Use require for Node.js compatibility (works in ESM with esbuild)
+    const prismaModule = require('@prisma/client');
+    PrismaClient = prismaModule.PrismaClient;
+    
+    if (PrismaClient) {
+      prismaInstance = new PrismaClient({
+        log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      });
+    }
+  } catch (e) {
+    // Prisma not available
+    console.error('Failed to initialize Prisma:', e);
+  }
+}
+
+const bcrypt = require('bcryptjs');
 
 module.exports = async (req, res) => {
   // Only allow this in development or with a secret key
@@ -12,7 +33,16 @@ module.exports = async (req, res) => {
 
   try {
     console.log('Seeding database...');
-    await seedDatabase();
+    
+    if (!prismaInstance) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Prisma client failed to initialize',
+        hasDatabaseUrl
+      });
+    }
+    
+    await seedDatabase(prismaInstance);
     console.log('Database seeded successfully');
 
     res.status(200).json({ 
@@ -32,11 +62,13 @@ module.exports = async (req, res) => {
       details: 'Note: Database migrations must be run separately using: npx prisma migrate deploy'
     });
   } finally {
-    await prisma.$disconnect();
+    if (prismaInstance) {
+      await prismaInstance.$disconnect();
+    }
   }
 };
 
-async function seedDatabase() {
+async function seedDatabase(prisma) {
   // Create IITECH tenant
   const iitechTenant = await prisma.tenant.upsert({
     where: { slug: 'iitech' },
