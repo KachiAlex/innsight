@@ -2,22 +2,6 @@
   "version": 2,
   "routes": [
     {
-      "src": "/api/hello",
-      "dest": "/api/hello.js"
-    },
-    {
-      "src": "/api/test-db",
-      "dest": "/api/test-db.js"
-    },
-    {
-      "src": "/api/setup-db",
-      "dest": "/api/setup-db.js"
-    },
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
       "handle": "filesystem"
     },
     {
