@@ -1,21 +1,19 @@
-const { VercelRequest, VercelResponse } = require('@vercel/node');
 const { createApp } = require('./bundle.js');
 
 const app = createApp();
 
 module.exports = (req, res) => {
-  // When Vercel rewrites /api/* -> /api/index.js?slug=..., reconstruct original path
   const query = req.query || {};
-  const slug = query.slug;
+  const slugValue = query.slug;
 
-  if (slug !== undefined) {
-    // Remove slug from query params and rebuild search string
+  if (slugValue !== undefined) {
+    const slugPath = Array.isArray(slugValue) ? slugValue.join('/') : slugValue;
+
+    // Remove slug from the query map so Express doesn't see it
+    delete query.slug;
+
     const params = new URLSearchParams();
-    Object.keys(query).forEach((key) => {
-      if (key === 'slug') {
-        return;
-      }
-      const value = query[key];
+    Object.entries(query).forEach(([key, value]) => {
       if (Array.isArray(value)) {
         value.forEach((val) => params.append(key, val));
       } else if (value !== undefined) {
@@ -24,7 +22,7 @@ module.exports = (req, res) => {
     });
 
     const search = params.toString();
-    req.url = `/api/${slug}${search ? `?${search}` : ''}`;
+    req.url = `/api/${slugPath}${search ? `?${search}` : ''}`;
   }
 
   return app(req, res);
