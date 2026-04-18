@@ -20,7 +20,13 @@ export default function LoginPage() {
       const response = await api.post('/auth/login', { email, password });
       const { token, refreshToken, user } = response.data.data;
       setAuth(token, refreshToken, user);
-      navigate('/dashboard');
+      
+      // Redirect based on role
+      if (user.role === 'iitech_admin') {
+        navigate('/superadmin-dashboard');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Login failed');
     } finally {
