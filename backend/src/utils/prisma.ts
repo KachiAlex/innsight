@@ -3,22 +3,31 @@
 const hasDatabaseUrl = !!process.env.DATABASE_URL;
 
 let PrismaClient: any = null;
-try {
-  if (hasDatabaseUrl) {
+let prismaInstance: any = null;
+
+// Initialize Prisma client synchronously for ESM compatibility
+if (hasDatabaseUrl) {
+  try {
+    // Use require for Node.js compatibility (works in ESM with esbuild)
     const prismaModule = require('@prisma/client');
     PrismaClient = prismaModule.PrismaClient;
+    
+    if (PrismaClient) {
+      prismaInstance = new PrismaClient({
+        log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+      });
+    }
+  } catch (e) {
+    // Prisma not available
+    console.error('Failed to initialize Prisma:', e);
   }
-} catch (e) {
-  // Prisma not available, using Firestore only
 }
 
 const globalForPrisma = globalThis as unknown as {
   prisma: any | undefined;
 };
 
-export const prisma = globalForPrisma.prisma ?? (hasDatabaseUrl && PrismaClient ? new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-}) : null as any);
+export const prisma = globalForPrisma.prisma ?? prismaInstance;
 
 if (process.env.NODE_ENV !== 'production' && hasDatabaseUrl) {
   globalForPrisma.prisma = prisma;
