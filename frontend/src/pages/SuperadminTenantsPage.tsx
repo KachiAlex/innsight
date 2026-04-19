@@ -117,29 +117,29 @@ export default function SuperadminTenantsPage() {
           <div>
             <button
               onClick={() => navigate('/superadmin-dashboard')}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-2"
+              className="flex items-center gap-2 text-black hover:text-blue-600 mb-2"
             >
               <ArrowLeft className="h-4 w-4" />
               <span className="text-sm font-medium">Back to Dashboard</span>
             </button>
-            <h1 className="text-3xl font-bold text-gray-900">Tenant Management</h1>
-            <p className="text-gray-600 mt-1">Manage all platform tenants</p>
+            <h1 className="text-3xl font-bold text-black">Tenant Management</h1>
+            <p className="text-black mt-1">Manage all platform tenants</p>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
+        <div className="bg-white border border-gray-400 rounded-xl p-4 shadow-sm mb-6">
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-black" />
                 <input
                   type="text"
                   placeholder="Search by name, email, or slug..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-400"
+                  className="w-full pl-10 pr-4 py-3 border border-gray-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black placeholder-gray-600"
                 />
               </div>
             </div>
@@ -147,7 +147,7 @@ export default function SuperadminTenantsPage() {
               <select
                 value={statusFilter}
                 onChange={handleStatusChange}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white"
+                className="w-full px-4 py-3 border border-gray-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black bg-white"
               >
                 <option value="">All Statuses</option>
                 <option value="active">Active</option>
@@ -168,11 +168,11 @@ export default function SuperadminTenantsPage() {
         {/* Tenants Grid */}
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="text-gray-900 font-medium">Loading tenants...</div>
+            <div className="text-black font-medium">Loading tenants...</div>
           </div>
         ) : tenants.length === 0 ? (
-          <div className="flex items-center justify-center py-12 bg-white border border-gray-200 rounded-xl">
-            <div className="text-gray-900 font-medium">No tenants found</div>
+          <div className="flex items-center justify-center py-12 bg-white border border-gray-400 rounded-xl">
+            <div className="text-black font-medium">No tenants found</div>
           </div>
         ) : (
           <>
@@ -180,15 +180,15 @@ export default function SuperadminTenantsPage() {
               {tenants.map((tenant) => (
                 <div
                   key={tenant.id}
-                  className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow"
+                  className="bg-white border border-gray-400 rounded-xl shadow-sm hover:shadow-md transition-shadow"
                 >
                   {/* Card Header */}
-                  <div className="p-6 border-b border-gray-200">
+                  <div className="p-6 border-b border-gray-400">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
-                        <h3 className="text-lg font-bold text-gray-900">{tenant.name}</h3>
-                        <p className="text-sm text-gray-600 mt-1">{tenant.email}</p>
-                        <p className="text-xs text-gray-500 mt-1">{tenant.slug}</p>
+                        <h3 className="text-lg font-bold text-black">{tenant.name}</h3>
+                        <p className="text-sm text-black mt-1">{tenant.email}</p>
+                        <p className="text-xs text-black mt-1">{tenant.slug}</p>
                       </div>
                       <span className={`px-3 py-1 text-xs font-bold rounded-full border ${getStatusColor(tenant.subscriptionStatus)}`}>
                         {tenant.subscriptionStatus}
@@ -197,37 +197,37 @@ export default function SuperadminTenantsPage() {
                   </div>
 
                   {/* Card Body - Stats */}
-                  <div className="p-6 grid grid-cols-3 gap-4 border-b border-gray-200">
+                  <div className="p-6 grid grid-cols-3 gap-4 border-b border-gray-400">
                     <div className="text-center">
-                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                      <div className="flex items-center justify-center gap-1 text-black mb-1">
                         <Users className="h-4 w-4" />
                       </div>
-                      <div className="text-xl font-bold text-gray-900">{tenant._count.users}</div>
-                      <div className="text-xs text-gray-600">Users</div>
+                      <div className="text-xl font-bold text-black">{tenant._count.users}</div>
+                      <div className="text-xs text-black">Users</div>
                     </div>
                     <div className="text-center">
-                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                      <div className="flex items-center justify-center gap-1 text-black mb-1">
                         <Building className="h-4 w-4" />
                       </div>
-                      <div className="text-xl font-bold text-gray-900">{tenant._count.rooms}</div>
-                      <div className="text-xs text-gray-600">Rooms</div>
+                      <div className="text-xl font-bold text-black">{tenant._count.rooms}</div>
+                      <div className="text-xs text-black">Rooms</div>
                     </div>
                     <div className="text-center">
-                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                      <div className="flex items-center justify-center gap-1 text-black mb-1">
                         <Calendar className="h-4 w-4" />
                       </div>
-                      <div className="text-xl font-bold text-gray-900">
+                      <div className="text-xl font-bold text-black">
                         {new Date(tenant.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </div>
-                      <div className="text-xs text-gray-600">Created</div>
+                      <div className="text-xs text-black">Created</div>
                     </div>
                   </div>
 
                   {/* Card Footer - Actions */}
-                  <div className="p-4 bg-gray-50 rounded-b-xl flex items-center justify-between">
+                  <div className="p-4 bg-gray-100 rounded-b-xl flex items-center justify-between">
                     <button
                       onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
-                      className="flex items-center gap-2 text-blue-600 hover:text-blue-800 font-medium text-sm transition-colors"
+                      className="flex items-center gap-2 text-blue-700 hover:text-blue-900 font-medium text-sm transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                       View Details
@@ -235,7 +235,7 @@ export default function SuperadminTenantsPage() {
                     {tenant.subscriptionStatus === 'active' ? (
                       <button
                         onClick={() => updateTenantStatus(tenant.id, 'suspended')}
-                        className="flex items-center gap-2 text-red-600 hover:text-red-800 font-medium text-sm transition-colors"
+                        className="flex items-center gap-2 text-red-700 hover:text-red-900 font-medium text-sm transition-colors"
                       >
                         <Ban className="h-4 w-4" />
                         Suspend
@@ -243,7 +243,7 @@ export default function SuperadminTenantsPage() {
                     ) : tenant.subscriptionStatus === 'suspended' ? (
                       <button
                         onClick={() => updateTenantStatus(tenant.id, 'active')}
-                        className="flex items-center gap-2 text-green-600 hover:text-green-800 font-medium text-sm transition-colors"
+                        className="flex items-center gap-2 text-green-700 hover:text-green-900 font-medium text-sm transition-colors"
                       >
                         <CheckCircle className="h-4 w-4" />
                         Activate
@@ -255,22 +255,22 @@ export default function SuperadminTenantsPage() {
             </div>
 
             {/* Pagination */}
-            <div className="mt-6 flex items-center justify-between bg-white border border-gray-200 rounded-xl px-6 py-4">
-              <div className="text-sm font-medium text-gray-900">
+            <div className="mt-6 flex items-center justify-between bg-white border border-gray-400 rounded-xl px-6 py-4">
+              <div className="text-sm font-medium text-black">
                 Page {page} of {totalPages}
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={() => setPage(Math.max(1, page - 1))}
                   disabled={page === 1}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium transition-colors"
+                  className="px-4 py-2 border border-gray-400 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-black font-medium transition-colors"
                 >
                   Previous
                 </button>
                 <button
                   onClick={() => setPage(Math.min(totalPages, page + 1))}
                   disabled={page === totalPages}
-                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium transition-colors"
+                  className="px-4 py-2 border border-gray-400 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-black font-medium transition-colors"
                 >
                   Next
                 </button>
