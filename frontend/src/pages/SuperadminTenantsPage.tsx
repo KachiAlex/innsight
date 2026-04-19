@@ -3,7 +3,7 @@ import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Search, ChevronLeft, ChevronRight, Eye, Ban, CheckCircle } from 'lucide-react';
+import { Search, ArrowLeft, Eye, Ban, CheckCircle, Users, Building, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Tenant {
@@ -111,24 +111,35 @@ export default function SuperadminTenantsPage() {
 
   return (
     <Layout>
-      <div className="p-8">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Tenant Management</h1>
+      <div className="p-6 max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <div>
+            <button
+              onClick={() => navigate('/superadmin-dashboard')}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-2"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="text-sm font-medium">Back to Dashboard</span>
+            </button>
+            <h1 className="text-3xl font-bold text-gray-900">Tenant Management</h1>
+            <p className="text-gray-600 mt-1">Manage all platform tenants</p>
+          </div>
         </div>
 
         {/* Filters */}
-        <div className="bg-white border border-gray-300 rounded-lg p-4 shadow-sm mb-6">
+        <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm mb-6">
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-600" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <input
                   type="text"
                   placeholder="Search by name, email, or slug..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-500"
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-400"
                 />
               </div>
             </div>
@@ -136,7 +147,7 @@ export default function SuperadminTenantsPage() {
               <select
                 value={statusFilter}
                 onChange={handleStatusChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 bg-white"
               >
                 <option value="">All Statuses</option>
                 <option value="active">Active</option>
@@ -147,128 +158,126 @@ export default function SuperadminTenantsPage() {
             </div>
             <button
               onClick={handleSearch}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors"
             >
               Search
             </button>
           </div>
         </div>
 
-        {/* Tenants Table */}
-        <div className="bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="p-8 text-center text-gray-900 font-medium">Loading tenants...</div>
-          ) : tenants.length === 0 ? (
-            <div className="p-8 text-center text-gray-900 font-medium">No tenants found</div>
-          ) : (
-            <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-100 border-b border-gray-300">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Tenant
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Users
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Rooms
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Created
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-bold text-gray-900 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-300">
-                    {tenants.map((tenant) => (
-                      <tr key={tenant.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div>
-                            <div className="text-sm font-bold text-gray-900">{tenant.name}</div>
-                            <div className="text-sm text-gray-700">{tenant.email}</div>
-                            <div className="text-xs text-gray-600">{tenant.slug}</div>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-1 inline-flex text-xs leading-5 font-bold rounded-full border ${getStatusColor(tenant.subscriptionStatus)}`}>
-                            {tenant.subscriptionStatus}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                          {tenant._count.users}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                          {tenant._count.rooms}
-                        </td>
-                        <td className="px-6 py-4 text-sm font-bold text-gray-900">
-                          {new Date(tenant.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
-                              className="p-1 text-blue-700 hover:bg-blue-100 rounded"
-                              title="View Details"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            {tenant.subscriptionStatus === 'active' ? (
-                              <button
-                                onClick={() => updateTenantStatus(tenant.id, 'suspended')}
-                                className="p-1 text-red-700 hover:bg-red-100 rounded"
-                                title="Suspend"
-                              >
-                                <Ban className="h-4 w-4" />
-                              </button>
-                            ) : tenant.subscriptionStatus === 'suspended' ? (
-                              <button
-                                onClick={() => updateTenantStatus(tenant.id, 'active')}
-                                className="p-1 text-green-700 hover:bg-green-100 rounded"
-                                title="Activate"
-                              >
-                                <CheckCircle className="h-4 w-4" />
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        {/* Tenants Grid */}
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-gray-900 font-medium">Loading tenants...</div>
+          </div>
+        ) : tenants.length === 0 ? (
+          <div className="flex items-center justify-center py-12 bg-white border border-gray-200 rounded-xl">
+            <div className="text-gray-900 font-medium">No tenants found</div>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {tenants.map((tenant) => (
+                <div
+                  key={tenant.id}
+                  className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow"
+                >
+                  {/* Card Header */}
+                  <div className="p-6 border-b border-gray-200">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold text-gray-900">{tenant.name}</h3>
+                        <p className="text-sm text-gray-600 mt-1">{tenant.email}</p>
+                        <p className="text-xs text-gray-500 mt-1">{tenant.slug}</p>
+                      </div>
+                      <span className={`px-3 py-1 text-xs font-bold rounded-full border ${getStatusColor(tenant.subscriptionStatus)}`}>
+                        {tenant.subscriptionStatus}
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Pagination */}
-              <div className="bg-gray-100 px-6 py-3 border-t border-gray-300 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-900">
-                  Page {page} of {totalPages}
+                  {/* Card Body - Stats */}
+                  <div className="p-6 grid grid-cols-3 gap-4 border-b border-gray-200">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                        <Users className="h-4 w-4" />
+                      </div>
+                      <div className="text-xl font-bold text-gray-900">{tenant._count.users}</div>
+                      <div className="text-xs text-gray-600">Users</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                        <Building className="h-4 w-4" />
+                      </div>
+                      <div className="text-xl font-bold text-gray-900">{tenant._count.rooms}</div>
+                      <div className="text-xs text-gray-600">Rooms</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 text-gray-500 mb-1">
+                        <Calendar className="h-4 w-4" />
+                      </div>
+                      <div className="text-xl font-bold text-gray-900">
+                        {new Date(tenant.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </div>
+                      <div className="text-xs text-gray-600">Created</div>
+                    </div>
+                  </div>
+
+                  {/* Card Footer - Actions */}
+                  <div className="p-4 bg-gray-50 rounded-b-xl flex items-center justify-between">
+                    <button
+                      onClick={() => navigate(`/superadmin/tenants/${tenant.id}`)}
+                      className="flex items-center gap-2 text-blue-600 hover:text-blue-800 font-medium text-sm transition-colors"
+                    >
+                      <Eye className="h-4 w-4" />
+                      View Details
+                    </button>
+                    {tenant.subscriptionStatus === 'active' ? (
+                      <button
+                        onClick={() => updateTenantStatus(tenant.id, 'suspended')}
+                        className="flex items-center gap-2 text-red-600 hover:text-red-800 font-medium text-sm transition-colors"
+                      >
+                        <Ban className="h-4 w-4" />
+                        Suspend
+                      </button>
+                    ) : tenant.subscriptionStatus === 'suspended' ? (
+                      <button
+                        onClick={() => updateTenantStatus(tenant.id, 'active')}
+                        className="flex items-center gap-2 text-green-600 hover:text-green-800 font-medium text-sm transition-colors"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        Activate
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setPage(Math.max(1, page - 1))}
-                    disabled={page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => setPage(Math.min(totalPages, page + 1))}
-                    disabled={page === totalPages}
-                    className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
+              ))}
+            </div>
+
+            {/* Pagination */}
+            <div className="mt-6 flex items-center justify-between bg-white border border-gray-200 rounded-xl px-6 py-4">
+              <div className="text-sm font-medium text-gray-900">
+                Page {page} of {totalPages}
               </div>
-            </>
-          )}
-        </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage(Math.max(1, page - 1))}
+                  disabled={page === 1}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium transition-colors"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setPage(Math.min(totalPages, page + 1))}
+                  disabled={page === totalPages}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-gray-900 font-medium transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </Layout>
   );
