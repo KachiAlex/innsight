@@ -93,12 +93,15 @@ export default function SuperadminDashboardPage() {
       if (showRefreshing) setRefreshing(true);
       else setLoading(true);
 
+      console.log('[SuperadminDashboard] Fetching metrics...');
       const response = await api.get('/superadmin/dashboard');
+      console.log('[SuperadminDashboard] Response:', response.data);
       setMetrics(response.data.data);
       setLastUpdated(new Date());
       toast.success('Dashboard updated');
     } catch (error: any) {
-      console.error('Failed to fetch metrics:', error);
+      console.error('[SuperadminDashboard] Failed to fetch metrics:', error);
+      console.error('[SuperadminDashboard] Error response:', error.response?.data);
       const errorMessage =
         error.response?.data?.error?.message || 'Failed to load dashboard';
       toast.error(errorMessage);
