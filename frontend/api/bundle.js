@@ -77097,6 +77097,170 @@ superadminRouter.get(
     }
   }
 );
+superadminRouter.get(
+  "/tenants",
+  authenticate,
+  requireRole("iitech_admin"),
+  async (req, res) => {
+    try {
+      const page = Math.max(parseInt(req.query.page) || 1, 1);
+      const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+      const skip = (page - 1) * limit;
+      const search = req.query.search;
+      const status = req.query.status;
+      const whereClause = {};
+      if (search) {
+        whereClause.OR = [
+          { name: { contains: search, mode: "insensitive" } },
+          { email: { contains: search, mode: "insensitive" } },
+          { slug: { contains: search, mode: "insensitive" } }
+        ];
+      }
+      if (status && ["active", "suspended", "trial", "inactive"].includes(status)) {
+        whereClause.subscriptionStatus = status;
+      }
+      const [tenants, total] = await Promise.all([
+        prisma2?.tenant.findMany({
+          where: whereClause,
+          skip,
+          take: limit,
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            slug: true,
+            subscriptionStatus: true,
+            createdAt: true,
+            _count: {
+              select: {
+                users: true,
+                rooms: true
+              }
+            }
+          }
+        }) || [],
+        prisma2?.tenant.count({ where: whereClause }) || 0
+      ]);
+      res.json({
+        success: true,
+        data: {
+          tenants,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error("Error fetching tenants:", error);
+      throw new AppError("Failed to fetch tenants", 500);
+    }
+  }
+);
+superadminRouter.get(
+  "/tenants/:id",
+  authenticate,
+  requireRole("iitech_admin"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const tenant = await prisma2?.tenant.findUnique({
+        where: { id },
+        include: {
+          _count: {
+            select: {
+              users: true,
+              rooms: true,
+              reservations: true
+            }
+          }
+        }
+      });
+      if (!tenant) {
+        throw new AppError("Tenant not found", 404);
+      }
+      const revenueAgg = await prisma2?.reservation.aggregate({
+        where: { tenantId: id },
+        _sum: { totalPrice: true },
+        _count: { id: true }
+      }) || { _sum: { totalPrice: 0 }, _count: { id: 0 } };
+      res.json({
+        success: true,
+        data: {
+          ...tenant,
+          statistics: {
+            totalRevenue: revenueAgg._sum.totalPrice || 0,
+            totalReservations: revenueAgg._count.id
+          }
+        }
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error("Error fetching tenant details:", error);
+      throw new AppError("Failed to fetch tenant details", 500);
+    }
+  }
+);
+superadminRouter.patch(
+  "/tenants/:id/status",
+  authenticate,
+  requireRole("iitech_admin"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      if (!["active", "suspended", "trial", "inactive"].includes(status)) {
+        throw new AppError("Invalid status value", 400);
+      }
+      const tenant = await prisma2?.tenant.update({
+        where: { id },
+        data: { subscriptionStatus: status }
+      });
+      res.json({
+        success: true,
+        data: tenant
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error("Error updating tenant status:", error);
+      throw new AppError("Failed to update tenant status", 500);
+    }
+  }
+);
+superadminRouter.delete(
+  "/tenants/:id",
+  authenticate,
+  requireRole("iitech_admin"),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      await prisma2?.tenant.delete({
+        where: { id }
+      });
+      res.json({
+        success: true,
+        message: "Tenant deleted successfully"
+      });
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error("Error deleting tenant:", error);
+      throw new AppError("Failed to delete tenant", 500);
+    }
+  }
+);
 
 // ../../backend/src/routes/settings-admin.ts
 var import_express37 = require("express");

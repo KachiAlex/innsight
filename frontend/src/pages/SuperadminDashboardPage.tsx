@@ -3,6 +3,7 @@ import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
+import { Building2 } from 'lucide-react';
 
 interface SimpleMetrics {
   totalTenants: number;
@@ -69,7 +70,16 @@ export default function SuperadminDashboardPage() {
   return (
     <Layout>
       <div className="p-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">Superadmin Dashboard</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Superadmin Dashboard</h1>
+          <button
+            onClick={() => navigate('/superadmin/tenants')}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <Building2 className="h-4 w-4" />
+            Manage Tenants
+          </button>
+        </div>
         
         {/* User Info */}
         <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-6">

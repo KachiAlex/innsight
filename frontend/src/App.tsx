@@ -78,6 +78,7 @@ const PublicCheckoutPage = lazy(() => import('./pages/PublicCheckoutPage'));
 const PortalAccessPage = lazy(() => import('./pages/PortalAccessPage'));
 const PortalDashboardPage = lazy(() => import('./pages/PortalDashboardPage'));
 const SuperadminDashboardPage = lazy(() => import('./pages/SuperadminDashboardPage'));
+const SuperadminTenantsPage = lazy(() => import('./pages/SuperadminTenantsPage'));
 const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
 const SuperadminUsersPage = lazy(() => import('./pages/SuperadminUsersPage'));
 const BillingManagementPage = lazy(() => import('./pages/BillingManagementPage'));
@@ -258,6 +259,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <SuperadminDashboardPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/superadmin/tenants"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <SuperadminTenantsPage />
                   </Suspense>
                 </ProtectedRoute>
               }
