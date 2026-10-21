@@ -1,0 +1,105 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: var(--space-4);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+  position: relative;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-2px);
+  border-color: var(--line-strong);
+}
+
+.cardVip {
+  border-color: #8b5cf6;
+  border-width: 2px;
+  padding: calc(var(--space-5) - 1px);
+}
+
+.vipBadge {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: color-mix(in srgb, #8b5cf6 12%, var(--surface));
+  color: #8b5cf6;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.name {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.loyalty {
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.contact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.contactRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.statLabel {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 2px;
+}
+
+.statValue {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.statValueAccent {
+  font-weight: 700;
+  color: #8b5cf6;
+}

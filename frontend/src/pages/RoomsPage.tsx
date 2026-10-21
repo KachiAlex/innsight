@@ -4,11 +4,22 @@ import { api } from '../lib/api';
 import Layout from '../components/Layout';
 import { Plus, DoorOpen, Tag, X, Edit, Trash2, Package, Layers, Camera } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { CardSkeleton } from '../components/LoadingSkeleton';
-import SearchInput from '../components/SearchInput';
 import Pagination from '../components/Pagination';
 import { useDebounce } from '../hooks/useDebounce';
-import EmptyState from '../components/EmptyState';
+import {
+  Button,
+  EmptyState,
+  FilterBar,
+  PageHeader,
+  Panel,
+  Select,
+  Skeleton,
+  StatusBadge,
+  TextInput,
+} from '../components/ui';
+import { formatMoney } from '../lib/money';
+import { useTenantSettings } from '../hooks/useTenantSettings';
+import styles from './RoomsPage.module.css';
 
 interface RoomCategory {
   id: string;
@@ -269,30 +280,12 @@ function RoomInventoryModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1100,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '10px',
-          padding: '1.5rem',
-          width: '95%',
-          maxWidth: '900px',
-          maxHeight: '90vh',
-          overflowY: 'auto',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '900px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -436,30 +429,12 @@ function BulkInventoryModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1050,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '10px',
-          padding: '1.5rem',
-          width: '90%',
-          maxWidth: '720px',
-          maxHeight: '90vh',
-          overflowY: 'auto',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '720px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -550,6 +525,8 @@ interface RoomLog {
 
 export default function RoomsPage() {
   const { user } = useAuthStore();
+  const settings = useTenantSettings();
+  const currency = settings.currencySymbol;
   const [rooms, setRooms] = useState<Room[]>([]);
   const [categories, setCategories] = useState<RoomCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1108,9 +1085,11 @@ export default function RoomsPage() {
   if (loading) {
     return (
       <Layout>
-        <div>
-          <h1 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>Rooms</h1>
-          <CardSkeleton count={6} />
+        <PageHeader title="Rooms" />
+        <div className={styles.grid}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} height="220px" />
+          ))}
         </div>
       </Layout>
     );
@@ -1136,359 +1115,194 @@ export default function RoomsPage() {
 
   return (
     <Layout>
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h1 style={{ color: '#1e293b' }}>Rooms</h1>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
+      <PageHeader
+        title="Rooms"
+        subtitle={`${pagination.total || rooms.length} rooms in inventory`}
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              icon={<Tag size={16} />}
               onClick={() => {
                 setEditingCategory(null);
                 setShowCategoryModal(true);
               }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.75rem 1.5rem',
-                background: '#8b5cf6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '500',
-              }}
             >
-              <Tag size={20} />
-              Manage Categories
-            </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.75rem 1.5rem',
-                background: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '500',
+              Categories
+            </Button>
+            <Button variant="primary" icon={<Plus size={16} />} onClick={() => setShowCreateModal(true)}>
+              Add room
+            </Button>
+          </>
+        }
+      />
+
+      {selectedRooms.size > 0 && (
+        <div className={styles.bulkBar}>
+          <span className={styles.bulkLabel}>
+            {selectedRooms.size} room{selectedRooms.size !== 1 ? 's' : ''} selected
+          </span>
+          <div className="row wrap">
+            <Select
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleBulkStatusUpdate(e.target.value);
+                  e.target.value = '';
+                }
               }}
+              disabled={isBulkProcessing}
+              aria-label="Bulk status update"
+              defaultValue=""
             >
-              <Plus size={20} />
-              Add Room
-            </button>
+              <option value="">Set status…</option>
+              <option value="available">Available</option>
+              <option value="clean">Clean</option>
+              <option value="dirty">Dirty</option>
+              <option value="inspected">Inspected</option>
+              <option value="out_of_order">Out of order</option>
+              <option value="maintenance">Maintenance</option>
+            </Select>
+            <Button size="sm" variant="secondary" onClick={() => setBulkInventoryModalOpen(true)} icon={<Layers size={15} />}>
+              Bulk inventory
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedRooms(new Set())}>
+              Clear selection
+            </Button>
           </div>
         </div>
+      )}
 
-        {selectedRooms.size > 0 && (
-          <div
-            style={{
-              background: '#dbeafe',
-              padding: '1rem',
-              borderRadius: '8px',
-              marginBottom: '1.5rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <span style={{ color: '#1e40af', fontWeight: '500' }}>
-              {selectedRooms.size} room{selectedRooms.size !== 1 ? 's' : ''} selected
+      <FilterBar
+        search={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Search room #, type, status, description…"
+        activeCount={activeFilters.length}
+        onClear={() => {
+          setSearchTerm('');
+          setSelectedCategoryFilter('');
+          setSelectedFloorFilter('');
+          setSelectedRoomTypeFilter('');
+          setSelectedStatusFilter('');
+        }}
+      >
+        <Select
+          value={selectedCategoryFilter}
+          onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+          aria-label="Filter by category"
+        >
+          <option value="">All categories</option>
+          <option value="none">No category</option>
+          {categories.map((cat) => (
+            <option key={cat.id} value={cat.id}>
+              {cat.name} ({cat.actualRoomCount})
+            </option>
+          ))}
+        </Select>
+        <Select
+          value={selectedRoomTypeFilter}
+          onChange={(e) => setSelectedRoomTypeFilter(e.target.value)}
+          aria-label="Filter by room type"
+        >
+          <option value="">All types</option>
+          {roomTypeOptions.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </Select>
+        <Select
+          value={selectedStatusFilter}
+          onChange={(e) => setSelectedStatusFilter(e.target.value)}
+          aria-label="Filter by status"
+        >
+          <option value="">All statuses</option>
+          {statusOptions.map((status) => (
+            <option key={status} value={status}>
+              {statusLabels[status]}
+            </option>
+          ))}
+        </Select>
+        <TextInput
+          type="number"
+          value={selectedFloorFilter}
+          onChange={(e) => setSelectedFloorFilter(e.target.value)}
+          placeholder="Floor"
+          style={{ width: '90px' }}
+          aria-label="Filter by floor"
+        />
+      </FilterBar>
+
+      {activeFilters.length > 0 && (
+        <div className={styles.chipRow}>
+          {activeFilters.map((filter) => (
+            <span key={filter.key} className={styles.chip}>
+              {filter.label}
+              <button onClick={() => clearFilter(filter.key)} aria-label={`Clear ${filter.label} filter`}>
+                ×
+              </button>
             </span>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <select
-                onChange={(e) => {
-                  if (e.target.value) {
-                    handleBulkStatusUpdate(e.target.value);
-                    e.target.value = '';
-                  }
-                }}
-                disabled={isBulkProcessing}
-                style={{
-                  padding: '0.5rem 1rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '4px',
-                  fontSize: '0.875rem',
-                  cursor: isBulkProcessing ? 'not-allowed' : 'pointer',
-                }}
-              >
-                <option value="">Update Status To...</option>
-                <option value="available">Available</option>
-                <option value="clean">Clean</option>
-                <option value="dirty">Dirty</option>
-                <option value="inspected">Inspected</option>
-                <option value="out_of_order">Out of Order</option>
-                <option value="maintenance">Maintenance</option>
-              </select>
-              <button
-                onClick={() => setSelectedRooms(new Set())}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-              >
-                Clear Selection
-              </button>
-              <button
-                onClick={() => setBulkInventoryModalOpen(true)}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#fef3c7',
-                  color: '#92400e',
-                  border: '1px solid #fcd34d',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                }}
-              >
-                <Layers size={16} />
-                Bulk inventory
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1 }}>
-            <SearchInput
-              value={searchTerm}
-              onChange={setSearchTerm}
-              placeholder="Search by room number, type, status, or description..."
-            />
-          </div>
-          <select
-            value={selectedCategoryFilter}
-            onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-            style={{
-              padding: '0.75rem',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-              minWidth: '200px',
-            }}
-          >
-            <option value="">All Categories</option>
-            <option value="none">No Category</option>
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
-                {cat.name} ({cat.actualRoomCount})
-              </option>
-            ))}
-          </select>
-          <select
-            value={selectedRoomTypeFilter}
-            onChange={(e) => setSelectedRoomTypeFilter(e.target.value)}
-            style={{
-              padding: '0.75rem',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-              minWidth: '150px',
-            }}
-          >
-            <option value="">All Room Types</option>
-            {roomTypeOptions.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-          <select
-            value={selectedStatusFilter}
-            onChange={(e) => setSelectedStatusFilter(e.target.value)}
-            style={{
-              padding: '0.75rem',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-              minWidth: '150px',
-            }}
-          >
-            <option value="">All Statuses</option>
-            {statusOptions.map((status) => (
-              <option key={status} value={status}>
-                {statusLabels[status]}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number"
-            value={selectedFloorFilter}
-            onChange={(e) => setSelectedFloorFilter(e.target.value)}
-            placeholder="Floor"
-            style={{
-              padding: '0.75rem',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '0.875rem',
-              minWidth: '120px',
-            }}
-          />
-          {(searchTerm || selectedCategoryFilter || selectedFloorFilter || selectedRoomTypeFilter || selectedStatusFilter) && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchTerm('');
-                setSelectedCategoryFilter('');
-                setSelectedFloorFilter('');
-                setSelectedRoomTypeFilter('');
-                setSelectedStatusFilter('');
-              }}
-              style={{
-                padding: '0.75rem 1rem',
-                border: '1px solid #cbd5e1',
-                borderRadius: '6px',
-                background: '#f8fafc',
-                color: '#475569',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-              }}
-            >
-              Clear Filters
-            </button>
-          )}
+          ))}
         </div>
-        {activeFilters.length > 0 && (
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {activeFilters.map((filter) => (
-              <span
-                key={filter.key}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  padding: '0.35rem 0.75rem',
-                  borderRadius: '999px',
-                  background: '#eef2ff',
-                  color: '#312e81',
-                  fontSize: '0.75rem',
-                  fontWeight: 500,
-                }}
-              >
-                {filter.label}
-                <button
-                  onClick={() => clearFilter(filter.key)}
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    fontSize: '0.8rem',
-                    color: '#312e81',
-                    padding: 0,
-                  }}
-                  aria-label={`Clear ${filter.label} filter`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+      )}
 
         {rooms.length > 0 && (
-          <section
-            style={{
-              marginBottom: '1.5rem',
-              background: 'white',
-              borderRadius: '12px',
-              border: '1px solid #e2e8f0',
-              padding: '1.25rem',
-            }}
+          <Panel
+            title="Room accountability"
+            subtitle="Rooms with stale logs, flagged statuses, and missing accountability details"
+            style={{ marginBottom: 'var(--space-4)' }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.125rem', color: '#0f172a' }}>Room accountability snapshot</h2>
-                <p style={{ margin: '0.25rem 0 0 0', color: '#475569', fontSize: '0.85rem' }}>
-                  Rooms with stale logs, flagged statuses, and missing accountability details.
-                </p>
+            <div className={styles.metricGrid}>
+              <div className={styles.metricDanger}>
+                <div className={styles.metricValue}>{accountabilityMetrics.staleCount}</div>
+                <div className={styles.metricLabel}>Rooms with no log in 6h</div>
               </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
-              <div style={{ padding: '1rem', borderRadius: '8px', background: '#fdf2f8', border: '1px solid #f5d0fe' }}>
-                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#be185d' }}>{accountabilityMetrics.staleCount}</div>
-                <div style={{ fontSize: '0.85rem', color: '#6b21a8' }}>Rooms with no log in 6h</div>
+              <div className={styles.metricInfo}>
+                <div className={styles.metricValue}>{accountabilityMetrics.flaggedCount}</div>
+                <div className={styles.metricLabel}>Flagged dirty / reserved / maintenance</div>
               </div>
-              <div style={{ padding: '1rem', borderRadius: '8px', background: '#eef2ff', border: '1px solid #bfdbfe' }}>
-                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#1d4ed8' }}>{accountabilityMetrics.flaggedCount}</div>
-                <div style={{ fontSize: '0.85rem', color: '#1e3a8a' }}>Rooms flagged dirty/reserved/maintenance</div>
-              </div>
-              <div style={{ padding: '1rem', borderRadius: '8px', background: '#ecfccb', border: '1px solid #bef264' }}>
-                <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#15803d' }}>{accountabilityMetrics.noLogCount}</div>
-                <div style={{ fontSize: '0.85rem', color: '#166534' }}>Rooms never logged</div>
+              <div className={styles.metricSuccess}>
+                <div className={styles.metricValue}>{accountabilityMetrics.noLogCount}</div>
+                <div className={styles.metricLabel}>Rooms never logged</div>
               </div>
             </div>
             <div>
-              <h3 style={{ margin: '0 0 0.75rem 0', color: '#0f172a', fontSize: '1rem', fontWeight: '600' }}>Most overdue rooms</h3>
+              <h3 style={{ margin: '0 0 var(--space-3)', color: 'var(--text)', fontSize: 'var(--fs-base)', fontWeight: 700 }}>
+                Most overdue rooms
+              </h3>
               {accountabilityMetrics.staleRoomsList.length === 0 ? (
-                <p style={{ margin: 0, color: '#475569', fontSize: '0.85rem' }}>All rooms have fresh logs.</p>
+                <p style={{ margin: 0, color: 'var(--muted)', fontSize: 'var(--fs-sm)' }}>
+                  All rooms have fresh logs.
+                </p>
               ) : (
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <table className={styles.miniTable}>
                     <thead>
                       <tr>
-                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Room</th>
-                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Status</th>
-                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Last action</th>
-                        <th style={{ textAlign: 'left', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb', fontSize: '0.75rem', color: '#475569' }}>Responsible</th>
-                        <th style={{ textAlign: 'right', padding: '0.5rem 0', borderBottom: '1px solid #e5e7eb' }} />
+                        <th>Room</th>
+                        <th>Status</th>
+                        <th>Last action</th>
+                        <th>Responsible</th>
+                        <th />
                       </tr>
                     </thead>
                     <tbody>
                       {accountabilityMetrics.staleRoomsList.map((room) => (
-                        <tr key={room.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '0.5rem 0' }}>
-                            <strong>Room {room.roomNumber}</strong>
-                            <div style={{ fontSize: '0.75rem', color: '#475569' }}>
+                        <tr key={room.id}>
+                          <td>
+                            <strong style={{ color: 'var(--text)' }}>Room {room.roomNumber}</strong>
+                            <div style={{ fontSize: 'var(--fs-2xs)', color: 'var(--muted)' }}>
                               Last logged {formatTimeAgo(room.parsedLastLogAt)}
                             </div>
                           </td>
-                          <td style={{ padding: '0.5rem 0' }}>
-                            <span
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                borderRadius: '999px',
-                                background: `${getStatusColor(room.status)}20`,
-                                color: getStatusColor(room.status),
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                              }}
-                            >
-                              {room.status.replace('_', ' ').toUpperCase()}
-                            </span>
+                          <td>
+                            <StatusBadge status={room.status} />
                           </td>
-                          <td style={{ padding: '0.5rem 0', color: '#475569', fontSize: '0.85rem' }}>
-                            {room.lastLogSummary || 'No log yet'}
-                          </td>
-                          <td style={{ padding: '0.5rem 0', color: '#475569', fontSize: '0.85rem' }}>
-                            {room.lastLogUserName || 'Unassigned'}
-                          </td>
-                          <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>
-                            <button
-                              onClick={() => handleViewActivity(room)}
-                              style={{
-                                padding: '0.25rem 0.75rem',
-                                borderRadius: '6px',
-                                border: '1px solid #cbd5e1',
-                                background: '#fff',
-                                cursor: 'pointer',
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              View history
-                            </button>
+                          <td>{room.lastLogSummary || 'No log yet'}</td>
+                          <td>{room.lastLogUserName || 'Unassigned'}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <Button size="sm" variant="secondary" onClick={() => handleViewActivity(room)}>
+                              History
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -1497,134 +1311,79 @@ export default function RoomsPage() {
                 </div>
               )}
             </div>
-          </section>
+          </Panel>
         )}
 
         {latestReport && (
-          <section
-            style={{
-              marginBottom: '1.5rem',
-              background: '#0f172a',
-              borderRadius: '12px',
-              color: 'white',
-              padding: '1rem',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <section className={styles.reportBanner}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
               <div>
-                <h3 style={{ margin: 0 }}>Latest accountability snapshot</h3>
-                <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem', color: '#cbd5f5' }}>
-                  Generated on {new Date(latestReport.lastReportAt?.seconds ? latestReport.lastReportAt.seconds * 1000 : latestReport.lastReportAt)?.toLocaleString() || 'unknown'}
+                <h3>Latest accountability report</h3>
+                <p className={styles.reportBannerSub}>
+                  Generated {new Date(latestReport.lastReportAt?.seconds ? latestReport.lastReportAt.seconds * 1000 : latestReport.lastReportAt)?.toLocaleString() || 'recently'}
                 </p>
               </div>
-              <span style={{ fontSize: '0.8rem', color: '#cbd5f5' }}>
-                Generated by {latestReport.generatedBy || 'system'}
+              <span className={styles.reportBannerSub}>
+                by {latestReport.generatedBy || 'system'}
               </span>
             </div>
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+            <div className={styles.reportStats}>
               <div>
-                <strong style={{ fontSize: '1.1rem' }}>{latestReport.staleCount}</strong>
-                <p style={{ margin: '0.15rem 0 0 0', color: '#cbd5f5', fontSize: '0.85rem' }}>Rooms without a recent log</p>
+                <strong>{latestReport.staleCount}</strong>
+                <p>Without a recent log</p>
               </div>
               <div>
-                <strong style={{ fontSize: '1.1rem' }}>{latestReport.flaggedCount}</strong>
-                <p style={{ margin: '0.15rem 0 0 0', color: '#cbd5f5', fontSize: '0.85rem' }}>Rooms flagged dirty/reserved/maintenance</p>
+                <strong>{latestReport.flaggedCount}</strong>
+                <p>Flagged dirty / reserved / maintenance</p>
               </div>
               <div>
-                <strong style={{ fontSize: '1.1rem' }}>{latestReport.noLogCount}</strong>
-                <p style={{ margin: '0.15rem 0 0 0', color: '#cbd5f5', fontSize: '0.85rem' }}>Rooms lacking any logs</p>
+                <strong>{latestReport.noLogCount}</strong>
+                <p>Lacking any logs</p>
               </div>
             </div>
           </section>
         )}
 
         {rooms.length > 0 && (
-          <section
-            style={{
-              marginBottom: '1.5rem',
-              background: 'white',
-              borderRadius: '12px',
-              border: '1px solid #e2e8f0',
-              padding: '1.25rem',
-            }}
+          <Panel
+            title="Status board"
+            subtitle="Rooms by current status — quick actions move rooms through the workflow"
+            style={{ marginBottom: 'var(--space-4)' }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.125rem', color: '#0f172a' }}>Status board</h2>
-                <p style={{ margin: '0.25rem 0 0 0', color: '#475569', fontSize: '0.85rem' }}>
-                  Rooms organized by current status. Quick actions let staff move rooms through the workflow.
-                </p>
-              </div>
-              <span style={{ color: '#475569', fontSize: '0.85rem' }}>Role: {user?.role || 'Unknown'}</span>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+            <div className={styles.boardGrid}>
               {boardStatuses.map((status) => (
-                <div key={status} style={{ borderRadius: '8px', border: '1px solid #e5e7eb', padding: '0.75rem', background: '#f8fafc' }}>
-                  <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#0f172a' }}>{statusLabels[status]}</h3>
-                  <p style={{ margin: '0.35rem 0 0 0', color: '#475569', fontSize: '0.75rem' }}>
+                <div key={status} className={styles.boardCol}>
+                  <div className={styles.boardColTitle}>{statusLabels[status]}</div>
+                  <p className={styles.boardColCount}>
                     {roomsByStatus[status]?.length || 0} room{roomsByStatus[status]?.length === 1 ? '' : 's'}
                   </p>
-                  <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div className={styles.boardCards}>
                     {(roomsByStatus[status] ?? []).slice(0, 4).map((room) => (
-                      <div
-                        key={room.id}
-                        style={{
-                          padding: '0.5rem',
-                          borderRadius: '6px',
-                          border: '1px solid rgba(126, 145, 191, 0.3)',
-                          background: '#fff',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '0.25rem',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                          <strong style={{ color: '#1e293b' }}>Room {room.roomNumber}</strong>
-                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>
-                            {formatTimeAgo(room.lastLogAt ? new Date(room.lastLogAt) : undefined)}
-                          </span>
+                      <div key={room.id} className={styles.boardCard}>
+                        <div className={styles.boardCardHead}>
+                          <strong>Room {room.roomNumber}</strong>
+                          <span>{formatTimeAgo(room.lastLogAt ? new Date(room.lastLogAt) : undefined)}</span>
                         </div>
-                        <div style={{ fontSize: '0.8rem', color: '#475569' }}>
+                        <div className={styles.boardCardBody}>
                           {room.lastLogSummary || 'No log entry yet'}
                         </div>
-                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#475569' }}>
-                            {room.lastLogUserName || 'Unassigned'}
-                          </span>
-                          <button
-                            onClick={() => handleViewActivity(room)}
-                            style={{
-                              marginLeft: 'auto',
-                              border: 'none',
-                              background: 'transparent',
-                              color: '#1d4ed8',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            History
-                          </button>
+                        <div className={styles.boardCardFoot}>
+                          <span>{room.lastLogUserName || 'Unassigned'}</span>
+                          <button onClick={() => handleViewActivity(room)}>History</button>
                         </div>
                         {canActOnBoard && quickStatusNext[room.status] && (
-                          <button
+                          <Button
+                            size="sm"
+                            variant="secondary"
                             onClick={() => handleBoardStatusChange(room, quickStatusNext[room.status])}
-                            style={{
-                              marginTop: '0.25rem',
-                              padding: '0.35rem 0.65rem',
-                              borderRadius: '4px',
-                              border: '1px solid #cbd5e1',
-                              background: '#f8fafc',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer',
-                            }}
                           >
-                            Mark as {statusLabels[quickStatusNext[room.status]] || quickStatusNext[room.status]}
-                          </button>
+                            Mark {statusLabels[quickStatusNext[room.status]] || quickStatusNext[room.status]}
+                          </Button>
                         )}
                       </div>
                     ))}
                     {(roomsByStatus[status] ?? []).length > 4 && (
-                      <span style={{ fontSize: '0.7rem', color: '#475569' }}>
+                      <span className={styles.more}>
                         +{(roomsByStatus[status] ?? []).length - 4} more
                       </span>
                     )}
@@ -1632,47 +1391,36 @@ export default function RoomsPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </Panel>
         )}
 
-        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label className={styles.selectAll}>
           <input
             type="checkbox"
             checked={selectedRooms.size === filteredRooms.length && filteredRooms.length > 0}
             onChange={toggleSelectAll}
-            style={{ cursor: 'pointer' }}
           />
-          <span style={{ fontSize: '0.875rem', color: '#64748b' }}>
-            Select All ({filteredRooms.length} rooms)
-          </span>
-        </div>
+          Select all ({filteredRooms.length} rooms)
+        </label>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        <div className={styles.grid}>
           {filteredRooms.map((room) => (
             <div
               key={room.id}
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '1.5rem',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                borderLeft: `4px solid ${getStatusColor(room.status)}`,
-                border: selectedRooms.has(room.id) ? `2px solid #3b82f6` : undefined,
-              }}
+              className={`${styles.roomCard} ${selectedRooms.has(room.id) ? styles.roomCardSelected : ''}`}
+              style={{ '--status-color': getStatusColor(room.status) } as React.CSSProperties}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
+              <div className={styles.roomHead}>
                 <input
                   type="checkbox"
                   checked={selectedRooms.has(room.id)}
                   onChange={() => toggleSelectRoom(room.id)}
-                  style={{ cursor: 'pointer', marginTop: '0.25rem' }}
+                  aria-label={`Select room ${room.roomNumber}`}
                 />
-                <div style={{ flex: 1, marginLeft: '0.5rem' }}>
-                  <h3 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', fontWeight: 'bold' }}>
-                    Room {room.roomNumber}
-                  </h3>
-                  <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-                    {room.roomType} • Floor {room.floor}
+                <div style={{ flex: 1 }}>
+                  <h3 className={styles.roomTitle}>Room {room.roomNumber}</h3>
+                  <p className={styles.roomSub}>
+                    {room.roomType} · Floor {room.floor}
                     {room.category && (() => {
                       const categoryData = categories.find(cat => cat.id === room.category?.id);
                       const categoryColor = categoryData?.color || '#8b5cf6';
@@ -1691,131 +1439,77 @@ export default function RoomsPage() {
                           >
                             <span style={srOnlyStyle}>{categoryColor}</span>
                           </span>
-                          <span style={{ color: categoryColor, fontWeight: '500' }}>
+                          <span style={{ color: categoryColor, fontWeight: 600 }}>
                             {room.category.name}
                           </span>
                         </span>
                       );
                     })()}
                   </p>
-                  {room.description && (
-                    <p style={{ margin: '0.5rem 0 0 0', color: '#64748b', fontSize: '0.875rem', fontStyle: 'italic' }}>
-                      {room.description}
-                    </p>
-                  )}
+                  {room.description && <p className={styles.roomDesc}>{room.description}</p>}
                 </div>
-                <div
-                  style={{
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '12px',
-                    fontSize: '0.75rem',
-                    fontWeight: '500',
-                    background: `${getStatusColor(room.status)}20`,
-                    color: getStatusColor(room.status),
-                  }}
-                >
-                  {room.status.replace('_', ' ').toUpperCase()}
-                </div>
+                <StatusBadge status={room.status} />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>Max Occupancy</span>
-                  <span style={{ fontWeight: '500', color: '#1e293b' }}>{room.maxOccupancy} guests</span>
+              <div className={styles.roomFacts}>
+                <div className={styles.factRow}>
+                  <span className={styles.factKey}>Max occupancy</span>
+                  <span className={styles.factVal}>{room.maxOccupancy} guests</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>Rate Plan</span>
-                  <span style={{ fontWeight: '500', color: '#1e293b' }}>{room.ratePlan?.name || 'N/A'}</span>
+                <div className={styles.factRow}>
+                  <span className={styles.factKey}>Rate plan</span>
+                  <span className={styles.factVal}>{room.ratePlan?.name || 'N/A'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#64748b' }}>Custom Rate</span>
-                  <span style={{ fontWeight: '500', color: room.customRate ? '#0f172a' : '#94a3b8' }}>
-                    {room.customRate ? `₦${Number(room.customRate).toLocaleString()}` : 'Not set'}
+                <div className={styles.factRow}>
+                  <span className={styles.factKey}>Custom rate</span>
+                  <span className={styles.factVal} style={!room.customRate ? { color: 'var(--muted)', fontWeight: 400 } : undefined}>
+                    {room.customRate ? formatMoney(Number(room.customRate), currency) : 'Not set'}
                   </span>
                 </div>
                 {room.effectiveRate && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#64748b' }}>Effective Rate</span>
-                    <span style={{ fontWeight: '600', color: '#0f172a' }}>
-                      ₦{Number(room.effectiveRate).toLocaleString()}
-                    </span>
+                  <div className={styles.factRow}>
+                    <span className={styles.factKey}>Effective rate</span>
+                    <span className={styles.factVal}>{formatMoney(Number(room.effectiveRate), currency)}</span>
                   </div>
                 )}
               </div>
-              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => setRateEditRoom(room)}
-                  style={{
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                    background: '#f8fafc',
-                    color: '#0f172a',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  Edit Rate
-                </button>
-                <button
-                  onClick={() => handleViewActivity(room)}
-                  style={{
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                    background: 'white',
-                    color: '#3b82f6',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  View Activity
-                </button>
-                <button
+              <div className={styles.roomActions}>
+                <Button size="sm" variant="secondary" onClick={() => setRateEditRoom(room)}>
+                  Edit rate
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => handleViewActivity(room)}>
+                  Activity
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Package size={14} />}
                   onClick={() => handleOpenInventoryModal(room)}
-                  style={{
-                    padding: '0.5rem 0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                    background: '#fff8eb',
-                    color: '#b45309',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem',
-                  }}
                 >
-                  <Package size={16} />
                   Inventory
-                </button>
+                </Button>
               </div>
             </div>
           ))}
         </div>
 
         {filteredRooms.length === 0 && (
-          <div
-            style={{
-              background: 'white',
-              padding: '3rem',
-              borderRadius: '8px',
-              textAlign: 'center',
-              color: '#94a3b8',
-            }}
-          >
-            <EmptyState
-              icon={DoorOpen}
-              title={searchTerm || selectedCategoryFilter || selectedFloorFilter ? 'No rooms found' : 'No rooms yet'}
-              description={searchTerm || selectedCategoryFilter || selectedFloorFilter 
-                ? 'Try adjusting your filters to find rooms' 
-                : 'Create your first room to get started'}
-              action={searchTerm || selectedCategoryFilter || selectedFloorFilter ? undefined : {
-                label: 'Create Room',
-                onClick: () => setShowCreateModal(true),
-              }}
-            />
-          </div>
+          <EmptyState
+            icon={<DoorOpen size={28} strokeWidth={1.6} />}
+            title={searchTerm || selectedCategoryFilter || selectedFloorFilter ? 'No rooms found' : 'No rooms yet'}
+            description={
+              searchTerm || selectedCategoryFilter || selectedFloorFilter
+                ? 'Try adjusting your filters to find rooms'
+                : 'Create your first room to get started'
+            }
+            action={
+              !(searchTerm || selectedCategoryFilter || selectedFloorFilter) ? (
+                <Button variant="primary" onClick={() => setShowCreateModal(true)}>
+                  Create room
+                </Button>
+              ) : undefined
+            }
+          />
         )}
 
         {rooms.length > 0 && (
@@ -1912,7 +1606,6 @@ export default function RoomsPage() {
             saving={bulkInventorySaving}
           />
         )}
-      </div>
     </Layout>
   );
 }
@@ -2088,28 +1781,12 @@ function CreateRoomModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '90%',
-          maxWidth: '500px',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '500px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>
@@ -2519,28 +2196,12 @@ function EditRoomRateModal({ room, categories, ratePlans, onClose, onSuccess }: 
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '90%',
-          maxWidth: '480px',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '480px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ marginBottom: '0.5rem', color: '#1e293b' }}>Edit Room Rate</h2>
@@ -2772,30 +2433,12 @@ function CategoryManagementModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '90%',
-          maxWidth: '800px',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '800px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -3100,31 +2743,12 @@ function RoomActivityModal({
 }) {
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className={styles.modalOverlay}
       onClick={onClose}
     >
       <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '1.5rem',
-          width: '90%',
-          maxWidth: '700px',
-          maxHeight: '85vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
+        className={styles.modalPanel}
+        style={{ maxWidth: '700px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

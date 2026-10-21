@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { CSSProperties, ReactNode } from 'react';
 import styles from './Panel.module.css';
 
 interface PanelProps {
@@ -9,11 +9,13 @@ interface PanelProps {
   children: ReactNode;
   /** Remove inner padding (e.g. when the child is a DataTable) */
   flush?: boolean;
+  className?: string;
+  style?: CSSProperties;
 }
 
-export default function Panel({ title, subtitle, actions, children, flush }: PanelProps) {
+export default function Panel({ title, subtitle, actions, children, flush, className, style }: PanelProps) {
   return (
-    <section className={styles.panel}>
+    <section className={`${styles.panel} ${className ?? ''}`} style={style}>
       {(title || actions) && (
         <div className={styles.header}>
           <div className={styles.headerText}>

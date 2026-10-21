@@ -14,6 +14,7 @@ export { default as EmptyState } from './EmptyState';
 export { default as ErrorState } from './ErrorState';
 export { default as FilterBar } from './FilterBar';
 export { Field, TextInput, Select, Textarea } from './Field';
+export { default as Modal } from './Modal';
 export { default as PageHeader } from './PageHeader';
 export { default as Panel } from './Panel';
 export { default as ReservationChip } from './ReservationChip';
