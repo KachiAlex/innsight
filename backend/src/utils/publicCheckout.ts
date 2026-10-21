@@ -87,6 +87,14 @@ export const CHECKOUT_INTENT_TTL_MS = Number(
 export const calculateNights = (checkIn: Date, checkOut: Date) =>
   Math.max(1, Math.ceil((checkOut.getTime() - checkIn.getTime()) / DAY_IN_MS));
 
+export const reservationRevenue = (reservation: {
+  rate: Prisma.Decimal | number;
+  checkInDate: Date;
+  checkOutDate: Date;
+}) =>
+  Number(reservation.rate) *
+  calculateNights(reservation.checkInDate, reservation.checkOutDate);
+
 const resolveRoomEffectiveRate = (room: {
   customRate?: Prisma.Decimal | number | null;
   ratePlan?: { baseRate?: Prisma.Decimal | number | null } | null;

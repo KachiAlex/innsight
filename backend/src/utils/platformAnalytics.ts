@@ -5,6 +5,7 @@
 
 import { prisma } from './prisma';
 import { getBillingMetrics } from './billingManagement';
+import { reservationRevenue } from './publicCheckout';
 
 export interface PlatformAnalytics {
   period: {
@@ -109,7 +110,7 @@ export async function getPlatformAnalytics(
       prisma?.reservation.findMany({
         select: {
           id: true,
-          totalPrice: true,
+          rate: true,
           createdAt: true,
           checkInDate: true,
           checkOutDate: true,
@@ -122,7 +123,7 @@ export async function getPlatformAnalytics(
     const currentTenants = tenants.length;
     const currentUsers = users.length;
     const currentReservations = reservations.length;
-    const currentRevenue = reservations.reduce((sum, r: any) => sum + (r.totalPrice || 0), 0);
+    const currentRevenue = reservations.reduce((sum, r: any) => sum + reservationRevenue(r), 0);
 
     const previousTenantsCount = tenants.filter(
       (t: any) => new Date(t.createdAt) < startDate

@@ -3,6 +3,7 @@ import { authenticate, requireRole, AuthRequest } from '../middleware/auth';
 import { AppError } from '../middleware/errorHandler';
 import { prisma } from '../utils/prisma';
 import { getSuperadminDashboardMetrics, getTopTenantsByRevenue } from '../utils/superadminMetrics';
+import { reservationRevenue } from '../utils/publicCheckout';
 
 export const superadminRouter = Router();
 
@@ -197,20 +198,22 @@ superadminRouter.get(
         throw new AppError('Tenant not found', 404);
       }
 
-      // Get revenue for this tenant
-      const revenueAgg = await prisma?.reservation.aggregate({
+      // Get revenue for this tenant (rate x nights; no totalPrice column)
+      const revenueRows = await prisma?.reservation.findMany({
         where: { tenantId: id },
-        _sum: { totalPrice: true },
-        _count: { id: true },
-      }) || { _sum: { totalPrice: 0 }, _count: { id: 0 } };
+        select: { rate: true, checkInDate: true, checkOutDate: true },
+      }) || [];
 
       res.json({
         success: true,
         data: {
           ...tenant,
           statistics: {
-            totalRevenue: revenueAgg._sum.totalPrice || 0,
-            totalReservations: revenueAgg._count.id,
+            totalRevenue:
+              Math.round(
+                revenueRows.reduce((sum, r) => sum + reservationRevenue(r), 0) * 100
+              ) / 100,
+            totalReservations: revenueRows.length,
           },
         },
       });

@@ -4,6 +4,7 @@
  */
 
 import { prisma } from './prisma';
+import { reservationRevenue } from './publicCheckout';
 import { AppError } from '../middleware/errorHandler';
 
 export interface DashboardMetrics {
@@ -85,11 +86,12 @@ export async function getSuperadminDashboardMetrics(): Promise<DashboardMetrics>
       prisma?.reservation.count() || 0,
     ]);
 
-    // Simple revenue sum - single query
-    const revenueResult = await prisma?.reservation.aggregate({
-      _sum: { totalPrice: true },
-    }) || { _sum: { totalPrice: 0 } };
-    const totalRevenue = revenueResult._sum.totalPrice || 0;
+    // Revenue = nightly rate x nights (Reservation has no totalPrice column)
+    const revenueRows = await prisma?.reservation.findMany({
+      select: { rate: true, checkInDate: true, checkOutDate: true },
+    }) || [];
+    const totalRevenue =
+      Math.round(revenueRows.reduce((sum, r) => sum + reservationRevenue(r), 0) * 100) / 100;
 
     const now = new Date();
     const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -164,33 +166,32 @@ export async function getSuperadminDashboardMetrics(): Promise<DashboardMetrics>
  */
 export async function getTopTenantsByRevenue(limit: number = 5) {
   try {
-    // Use Prisma's groupBy to calculate revenue per tenant efficiently
-    const tenantRevenue = await prisma?.reservation.groupBy({
-      by: ['tenantId'],
-      _sum: {
-        totalPrice: true,
-      },
-      orderBy: {
-        _sum: {
-          totalPrice: 'desc',
-        },
-      },
-      take: limit,
+    // Revenue = nightly rate x nights, aggregated per tenant in JS
+    const revenueRows = await prisma?.reservation.findMany({
+      select: { tenantId: true, rate: true, checkInDate: true, checkOutDate: true },
     }) || [];
 
+    const revenueByTenant = new Map<string, number>();
+    for (const r of revenueRows) {
+      revenueByTenant.set(r.tenantId, (revenueByTenant.get(r.tenantId) || 0) + reservationRevenue(r));
+    }
+
     const topTenants = await Promise.all(
-      tenantRevenue.map(async (tr: any) => {
-        const tenant = await prisma?.tenant.findUnique({
-          where: { id: tr.tenantId },
-          select: { id: true, name: true, slug: true },
-        });
-        return {
-          tenantId: tr.tenantId,
-          tenantName: tenant?.name || 'Unknown',
-          tenantSlug: tenant?.slug,
-          totalRevenue: Math.round((tr._sum.totalPrice || 0) * 100) / 100,
-        };
-      })
+      [...revenueByTenant.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit)
+        .map(async ([tenantId, revenue]) => {
+          const tenant = await prisma?.tenant.findUnique({
+            where: { id: tenantId },
+            select: { id: true, name: true, slug: true },
+          });
+          return {
+            tenantId,
+            tenantName: tenant?.name || 'Unknown',
+            tenantSlug: tenant?.slug,
+            totalRevenue: Math.round(revenue * 100) / 100,
+          };
+        })
     );
 
     return topTenants;
