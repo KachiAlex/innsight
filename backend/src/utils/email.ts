@@ -7,6 +7,11 @@ export interface EmailOptions {
   html: string;
   text?: string;
   from?: string;
+  // When set, the send is recorded in notification_logs and (optionally)
+  // a tracking pixel is injected for open-rate metrics.
+  tenantId?: string;
+  template?: string;
+  trackOpens?: boolean;
 }
 
 export interface ReservationEmailData {
@@ -72,21 +77,65 @@ const initializeTransporter = () => {
   return transporter;
 };
 
+const trackPixelHtml = (logId: string): string => {
+  const baseUrl = (
+    process.env.PUBLIC_API_BASE_URL ||
+    process.env.PUBLIC_PORTAL_BASE_URL ||
+    'http://localhost:3061'
+  ).replace(/\/+$/, '');
+  return `<img src="${baseUrl}/api/public/track/open/${logId}.gif" width="1" height="1" alt="" style="display:none" />`;
+};
+
+const writeNotificationLog = async (
+  options: EmailOptions,
+  status: 'sent' | 'failed'
+): Promise<string | null> => {
+  if (!options.tenantId || !prisma) return null;
+  try {
+    const log = await prisma.notificationLog.create({
+      data: {
+        tenantId: options.tenantId,
+        channel: 'email',
+        recipient: Array.isArray(options.to) ? options.to.join(', ') : options.to,
+        subject: options.subject,
+        template: options.template,
+        status,
+      },
+    });
+    return log.id;
+  } catch (error) {
+    console.warn('Failed to write notification log:', error);
+    return null;
+  }
+};
+
 export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
+  // Create the log row first so the pixel URL is stable even if send fails.
+  const logId = await writeNotificationLog(options, 'sent');
+
   try {
     const emailTransporter = initializeTransporter();
     if (!emailTransporter) {
       console.warn('Email transporter not initialized. Skipping email send.');
+      if (logId) {
+        await prisma.notificationLog
+          .update({ where: { id: logId }, data: { status: 'failed' } })
+          .catch(() => {});
+      }
       return false;
     }
 
     const from = options.from || process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@innsight.com';
+    const html =
+      options.trackOpens !== false && logId
+        ? options.html + trackPixelHtml(logId)
+        : options.html;
 
     const mailOptions = {
       from,
       to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
       subject: options.subject,
-      html: options.html,
+      html,
       text: options.text || options.html.replace(/<[^>]*>/g, ''),
     };
 
@@ -95,6 +144,11 @@ export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
     return true;
   } catch (error: any) {
     console.error('Failed to send email:', error);
+    if (logId) {
+      await prisma.notificationLog
+        .update({ where: { id: logId }, data: { status: 'failed' } })
+        .catch(() => {});
+    }
     return false;
   }
 };

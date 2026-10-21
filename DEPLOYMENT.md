@@ -1,298 +1,84 @@
-# InnSight PMS Deployment Guide
+# InnSight PMS Deployment Guide — VPS (Docker)
 
-## Firebase Deployment
+InnSight is deployed as Docker containers on the VPS at `67.211.210.8`.
+Everything runs on PostgreSQL via Prisma — no external database service needed.
 
-This guide covers deploying InnSight PMS to Firebase Hosting (frontend) and Firebase Functions (backend).
+## Architecture
 
-## Prerequisites
+| Service | Container | Exposure |
+| ------- | --------- | -------- |
+| `web` (nginx + React SPA) | `innsight-web` | `0.0.0.0:3061` (public) |
+| `api` (Express + Socket.IO) | `innsight-api` | `127.0.0.1:3060` (localhost only) |
+| `db` (PostgreSQL 16) | `innsight-db` | internal network only |
+| `migrate` (one-shot) | `innsight-migrate` | runs `prisma migrate deploy`, then exits |
 
-1. Firebase CLI installed: `npm install -g firebase-tools`
-2. Firebase account: https://console.firebase.google.com/
-3. Node.js 18+ installed
+The frontend nginx proxies `/api/*` and `/socket.io/*` to the api container, so the
+SPA and API are same-origin (no CORS issues, cookies/credentials work).
 
-## Setup Steps
-
-### 1. Initialize Firebase Project
-
-```bash
-# Login to Firebase
-firebase login
-
-# Initialize Firebase (if not already done)
-firebase init
-
-# Select:
-# - Hosting: Configure files for Firebase Hosting
-# - Functions: Configure a Cloud Functions directory
-```
-
-### 2. Create Firebase Project
-
-1. Go to https://console.firebase.google.com/
-2. Click "Add project"
-3. Enter project name: `innsight-pms` (or your preferred name)
-4. Enable Google Analytics (optional)
-5. Copy the project ID
-
-### 3. Update Firebase Configuration
-
-Update `.firebaserc` with your project ID:
-
-```json
-{
-  "projects": {
-    "default": "your-project-id"
-  }
-}
-```
-
-### 4. Environment Variables
-
-#### Frontend Environment Variables
-
-Create `frontend/.env.production`:
-
-```env
-VITE_API_URL=https://your-region-your-project-id.cloudfunctions.net/api
-```
-
-#### Backend Environment Variables
-
-For Firebase Functions, set environment variables:
+## SSH access
 
 ```bash
-firebase functions:config:set \
-  database.url="your-postgresql-connection-string" \
-  jwt.secret="your-jwt-secret" \
-  jwt.refresh_secret="your-refresh-secret"
+ssh -i ~/.ssh/innsight_vps root@67.211.210.8
 ```
 
-Or use Firebase Functions environment variables (recommended):
+## Deploy
+
+From the repo root on the dev machine (Git Bash):
 
 ```bash
-firebase functions:secrets:set DATABASE_URL
-firebase functions:secrets:set JWT_SECRET
-firebase functions:secrets:set JWT_REFRESH_SECRET
+bash deploy-vps.sh
 ```
 
-### 5. Database Setup
+The script:
 
-#### Option A: Use Cloud SQL (PostgreSQL)
+1. Tars the repo (excluding `node_modules`, `dist`, `.env`, etc.)
+2. Copies it to `/opt/innsight` on the VPS
+3. Generates `/opt/innsight/.env` with fresh `POSTGRES_PASSWORD`, `JWT_SECRET`,
+   `JWT_REFRESH_SECRET` on first run
+4. Runs `docker compose up -d --build` (runs migrations, then starts api + web)
 
-1. Go to Google Cloud Console
-2. Create a Cloud SQL PostgreSQL instance
-3. Get connection string
-4. Update environment variables
-
-#### Option B: Use External PostgreSQL (Railway, Supabase, etc.)
-
-1. Set up PostgreSQL database on external service
-2. Get connection string
-3. Update environment variables
-
-### 6. Build Frontend
+## Manual operations on the server
 
 ```bash
-cd frontend
-npm install
-npm run build
+cd /opt/innsight
+
+docker compose ps                 # status
+docker compose logs -f api        # api logs
+docker compose logs -f db         # db logs
+docker compose restart api        # restart api
+docker compose up -d --build      # rebuild + redeploy
+
+# Run migrations manually
+docker compose run --rm migrate
+
+# Postgres shell
+docker compose exec db psql -U innsight -d innsight
+
+# Create the IITECH superadmin account (once the api is up)
+curl -X POST http://localhost:3060/api/auth/create-admin
 ```
 
-### 7. Deploy
+## URLs
 
-#### Deploy Frontend (Hosting)
+- App: `http://67.211.210.8:3061`
+- API health: `http://67.211.210.8:3061/api/health`
+- Tenant portal: `http://67.211.210.8:3061/<tenant-slug>`
 
-```bash
-firebase deploy --only hosting
-```
+## Environment variables
 
-#### Deploy Backend (Functions)
+All secrets live in `/opt/innsight/.env` (generated on first deploy, `chmod 600`):
 
-```bash
-firebase deploy --only functions
-```
+| Variable | Purpose |
+| -------- | ------- |
+| `POSTGRES_PASSWORD` | Postgres `innsight` user password |
+| `JWT_SECRET` / `JWT_REFRESH_SECRET` | token signing |
+| `CORS_ORIGIN` | allowed browser origins |
+| `PUBLIC_PORTAL_BASE_URL` | base URL embedded in public portal links |
 
-#### Deploy Both
+## Post-deployment checklist
 
-```bash
-firebase deploy
-```
-
-## Vercel Deployment (Recommended)
-
-This guide covers deploying InnSight PMS to Vercel with both frontend and backend.
-
-### Prerequisites
-
-1. Vercel CLI installed: `npm install -g vercel`
-2. Vercel account: https://vercel.com/
-3. Node.js 18+ installed
-4. PostgreSQL database (Vercel Postgres or external)
-
-### Setup Steps
-
-#### 1. Initialize Vercel Project
-
-```bash
-# Login to Vercel
-vercel login
-
-# Initialize Vercel (from project root)
-vercel
-
-# Select:
-# - Link to existing project or create new
-# - Confirm project settings
-```
-
-#### 2. Configure Environment Variables
-
-In Vercel dashboard (Settings > Environment Variables) or via CLI:
-
-```bash
-# Backend variables
-vercel env add DATABASE_URL
-vercel env add JWT_SECRET
-vercel env add JWT_REFRESH_SECRET
-vercel env add CORS_ORIGIN
-
-# Frontend variables
-vercel env add VITE_API_URL
-```
-
-Required environment variables:
-
-```env
-DATABASE_URL=postgresql://user:password@host:port/database
-JWT_SECRET=your-secret-key
-JWT_REFRESH_SECRET=your-refresh-secret-key
-CORS_ORIGIN=https://your-frontend-url.vercel.app
-VITE_API_URL=https://your-backend-url.vercel.app/api
-```
-
-#### 3. Database Setup
-
-##### Option A: Vercel Postgres (Recommended)
-
-1. Go to Vercel dashboard
-2. Create new Postgres database
-3. Copy connection string
-4. Add to environment variables as `DATABASE_URL`
-
-##### Option B: External PostgreSQL (Railway, Supabase, etc.)
-
-1. Set up PostgreSQL database on external service
-2. Get connection string
-3. Add to environment variables as `DATABASE_URL`
-
-#### 4. Build and Deploy
-
-```bash
-# Deploy to preview
-vercel
-
-# Deploy to production
-vercel --prod
-```
-
-### Project Structure
-
-The project is configured as a monorepo with:
-- `frontend/` - React application (static build)
-- `backend/` - Express API (serverless function)
-
-### Vercel Configuration
-
-`vercel.json` at the root defines:
-- Frontend build using `@vercel/static-build`
-- Backend API function using `@vercel/node`
-- Routes to direct `/api/*` to backend and other paths to frontend
-
-### Important Notes
-
-- **WebSocket Support**: Vercel serverless functions do not support WebSockets. The backend's WebSocket functionality will not work in Vercel deployment. Consider using a separate service like Railway or Render for real-time features if needed.
-- **File Uploads**: Serverless functions have size limits. For large file uploads, consider using Vercel Blob or external storage.
-- **Database Connections**: Use connection pooling for better performance in serverless environments.
-
-### Alternative Backend Deployment Options
-
-If you need WebSocket support or prefer a traditional server deployment:
-
-### Option 1: Railway
-
-1. Sign up at https://railway.app/
-2. Create new project
-3. Add PostgreSQL database
-4. Connect GitHub repository
-5. Set environment variables
-6. Deploy automatically
-
-### Option 2: Render
-
-1. Sign up at https://render.com/
-2. Create new Web Service
-3. Connect GitHub repository
-4. Set build command: `cd backend && npm install && npm run build`
-5. Set start command: `cd backend && npm start`
-6. Add PostgreSQL database
-7. Set environment variables
-
-### Option 3: Firebase Functions
-
-1. Follow Firebase deployment guide above
-2. Note: Firebase Functions have limitations for Express apps with PostgreSQL
-
-## Environment Variables Reference
-
-### Backend Required Variables
-
-```env
-DATABASE_URL=postgresql://user:password@host:port/database
-JWT_SECRET=your-secret-key
-JWT_REFRESH_SECRET=your-refresh-secret-key
-PORT=3001
-NODE_ENV=production
-```
-
-### Frontend Required Variables
-
-```env
-VITE_API_URL=https://your-api-url.com/api
-```
-
-## Post-Deployment Checklist
-
-- [ ] Database migrations run successfully
-- [ ] Environment variables configured
-- [ ] API endpoints accessible
-- [ ] Frontend can connect to backend
-- [ ] File uploads working (check storage configuration)
-- [ ] Authentication working
-- [ ] CORS configured correctly
-
-## Troubleshooting
-
-### Frontend can't connect to backend
-
-- Check `VITE_API_URL` in frontend environment
-- Verify CORS settings in backend
-- Check Firebase Functions logs: `firebase functions:log`
-
-### Database connection issues
-
-- Verify `DATABASE_URL` is correct
-- Check database is accessible from Firebase Functions
-- Ensure IP whitelist includes Firebase Functions IPs
-
-### Build errors
-
-- Ensure Node.js version matches (18+)
-- Clear node_modules and reinstall: `rm -rf node_modules && npm install`
-- Check TypeScript compilation errors
-
-## Monitoring
-
-- Firebase Console: https://console.firebase.google.com/
-- Functions Logs: `firebase functions:log`
-- Hosting Analytics: Available in Firebase Console
-
+- [ ] `docker compose ps` shows `innsight-db` healthy, `innsight-api` and `innsight-web` up
+- [ ] `curl http://localhost:3060/api/health` on the VPS returns `{ "status": "ok" }`
+- [ ] `http://67.211.210.8:3061` loads the SPA
+- [ ] Create superadmin, log in, create a tenant, verify dashboard loads
+- [ ] Payment gateway keys (Paystack/Flutterwave/Stripe) configured per tenant in Settings

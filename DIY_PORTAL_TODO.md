@@ -71,5 +71,5 @@
 
 ## Notes
 - All backend work should remain tenant-aware using slug → tenantId resolution.
-- Favor prisma reads for catalog/availability; fall back to Firestore only where needed.
+- Favor prisma reads for catalog/availability; use Prisma/PostgreSQL for all portal reads.
 - Keep payment flows PCI compliant via tokenization; never store PAN data.

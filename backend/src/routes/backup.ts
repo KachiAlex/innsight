@@ -1,253 +1,271 @@
-import express, { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
-import * as backupManagement from '../utils/backupManagement';
+import { Router, Request, Response } from 'express';
+import path from 'path';
+import fs from 'fs';
+import { z } from 'zod';
+import { authenticate, requireRole } from '../middleware/auth';
+import { prisma } from '../utils/prisma';
+import {
+  BACKUP_DIR,
+  createAndRunBackup,
+  deleteBackupFile,
+  runPgRestore,
+} from '../utils/backupRunner';
 
 const router = Router();
 
-// Middleware to verify superadmin
-router.use(requireRole('iitech_admin'));
+router.use(authenticate, requireRole('iitech_admin'));
 
-// Get backups
-router.get('/', async (req: Request, res: Response) => {
-  try {
-    const { tenantId, limit = 50, offset = 0 } = req.query;
+const serializeBackup = (b: any) => ({
+  id: b.id,
+  name: b.name,
+  timestamp: b.createdAt.toISOString(),
+  size: b.size,
+  status: b.status,
+  dataTypes: b.dataTypes,
+  tenantId: b.tenantId ?? undefined,
+});
 
-    const backups = await backupManagement.getBackups(
-      tenantId as string,
-      parseInt(limit as string),
-      parseInt(offset as string)
-    );
+const serializeSchedule = (s: any) => ({
+  id: s.id,
+  name: s.name,
+  frequency: s.frequency,
+  time: s.time,
+  retentionDays: s.retentionDays,
+  enabled: s.enabled,
+  lastRun: s.lastRun?.toISOString(),
+  nextRun: s.nextRun?.toISOString(),
+});
 
-    res.json({
-      success: true,
-      data: backups,
-      count: backups.length,
+const nextRunFor = (frequency: string, time: string) => {
+  const [hours, minutes] = time.split(':').map(Number);
+  const next = new Date();
+  next.setHours(hours || 2, minutes || 0, 0, 0);
+  if (next <= new Date()) next.setDate(next.getDate() + 1);
+  if (frequency === 'weekly') next.setDate(next.getDate() + 7);
+  if (frequency === 'monthly') next.setMonth(next.getMonth() + 1);
+  return next;
+};
+
+// ===== Backups =====
+
+// GET /api/superadmin/backups
+router.get('/backups', async (_req: Request, res: Response) => {
+  const backups = await prisma.backupRecord.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  });
+  res.json({ success: true, data: backups.map(serializeBackup) });
+});
+
+// POST /api/superadmin/backups — run pg_dump now
+router.post('/backups', async (req: Request, res: Response) => {
+  const data = z
+    .object({
+      name: z.string().optional(),
+      dataTypes: z.array(z.string()).optional(),
+      tenantId: z.string().optional(),
+    })
+    .parse(req.body);
+
+  const record = await createAndRunBackup({
+    name: data.name,
+    dataTypes: data.dataTypes,
+    tenantId: data.tenantId ?? null,
+    createdBy: (req as any).user?.id ?? null,
+  });
+
+  res.status(201).json({ success: true, data: serializeBackup(record) });
+});
+
+// GET /api/superadmin/backups/:backupId/download
+router.get('/backups/:backupId/download', async (req: Request, res: Response) => {
+  const backup = await prisma.backupRecord.findUnique({
+    where: { id: req.params.backupId },
+  });
+  if (!backup) {
+    res.status(404).json({ success: false, error: { message: 'Backup not found' } });
+    return;
+  }
+  if (backup.status !== 'completed' || !backup.storageKey) {
+    res.status(400).json({ success: false, error: { message: 'Backup is not ready' } });
+    return;
+  }
+
+  const filePath = path.join(BACKUP_DIR, path.basename(backup.storageKey));
+  if (!fs.existsSync(filePath)) {
+    res.status(404).json({
+      success: false,
+      error: { message: 'Backup file is missing from storage' },
     });
-  } catch (error: any) {
-    console.error('Error fetching backups:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+    return;
   }
+
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${backup.name.replace(/[^\w.-]+/g, '_')}.dump"`
+  );
+  fs.createReadStream(filePath).pipe(res);
 });
 
-// Get single backup
-router.get('/:backupId', async (req: Request, res: Response) => {
-  try {
-    const { backupId } = req.params;
-    const backup = await backupManagement.getBackup(backupId);
-
-    if (!backup) {
-      return res.status(404).json({ success: false, error: { message: 'Backup not found' } });
-    }
-
-    res.json({ success: true, data: backup });
-  } catch (error: any) {
-    console.error('Error fetching backup:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+// POST /api/superadmin/backups/:backupId/restore
+router.post('/backups/:backupId/restore', async (req: Request, res: Response) => {
+  const backup = await prisma.backupRecord.findUnique({
+    where: { id: req.params.backupId },
+  });
+  if (!backup) {
+    res.status(404).json({ success: false, error: { message: 'Backup not found' } });
+    return;
   }
-});
+  if (backup.status !== 'completed' || !backup.storageKey) {
+    res.status(400).json({ success: false, error: { message: 'Backup is not restorable' } });
+    return;
+  }
 
-// Create backup
-router.post('/', async (req: Request, res: Response) => {
-  try {
-    const { name, tenantId, type, retentionDays = 30, expiresAt } = req.body;
-
-    if (!name || !type) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'name and type are required' },
-      });
-    }
-
-    const backup = await backupManagement.createBackup({
-      name,
-      tenantId,
-      type: type as backupManagement.BackupType,
-      scheduledBackup: false,
-      retentionDays,
-      expiresAt: expiresAt || new Date(Date.now() + retentionDays * 86400000).toISOString(),
-      fileLocation: `s3://innsight-backups/${tenantId ? `tenants/${tenantId}` : 'platform'}/${Date.now()}-${type}.tar.gz`,
+  const filePath = path.join(BACKUP_DIR, path.basename(backup.storageKey));
+  if (!fs.existsSync(filePath)) {
+    res.status(404).json({
+      success: false,
+      error: { message: 'Backup file is missing from storage' },
     });
-
-    res.status(201).json({ success: true, data: backup });
-  } catch (error: any) {
-    console.error('Error creating backup:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+    return;
   }
+
+  runPgRestore(filePath).catch((err) => {
+    console.error(`Restore of backup ${backup.id} failed:`, err);
+  });
+
+  res.json({
+    success: true,
+    data: { message: 'Restore started', backupId: backup.id },
+  });
 });
 
-// Delete backup
-router.delete('/:backupId', async (req: Request, res: Response) => {
-  try {
-    const { backupId } = req.params;
-    const deleted = await backupManagement.deleteBackup(backupId);
-
-    if (!deleted) {
-      return res.status(404).json({ success: false, error: { message: 'Backup not found' } });
-    }
-
-    res.json({ success: true, data: { message: 'Backup deleted successfully' } });
-  } catch (error: any) {
-    console.error('Error deleting backup:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+// DELETE /api/superadmin/backups/:backupId
+router.delete('/backups/:backupId', async (req: Request, res: Response) => {
+  const backup = await prisma.backupRecord.findUnique({
+    where: { id: req.params.backupId },
+  });
+  if (!backup) {
+    res.status(404).json({ success: false, error: { message: 'Backup not found' } });
+    return;
   }
+
+  deleteBackupFile(backup.storageKey);
+  await prisma.backupRecord.delete({ where: { id: backup.id } });
+
+  res.json({ success: true, message: 'Backup deleted' });
 });
 
-// Get backup schedules
-router.get('/schedules/list', async (req: Request, res: Response) => {
-  try {
-    const { tenantId } = req.query;
-    const schedules = await backupManagement.getBackupSchedules(tenantId as string);
+// GET /api/superadmin/backup-metrics
+router.get('/backup-metrics', async (_req: Request, res: Response) => {
+  const [backups, schedules] = await Promise.all([
+    prisma.backupRecord.findMany({
+      select: { status: true, size: true, createdAt: true },
+    }),
+    prisma.backupSchedule.count(),
+  ]);
 
-    res.json({ success: true, data: schedules });
-  } catch (error: any) {
-    console.error('Error fetching schedules:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  const completed = backups.filter((b) => b.status === 'completed');
+  const failed = backups.filter((b) => b.status === 'failed');
+  const lastBackup = [...backups].sort(
+    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+  )[0];
+
+  res.json({
+    success: true,
+    data: {
+      totalBackups: backups.length,
+      totalSize: backups.reduce((sum, b) => sum + b.size, 0),
+      lastBackupTime: lastBackup?.createdAt.toISOString(),
+      successRate: backups.length ? Math.round((completed.length / backups.length) * 100) : 0,
+      failedBackups: failed.length,
+      schedules,
+    },
+  });
 });
 
-// Get single backup schedule
-router.get('/schedules/:scheduleId', async (req: Request, res: Response) => {
-  try {
-    const { scheduleId } = req.params;
-    const schedule = await backupManagement.getBackupSchedule(scheduleId);
+// ===== Backup schedules =====
 
-    if (!schedule) {
-      return res.status(404).json({ success: false, error: { message: 'Schedule not found' } });
-    }
-
-    res.json({ success: true, data: schedule });
-  } catch (error: any) {
-    console.error('Error fetching schedule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+// GET /api/superadmin/backup-schedules
+router.get('/backup-schedules', async (_req: Request, res: Response) => {
+  const schedules = await prisma.backupSchedule.findMany({
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json({ success: true, data: schedules.map(serializeSchedule) });
 });
 
-// Create backup schedule
-router.post('/schedules', async (req: Request, res: Response) => {
-  try {
-    const { name, tenantId, frequency, time, backupType, retentionDays = 30 } = req.body;
+// POST /api/superadmin/backup-schedules
+router.post('/backup-schedules', async (req: Request, res: Response) => {
+  const data = z
+    .object({
+      name: z.string().min(1),
+      frequency: z.enum(['daily', 'weekly', 'monthly']),
+      time: z.string().regex(/^\d{2}:\d{2}$/).default('02:00'),
+      retentionDays: z.number().int().min(1).max(3650).default(30),
+      enabled: z.boolean().optional(),
+    })
+    .parse(req.body);
 
-    if (!name || !frequency || !time || !backupType) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'name, frequency, time, and backupType are required' },
-      });
-    }
+  const schedule = await prisma.backupSchedule.create({
+    data: {
+      name: data.name,
+      frequency: data.frequency,
+      time: data.time,
+      retentionDays: data.retentionDays,
+      enabled: data.enabled ?? true,
+      nextRun: nextRunFor(data.frequency, data.time),
+    },
+  });
 
-    const schedule = await backupManagement.createBackupSchedule({
-      name,
-      tenantId,
-      enabled: true,
-      frequency: frequency as backupManagement.BackupSchedule['frequency'],
-      time,
-      backupType: backupType as backupManagement.BackupType,
-      retentionDays,
-      maxBackups: 30,
-      notifyOnFailure: true,
-    });
-
-    res.status(201).json({ success: true, data: schedule });
-  } catch (error: any) {
-    console.error('Error creating schedule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  res.status(201).json({ success: true, data: serializeSchedule(schedule) });
 });
 
-// Update backup schedule
-router.patch('/schedules/:scheduleId', async (req: Request, res: Response) => {
-  try {
-    const { scheduleId } = req.params;
-    const updates = req.body;
-
-    const updated = await backupManagement.updateBackupSchedule(scheduleId, updates);
-
-    if (!updated) {
-      return res.status(404).json({ success: false, error: { message: 'Schedule not found' } });
-    }
-
-    res.json({ success: true, data: updated });
-  } catch (error: any) {
-    console.error('Error updating schedule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+// PATCH /api/superadmin/backup-schedules/:scheduleId
+router.patch('/backup-schedules/:scheduleId', async (req: Request, res: Response) => {
+  const existing = await prisma.backupSchedule.findUnique({
+    where: { id: req.params.scheduleId },
+  });
+  if (!existing) {
+    res.status(404).json({ success: false, error: { message: 'Schedule not found' } });
+    return;
   }
+
+  const data = z
+    .object({
+      name: z.string().min(1).optional(),
+      frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
+      time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+      retentionDays: z.number().int().min(1).max(3650).optional(),
+      enabled: z.boolean().optional(),
+    })
+    .parse(req.body);
+
+  const schedule = await prisma.backupSchedule.update({
+    where: { id: existing.id },
+    data: {
+      ...data,
+      ...((data.frequency || data.time) && {
+        nextRun: nextRunFor(data.frequency || existing.frequency, data.time || existing.time),
+      }),
+    },
+  });
+
+  res.json({ success: true, data: serializeSchedule(schedule) });
 });
 
-// Delete backup schedule
-router.delete('/schedules/:scheduleId', async (req: Request, res: Response) => {
-  try {
-    const { scheduleId } = req.params;
-    const deleted = await backupManagement.deleteBackupSchedule(scheduleId);
-
-    if (!deleted) {
-      return res.status(404).json({ success: false, error: { message: 'Schedule not found' } });
-    }
-
-    res.json({ success: true, data: { message: 'Schedule deleted successfully' } });
-  } catch (error: any) {
-    console.error('Error deleting schedule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+// DELETE /api/superadmin/backup-schedules/:scheduleId
+router.delete('/backup-schedules/:scheduleId', async (req: Request, res: Response) => {
+  const existing = await prisma.backupSchedule.findUnique({
+    where: { id: req.params.scheduleId },
+  });
+  if (!existing) {
+    res.status(404).json({ success: false, error: { message: 'Schedule not found' } });
+    return;
   }
-});
 
-// Create restore request
-router.post('/restore', async (req: Request, res: Response) => {
-  try {
-    const { backupId, tenantId } = req.body;
-    const userId = (req as any).user?.id;
-
-    if (!backupId) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'backupId is required' },
-      });
-    }
-
-    const restoreRequest = await backupManagement.createRestoreRequest({
-      backupId,
-      tenantId,
-      requestedBy: userId || 'system',
-    });
-
-    res.status(201).json({ success: true, data: restoreRequest });
-  } catch (error: any) {
-    console.error('Error creating restore request:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// Get restore requests
-router.get('/restore/history', async (req: Request, res: Response) => {
-  try {
-    const { tenantId, limit = 50, offset = 0 } = req.query;
-
-    const requests = await backupManagement.getRestoreRequests(
-      tenantId as string,
-      parseInt(limit as string),
-      parseInt(offset as string)
-    );
-
-    res.json({
-      success: true,
-      data: requests,
-      count: requests.length,
-    });
-  } catch (error: any) {
-    console.error('Error fetching restore requests:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// Get backup statistics
-router.get('/stats/overview', async (req: Request, res: Response) => {
-  try {
-    const { tenantId } = req.query;
-    const stats = await backupManagement.getBackupStats(tenantId as string);
-
-    res.json({ success: true, data: stats });
-  } catch (error: any) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  await prisma.backupSchedule.delete({ where: { id: existing.id } });
+  res.json({ success: true, message: 'Schedule deleted' });
 });
 
 export default router;

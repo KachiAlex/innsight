@@ -152,7 +152,7 @@ These routes accept unsigned requests from the gateways and apply HMAC validatio
 
 **Configuration Checklist**
 1. Set the webhook URL per tenant in the Paystack/Flutterwave dashboard, pointing to the public route.
-2. Ensure tenant payment settings in Firestore include the correct public & secret keys (or rely on global env defaults).
+2. Ensure tenant paymentSettings (Postgres JSON field) include the correct public & secret keys (or rely on global env defaults).
 3. For Paystack, signatures are validated with SHA512 HMAC using the secret key and UTF-8 raw request body. Header: `x-paystack-signature`.
 4. For Flutterwave, signatures use SHA256 HMAC with header `verif-hash`.
 5. The webhook handler reconciles checkout intents, finalizes reservations, and creates folios/payments automatically.
@@ -255,7 +255,7 @@ if (hash !== req.headers['verif-hash']) {
 
 ## ✅ Test Coverage
 
-- `tests/publicPayments/publicPaymentsWebhook.test.ts` mocks Firestore intent lookups, tenant payment settings, and gateway verification to exercise:
+- `tests/publicPayments/publicPaymentsWebhook.test.ts` mocks checkout-intent lookups, tenant payment settings, and gateway verification to exercise:
   1. Successful Paystack webhook reconciliation with valid signatures.
   2. Signature rejection paths to ensure invalid requests are discarded before touching persistence.
   3. Flutterwave amount-mismatch handling, verifying that intents are marked failed when verification data diverges.

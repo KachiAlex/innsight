@@ -13,6 +13,31 @@ export interface TenantQuickAction {
   performedBy?: string;
 }
 
+// Expected failures (e.g. batch op on a missing tenant) are warnings, not errors
+const logActionError = (action: string, error: unknown) => {
+  const code = (error as { code?: string })?.code;
+  if (code === 'P2025' || code === 'P2003') {
+    console.warn(`Tenant ${action}: ${(error as Error)?.message || error}`);
+    return;
+  }
+  console.error(`Error in tenant ${action}:`, error);
+};
+
+const mergeTenantMetadata = async (
+  tenantId: string,
+  patch: Record<string, unknown>
+) => {
+  const current = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { metadata: true },
+  });
+  const existing =
+    current?.metadata && typeof current.metadata === 'object'
+      ? (current.metadata as Record<string, unknown>)
+      : {};
+  return { ...existing, ...patch, lastActionAt: new Date().toISOString() };
+};
+
 // Suspend a tenant (disable all access)
 export const suspendTenant = async (tenantId: string, reason?: string, userId?: string) => {
   try {
@@ -20,10 +45,10 @@ export const suspendTenant = async (tenantId: string, reason?: string, userId?: 
       where: { id: tenantId },
       data: {
         subscriptionStatus: 'suspended',
-        metadata: {
+        metadata: await mergeTenantMetadata(tenantId, {
           suspendedAt: new Date().toISOString(),
           suspensionReason: reason || 'Admin suspension',
-        },
+        }),
       },
     });
 
@@ -41,7 +66,7 @@ export const suspendTenant = async (tenantId: string, reason?: string, userId?: 
 
     return tenant;
   } catch (error) {
-    console.error('Error suspending tenant:', error);
+    logActionError('suspend', error);
     throw error;
   }
 };
@@ -53,9 +78,9 @@ export const reactivateTenant = async (tenantId: string, userId?: string) => {
       where: { id: tenantId },
       data: {
         subscriptionStatus: 'active',
-        metadata: {
+        metadata: await mergeTenantMetadata(tenantId, {
           reactivatedAt: new Date().toISOString(),
-        },
+        }),
       },
     });
 
@@ -72,7 +97,7 @@ export const reactivateTenant = async (tenantId: string, userId?: string) => {
 
     return tenant;
   } catch (error) {
-    console.error('Error reactivating tenant:', error);
+    logActionError('reactivate', error);
     throw error;
   }
 };
@@ -85,9 +110,9 @@ export const deleteTenant = async (tenantId: string, userId?: string) => {
       where: { id: tenantId },
       data: {
         subscriptionStatus: 'deleted',
-        metadata: {
+        metadata: await mergeTenantMetadata(tenantId, {
           deletedAt: new Date().toISOString(),
-        },
+        }),
       },
     });
 
@@ -104,7 +129,7 @@ export const deleteTenant = async (tenantId: string, userId?: string) => {
 
     return tenant;
   } catch (error) {
-    console.error('Error deleting tenant:', error);
+    logActionError('delete', error);
     throw error;
   }
 };
@@ -137,9 +162,13 @@ export const getTenantQuickStatus = async (tenantId: string) => {
   }
 };
 
+type BatchActionResult =
+  | { tenantId: string; success: true; tenant: unknown }
+  | { tenantId: string; success: false; error: string };
+
 // Batch actions
 export const batchSuspendTenants = async (tenantIds: string[], reason?: string, userId?: string) => {
-  const results = [];
+  const results: BatchActionResult[] = [];
 
   for (const tenantId of tenantIds) {
     try {
@@ -154,7 +183,7 @@ export const batchSuspendTenants = async (tenantIds: string[], reason?: string, 
 };
 
 export const batchReactivateTenants = async (tenantIds: string[], userId?: string) => {
-  const results = [];
+  const results: BatchActionResult[] = [];
 
   for (const tenantId of tenantIds) {
     try {

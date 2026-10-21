@@ -9,6 +9,10 @@ export type GatewayCredentialSet = {
   paystackSecretKey?: string;
   flutterwavePublicKey?: string;
   flutterwaveSecretKey?: string;
+  monnifyApiKey?: string;
+  monnifySecretKey?: string;
+  monnifyContractCode?: string;
+  monnifyBaseUrl?: string;
   stripeSecretKey?: string;
 };
 
@@ -60,6 +64,8 @@ class PaymentGatewayService {
   private paystackClient: Paystack | null = null;
   private flutterwaveClient: Flutterwave | null = null;
   private stripeClient: Stripe | null = null;
+  // Monnify bearer tokens keyed by API key (tokens are credential-scoped)
+  private monnifyTokens = new Map<string, { token: string; expiresAt: number }>();
 
   constructor() {
     const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
@@ -109,6 +115,58 @@ class PaymentGatewayService {
     throw new AppError('Stripe is not configured. Please set STRIPE_SECRET_KEY.', 500);
   }
 
+  private getMonnifyCredentials(credentials?: GatewayCredentialSet) {
+    const apiKey = credentials?.monnifyApiKey || process.env.MONNIFY_API_KEY;
+    const secretKey = credentials?.monnifySecretKey || process.env.MONNIFY_SECRET_KEY;
+    const contractCode =
+      credentials?.monnifyContractCode || process.env.MONNIFY_CONTRACT_CODE;
+    const baseUrl =
+      credentials?.monnifyBaseUrl ||
+      process.env.MONNIFY_BASE_URL ||
+      'https://sandbox.monnify.com';
+
+    if (!apiKey || !secretKey || !contractCode) {
+      throw new AppError(
+        'Monnify is not configured. Please set MONNIFY_API_KEY, MONNIFY_SECRET_KEY and MONNIFY_CONTRACT_CODE.',
+        500
+      );
+    }
+    return { apiKey, secretKey, contractCode, baseUrl };
+  }
+
+  private async getMonnifyToken(credentials?: GatewayCredentialSet): Promise<string> {
+    const { apiKey, secretKey, baseUrl } = this.getMonnifyCredentials(credentials);
+
+    const cached = this.monnifyTokens.get(apiKey);
+    if (cached && cached.expiresAt > Date.now() + 60_000) {
+      return cached.token;
+    }
+
+    const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${apiKey}:${secretKey}`).toString('base64')}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+    const data: any = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.responseBody?.accessToken) {
+      throw new AppError(
+        `Monnify authentication failed: ${data?.responseMessage || response.status}`,
+        502
+      );
+    }
+
+    const expiresInMs = (data.responseBody.expiresIn ?? 3600) * 1000;
+    this.monnifyTokens.set(apiKey, {
+      token: data.responseBody.accessToken,
+      expiresAt: Date.now() + expiresInMs - 60_000,
+    });
+    return data.responseBody.accessToken;
+  }
+
   async initializePayment(params: InitializePaymentParams): Promise<InitializePaymentResponse> {
     const { gateway, amount, email, reference, metadata, callbackUrl, currency = 'NGN', customerName, customerPhone } = params;
 
@@ -144,7 +202,17 @@ class PaymentGatewayService {
         });
 
       case 'monnify':
-        throw new AppError('Monnify integration not yet implemented', 501);
+        return this.initializeMonnifyPayment({
+          credentials: params.credentials,
+          amount,
+          email,
+          reference: paymentReference,
+          metadata,
+          callbackUrl,
+          currency,
+          customerName,
+          customerPhone,
+        });
 
       case 'stripe':
         return this.initializeStripePayment({
@@ -263,6 +331,71 @@ class PaymentGatewayService {
     }
   }
 
+  private async initializeMonnifyPayment(params: {
+    credentials?: GatewayCredentialSet;
+    amount: number;
+    email: string;
+    reference: string;
+    metadata?: Record<string, any>;
+    callbackUrl?: string;
+    currency: string;
+    customerName?: string;
+    customerPhone?: string;
+  }): Promise<InitializePaymentResponse> {
+    try {
+      const { contractCode, baseUrl } = this.getMonnifyCredentials(params.credentials);
+      const token = await this.getMonnifyToken(params.credentials);
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/merchant/transactions/init-transaction`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            amount: params.amount / 100, // Monnify expects major currency unit (naira)
+            customerName: params.customerName || params.email,
+            customerEmail: params.email,
+            paymentReference: params.reference,
+            paymentDescription: 'InnSight reservation payment',
+            currencyCode: params.currency,
+            contractCode,
+            redirectUrl: params.callbackUrl || '',
+            paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+            ...(params.metadata && { metaData: params.metadata }),
+          }),
+        }
+      );
+      const data: any = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.requestSuccessful || !data?.responseBody?.checkoutUrl) {
+        throw new AppError(
+          `Failed to initialize Monnify payment: ${data?.responseMessage || response.status}`,
+          502
+        );
+      }
+
+      return {
+        authorizationUrl: data.responseBody.checkoutUrl,
+        accessCode:
+          data.responseBody.transactionReference ||
+          data.responseBody.paymentReference ||
+          params.reference,
+        reference: params.reference,
+        gateway: 'monnify',
+      };
+    } catch (error: any) {
+      if (error instanceof AppError) throw error;
+      console.error('Monnify initialization error:', error);
+      throw new AppError(
+        `Failed to initialize Monnify payment: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
   private async initializeStripePayment(params: {
     secretKey?: string;
     amount: number;
@@ -276,7 +409,7 @@ class PaymentGatewayService {
   }): Promise<InitializePaymentResponse> {
     const stripe = this.getStripeClient(params.secretKey);
 
-    const successUrl = params.successUrl || params.callbackUrl || process.env.PUBLIC_PAYMENT_CALLBACK_URL || 'https://innsight-2025.web.app/public-checkout/success';
+    const successUrl = params.successUrl || params.callbackUrl || process.env.PUBLIC_PAYMENT_CALLBACK_URL || `${process.env.PUBLIC_PORTAL_BASE_URL || 'http://67.211.210.8:3061'}/public-checkout/success`;
     const cancelUrl = params.cancelUrl || params.callbackUrl || process.env.PUBLIC_PAYMENT_CALLBACK_URL || successUrl;
 
     try {
@@ -336,6 +469,9 @@ class PaymentGatewayService {
           params.credentials?.flutterwavePublicKey,
           params.credentials?.flutterwaveSecretKey
         );
+
+      case 'monnify':
+        return this.verifyMonnifyPayment(reference, params.credentials);
 
       case 'stripe':
         return this.verifyStripePayment(reference, params.credentials?.stripeSecretKey);
@@ -424,6 +560,61 @@ class PaymentGatewayService {
     }
   }
 
+  private async verifyMonnifyPayment(
+    reference: string,
+    credentials?: GatewayCredentialSet
+  ): Promise<VerifyPaymentResponse> {
+    try {
+      const { baseUrl } = this.getMonnifyCredentials(credentials);
+      const token = await this.getMonnifyToken(credentials);
+
+      const response = await fetch(
+        `${baseUrl}/api/v2/transactions/${encodeURIComponent(reference)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data: any = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.responseBody) {
+        throw new AppError(
+          `Failed to verify Monnify payment: ${data?.responseMessage || response.status}`,
+          502
+        );
+      }
+
+      const body = data.responseBody;
+      const paymentStatus: string = body.paymentStatus || '';
+      const status =
+        paymentStatus === 'PAID' || paymentStatus === 'OVERPAID'
+          ? 'success'
+          : ['CANCELLED', 'EXPIRED', 'FAILED', 'REVERSED'].includes(paymentStatus)
+            ? 'failed'
+            : 'pending';
+
+      return {
+        status,
+        amount: Math.round((body.amountPaid ?? body.amount ?? 0) * 100), // naira → kobo
+        currency: body.currencyCode || 'NGN',
+        reference: body.paymentReference || reference,
+        gatewayTransactionId: body.transactionReference || reference,
+        gateway: 'monnify',
+        paidAt: body.paidOn ? new Date(body.paidOn) : undefined,
+        customer: {
+          email: body.customer?.email || '',
+          name: body.customer?.name || undefined,
+          phone: body.customer?.phoneNumber || undefined,
+        },
+        metadata: body.metaData || undefined,
+      };
+    } catch (error: any) {
+      if (error instanceof AppError) throw error;
+      console.error('Monnify verification error:', error);
+      throw new AppError(
+        `Failed to verify Monnify payment: ${error.message || 'Unknown error'}`,
+        500
+      );
+    }
+  }
+
   private async verifyStripePayment(reference: string, secretKey?: string): Promise<VerifyPaymentResponse> {
     const stripe = this.getStripeClient(secretKey);
 
@@ -469,7 +660,14 @@ class PaymentGatewayService {
             this.flutterwaveClient
         );
       case 'monnify':
-        return false;
+        return Boolean(
+          (credentials?.monnifyApiKey &&
+            credentials?.monnifySecretKey &&
+            credentials?.monnifyContractCode) ||
+            (process.env.MONNIFY_API_KEY &&
+              process.env.MONNIFY_SECRET_KEY &&
+              process.env.MONNIFY_CONTRACT_CODE)
+        );
       case 'stripe':
         return Boolean(credentials?.stripeSecretKey || this.stripeClient);
       case 'manual':
@@ -490,6 +688,9 @@ class PaymentGatewayService {
     }
     if (this.stripeClient) {
       gateways.push('stripe');
+    }
+    if (this.isGatewayConfigured('monnify')) {
+      gateways.push('monnify');
     }
 
     return gateways;

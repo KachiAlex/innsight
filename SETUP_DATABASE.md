@@ -1,52 +1,45 @@
 # Database Setup Guide for InnSight PMS
 
-## Quick Setup Options
+## Production (VPS)
 
-You need a PostgreSQL database. Here are the easiest options:
+The database runs as the `innsight-db` Docker container (PostgreSQL 16) on the VPS —
+no external database service is needed. It is provisioned automatically by
+`docker compose up` and migrations run via the `innsight-migrate` container.
 
-### Option 1: Supabase (Recommended - Free & Easy)
+Connection string inside the Docker network:
 
-1. Go to https://supabase.com/
-2. Sign up for free
-3. Create a new project
-4. Go to Settings → Database
-5. Copy the "Connection string" (URI format)
-   - It looks like: `postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres`
-
-### Option 2: Railway (Free Tier Available)
-
-1. Go to https://railway.app/
-2. Sign up
-3. Click "New Project"
-4. Click "Provision PostgreSQL"
-5. Click on the PostgreSQL service
-6. Go to "Variables" tab
-7. Copy the `DATABASE_URL` value
-
-### Option 3: Neon (Free Tier Available)
-
-1. Go to https://neon.tech/
-2. Sign up
-3. Create a new project
-4. Copy the connection string from the dashboard
-
-### Option 4: Cloud SQL (Google Cloud - Paid)
-
-1. Go to Google Cloud Console
-2. Create a Cloud SQL PostgreSQL instance
-3. Get the connection string
-
-## After Getting Your Database URL
-
-Your DATABASE_URL should look like:
 ```
-postgresql://username:password@host:5432/database_name
+postgresql://innsight:<POSTGRES_PASSWORD>@db:5432/innsight
 ```
+
+`POSTGRES_PASSWORD` lives in `/opt/innsight/.env` on the server.
+
+## Local development
+
+You need a PostgreSQL database reachable from your machine. Easiest options:
+
+### Option A: Local Postgres
+
+```bash
+# Windows (installer) or:
+docker run --name innsight-dev-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=innsight -p 5432:5432 -d postgres:16-alpine
+```
+
+`DATABASE_URL=postgresql://postgres:postgres@localhost:5432/innsight`
+
+### Option B: Hosted Postgres
+
+Neon, Supabase, Railway, etc. — any Postgres 14+ works. Copy the connection
+string into `DATABASE_URL`.
 
 ## Next Steps
 
-Once you have your DATABASE_URL, we'll:
-1. Set it as a Firebase secret
-2. Run database migrations
-3. Seed the database (creates admin@insight.com)
+With `DATABASE_URL` set in `backend/.env`:
 
+```bash
+cd backend
+npx prisma migrate deploy   # create schema
+npx prisma db seed          # optional seed data
+npm run dev                 # start API on :3001
+```

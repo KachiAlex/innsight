@@ -1,0 +1,85 @@
+name: innsight
+
+# InnSight PMS — VPS deployment
+#   db:       PostgreSQL (internal only, not exposed to the host)
+#   migrate:  one-shot Prisma migration runner (exits after applying migrations)
+#   api:      Express backend on 127.0.0.1:3060 (localhost only; reached via web proxy)
+#   web:      nginx serving the React SPA on 0.0.0.0:3061, proxying /api and /socket.io
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: innsight-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: innsight
+      POSTGRES_USER: innsight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U innsight -d innsight"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - innsight
+
+  migrate:
+    build:
+      context: ./backend
+      target: deps
+    container_name: innsight-migrate
+    command: npx prisma migrate deploy
+    environment:
+      DATABASE_URL: postgresql://innsight:${POSTGRES_PASSWORD}@db:5432/innsight
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - innsight
+
+  api:
+    build:
+      context: ./backend
+    container_name: innsight-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgresql://innsight:${POSTGRES_PASSWORD}@db:5432/innsight
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://67.211.210.8:3061}
+      PUBLIC_PORTAL_BASE_URL: ${PUBLIC_PORTAL_BASE_URL:-http://67.211.210.8:3061}
+    ports:
+      - "127.0.0.1:3060:8080"
+    volumes:
+      - backups:/backups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - innsight
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    container_name: innsight-web
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:3061:80"
+    depends_on:
+      - api
+    networks:
+      - innsight
+
+volumes:
+  pgdata:
+  backups:
+
+networks:
+  innsight:
+    name: innsight

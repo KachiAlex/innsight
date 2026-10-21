@@ -2,6 +2,11 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 
+# VITE_API_URL is baked into the bundle at build time.
+# Defaults to same-origin "/api" — the nginx config proxies /api to the api container.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
+
 # Copy package files
 COPY package*.json ./
 RUN npm install

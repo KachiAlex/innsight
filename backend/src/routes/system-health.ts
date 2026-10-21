@@ -3,13 +3,13 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
+import { authenticate, requireRole } from '../middleware/auth';
 import { getSystemHealth } from '../utils/systemHealth';
 
 export const systemHealthRouter = Router();
 
 // Middleware to ensure admin access
-systemHealthRouter.use(requireRole('iitech_admin'));
+systemHealthRouter.use(authenticate, requireRole('iitech_admin'));
 
 // Get current system health
 systemHealthRouter.get('/', async (req: Request, res: Response) => {

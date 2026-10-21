@@ -34,13 +34,33 @@ export const trackTenantCreation = (metrics: TenantCreationMetrics) => {
     });
   }
 
-  // TODO: Send to analytics service (e.g., DataDog, New Relic, Segment)
-  // Example:
-  // analytics.track('tenant.created', {
-  //   tenantId: metrics.tenantId,
-  //   duration: metrics.durationMs,
-  //   success: metrics.success,
-  // });
+  // Deliver to external analytics sink when configured (fire-and-forget)
+  const sinkUrl = process.env.ANALYTICS_SINK_URL;
+  if (sinkUrl) {
+    fetch(sinkUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.ANALYTICS_SINK_TOKEN && {
+          Authorization: `Bearer ${process.env.ANALYTICS_SINK_TOKEN}`,
+        }),
+      },
+      body: JSON.stringify({
+        event: 'tenant.created',
+        timestamp: metrics.timestamp.toISOString(),
+        properties: {
+          tenantId: metrics.tenantId,
+          slug: metrics.slug,
+          createdById: metrics.createdById,
+          durationMs: metrics.durationMs,
+          success: metrics.success,
+          errorCode: metrics.errorCode,
+        },
+      }),
+    }).catch((error) => {
+      console.warn('Analytics sink delivery failed:', error?.message || error);
+    });
+  }
 };
 
 /**

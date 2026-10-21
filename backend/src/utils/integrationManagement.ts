@@ -21,16 +21,16 @@ export interface Integration {
   updatedAt: Date;
 }
 
-// Create integration
+// Create integration (tenantId may be null for platform-level integrations)
 export const createIntegration = async (
-  tenantId: string,
+  tenantId: string | null,
   integrationData: Partial<Integration>,
   userId?: string
 ) => {
   try {
     const integration = await prisma.integration.create({
       data: {
-        tenantId,
+        tenantId: tenantId ?? null,
         name: integrationData.name || 'New Integration',
         type: integrationData.type || 'custom',
         status: 'inactive',
@@ -52,6 +52,31 @@ export const createIntegration = async (
     return integration;
   } catch (error) {
     console.error('Error creating integration:', error);
+    throw error;
+  }
+};
+
+// Get all integrations (superadmin platform view)
+export const getAllIntegrations = async (): Promise<Integration[]> => {
+  try {
+    return await prisma.integration.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        tenantId: true,
+        name: true,
+        type: true,
+        status: true,
+        webhookUrl: true,
+        lastSyncAt: true,
+        errorMessage: true,
+        createdAt: true,
+        updatedAt: true,
+        // Don't select apiKey or config for security
+      },
+    }) as Promise<Integration[]>;
+  } catch (error) {
+    console.error('Error getting integrations:', error);
     throw error;
   }
 };
@@ -89,9 +114,11 @@ export const updateIntegration = async (
       where: { id: integrationId },
     });
 
+    const { id: _id, tenantId: _t, createdAt: _c, updatedAt: _u, ...safeData } = updateData;
+
     const updated = await prisma.integration.update({
       where: { id: integrationId },
-      data: updateData,
+      data: safeData,
     });
 
     if (before) {

@@ -29,10 +29,7 @@ build/
 .DS_Store
 Thumbs.db
 
-# Firebase
-.firebase/
-firebase-debug.log
-firestore-debug.log
+# Local runtime
 ui-debug.log
 
 # Service account keys

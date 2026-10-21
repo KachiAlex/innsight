@@ -2,9 +2,7 @@ import axios, { AxiosHeaders } from 'axios';
 import toast from 'react-hot-toast';
 
 const HOSTING_ORIGINS = new Set([
-  'https://innsight-2025.web.app',
-  'https://innsight-2025.firebaseapp.com',
-  'https://innsight-theta.vercel.app',
+  'http://67.211.210.8:3061',
 ]);
 
 const resolveApiBaseUrl = () => {

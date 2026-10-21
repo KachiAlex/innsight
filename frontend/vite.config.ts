@@ -31,7 +31,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     sourcemap: false,
     minify: 'esbuild',
-    // Optimize for Netlify
+    // Optimize bundle size
     assetsInlineLimit: 4096,
   },
   optimizeDeps: {

@@ -1,0 +1,7 @@
+node_modules
+dist
+.env
+.env.*
+*.log
+lint-report.json
+lint_summary.txt

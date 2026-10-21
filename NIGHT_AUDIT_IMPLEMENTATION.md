@@ -88,7 +88,7 @@ List night audit history (last 30 by default).
 ## 🔧 Technical Details
 
 ### Data Storage
-- **Collection:** `nightAudits` in Firestore
+- **Collection:** `night_audits` in PostgreSQL
 - **Fields:**
   - `tenantId`: Tenant identifier
   - `auditDate`: Date string (YYYY-MM-DD)
@@ -224,7 +224,7 @@ GET /api/tenants/tenant-123/reports/night-audit?limit=50
 
 ## 🚀 Deployment Status
 
-- ✅ Backend deployed to Firebase Functions
+- ✅ Backend deployed to VPS via Docker Compose
 - ✅ Frontend page created and routed
 - ✅ Navigation menu updated
 - ✅ All endpoints tested and working

@@ -26,28 +26,32 @@ export interface RetentionStats {
   dataRetentionGB: number;
 }
 
-// Create or update retention policy
+// Create or update retention policy (tenantId may be null for platform-wide policies)
 export const upsertRetentionPolicy = async (
-  tenantId: string,
+  tenantId: string | null,
   policy: Partial<RetentionPolicy>,
   userId?: string
 ) => {
   try {
-    const existing = await prisma.retentionPolicy.findUnique({
-      where: { tenantId_policyName: { tenantId, policyName: policy.policyName || '' } },
-    });
+    const existing = policy.id
+      ? await prisma.retentionPolicy.findUnique({ where: { id: policy.id } })
+      : await prisma.retentionPolicy.findFirst({
+          where: { tenantId: tenantId ?? null, policyName: policy.policyName || '' },
+        });
+
+    const { id: _id, tenantId: _t, createdAt: _c, updatedAt: _u, ...policyData } = policy;
 
     const updatedPolicy = existing
       ? await prisma.retentionPolicy.update({
           where: { id: existing.id },
           data: {
-            ...policy,
+            ...policyData,
             nextRunAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
           },
         })
       : await prisma.retentionPolicy.create({
           data: {
-            tenantId,
+            tenantId: tenantId ?? null,
             policyName: policy.policyName || 'Default Policy',
             dataType: policy.dataType || 'all',
             retentionDays: policy.retentionDays || 90,
@@ -57,7 +61,7 @@ export const upsertRetentionPolicy = async (
         });
 
     await createAuditLog({
-      tenantId,
+      tenantId: tenantId ?? undefined,
       userId,
       action: 'UPDATE_RETENTION_POLICY',
       entityType: 'RetentionPolicy',
@@ -69,6 +73,18 @@ export const upsertRetentionPolicy = async (
     return updatedPolicy;
   } catch (error) {
     console.error('Error upserting retention policy:', error);
+    throw error;
+  }
+};
+
+// List every retention policy across the platform (superadmin)
+export const getAllRetentionPolicies = async (): Promise<RetentionPolicy[]> => {
+  try {
+    return await prisma.retentionPolicy.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  } catch (error) {
+    console.error('Error getting all retention policies:', error);
     throw error;
   }
 };
@@ -112,7 +128,7 @@ export const cleanupOldData = async (tenantId: string, daysOld: number = 90) => 
     const oldAudits = await prisma.audit.count({
       where: {
         tenantId,
-        createdAt: { lt: cutoffDate },
+        timestamp: { lt: cutoffDate },
       },
     });
 

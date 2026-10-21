@@ -401,6 +401,8 @@ reservationRouter.post(
                 to: data.guestEmail!,
                 subject: `Reservation Confirmation - ${reservationNumber}`,
                 html: emailHtml,
+                tenantId,
+                template: 'booking',
               });
             }
           } catch (emailError) {
@@ -922,6 +924,8 @@ reservationRouter.post(
                 to: updatedReservation.guestEmail,
                 subject: `Welcome to ${tenantSettings.propertyName}!`,
                 html: emailHtml,
+                tenantId,
+                template: 'reminder',
               });
             }
           } catch (emailError) {
@@ -1115,6 +1119,8 @@ reservationRouter.post(
                 to: updatedReservation.guestEmail,
                 subject: `Thank you for staying at ${tenantSettings.propertyName}!`,
                 html: emailHtml,
+                tenantId,
+                template: 'feedback',
               });
             }
           } catch (emailError) {

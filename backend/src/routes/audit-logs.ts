@@ -4,13 +4,13 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
+import { authenticate, requireRole } from '../middleware/auth';
 import { prisma } from '../utils/prisma';
 
 export const auditLogsRouter = Router();
 
 // Middleware to ensure admin access
-auditLogsRouter.use(requireRole('iitech_admin'));
+auditLogsRouter.use(authenticate, requireRole('iitech_admin'));
 
 interface AuditLogQuery {
   dateRange?: '1h' | '24h' | '7d' | '30d';
@@ -37,18 +37,18 @@ auditLogsRouter.get('/', async (req: Request, res: Response) => {
     const sinceTime = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     const where: any = {
-      createdAt: { gte: sinceTime },
+      timestamp: { gte: sinceTime },
     };
 
     if (action) where.action = action;
     if (entityType) where.entityType = entityType;
-    if (status === 'success') where.metadata = { path: 'status', equals: 'success' };
-    if (status === 'error') where.metadata = { path: 'status', equals: 'error' };
+    if (status === 'success') where.metadata = { path: ['status'], equals: 'success' };
+    if (status === 'error') where.metadata = { path: ['status'], equals: 'error' };
 
     const [logs, total] = await Promise.all([
       prisma.audit.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { timestamp: 'desc' },
         skip: parseInt(skip as string, 10) || 0,
         take: Math.min(parseInt(take as string, 10) || 100, 1000),
         include: {
@@ -72,7 +72,7 @@ auditLogsRouter.get('/', async (req: Request, res: Response) => {
         afterState: log.afterState,
         metadata: log.metadata,
         status: log.metadata?.status || 'success',
-        createdAt: log.createdAt,
+        createdAt: log.timestamp,
       })),
       total,
       skip: parseInt(skip as string, 10) || 0,
@@ -92,9 +92,9 @@ auditLogsRouter.get('/metrics', async (req: Request, res: Response) => {
 
     const [totalLogs, actionsLast24h, allLogs] = await Promise.all([
       prisma.audit.count(),
-      prisma.audit.count({ where: { createdAt: { gte: last24h } } }),
+      prisma.audit.count({ where: { timestamp: { gte: last24h } } }),
       prisma.audit.findMany({
-        where: { createdAt: { gte: last24h } },
+        where: { timestamp: { gte: last24h } },
         select: { action: true, metadata: true },
       }),
     ]);
@@ -143,7 +143,7 @@ auditLogsRouter.get('/export', async (req: Request, res: Response) => {
     const sinceTime = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     const where: any = {
-      createdAt: { gte: sinceTime },
+      timestamp: { gte: sinceTime },
     };
 
     if (action) where.action = action;
@@ -151,7 +151,7 @@ auditLogsRouter.get('/export', async (req: Request, res: Response) => {
 
     const logs = await prisma.audit.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { timestamp: 'desc' },
       take: 10000,
     });
 
@@ -170,7 +170,7 @@ auditLogsRouter.get('/export', async (req: Request, res: Response) => {
 
       const rows = logs.map((log) => [
         log.id,
-        log.createdAt.toISOString(),
+        log.timestamp.toISOString(),
         log.action,
         log.entityType,
         log.entityId,
@@ -211,7 +211,8 @@ auditLogsRouter.get('/:logId', async (req: Request, res: Response) => {
     });
 
     if (!log) {
-      return res.status(404).json({ error: 'Audit log not found' });
+      res.status(404).json({ error: 'Audit log not found' });
+      return;
     }
 
     res.json({

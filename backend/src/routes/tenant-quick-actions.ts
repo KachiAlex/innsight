@@ -4,7 +4,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
+import { authenticate, requireRole } from '../middleware/auth';
 import {
   suspendTenant,
   reactivateTenant,
@@ -17,7 +17,64 @@ import {
 export const tenantQuickActionsRouter = Router();
 
 // Middleware to ensure admin access
-tenantQuickActionsRouter.use(requireRole('iitech_admin'));
+tenantQuickActionsRouter.use(authenticate, requireRole('iitech_admin'));
+
+// Batch suspend tenants
+// NOTE: batch routes must be registered before /:tenantId routes
+tenantQuickActionsRouter.post('/batch/suspend', async (req: Request, res: Response) => {
+  try {
+    const { tenantIds, reason } = req.body;
+    const userId = (req as any).user?.id;
+
+    if (!Array.isArray(tenantIds) || tenantIds.length === 0) {
+      res.status(400).json({ error: 'Invalid tenant IDs' });
+      return;
+    }
+
+    const results = await batchSuspendTenants(tenantIds, reason, userId);
+    const succeeded = results.filter((r) => r.success).length;
+
+    res.json({
+      data: results,
+      summary: {
+        total: tenantIds.length,
+        succeeded,
+        failed: tenantIds.length - succeeded,
+      },
+    });
+  } catch (error) {
+    console.error('Error batch suspending tenants:', error);
+    res.status(500).json({ error: 'Failed to batch suspend tenants' });
+  }
+});
+
+// Batch reactivate tenants
+tenantQuickActionsRouter.post('/batch/reactivate', async (req: Request, res: Response) => {
+  try {
+    const { tenantIds } = req.body;
+    const userId = (req as any).user?.id;
+
+    if (!Array.isArray(tenantIds) || tenantIds.length === 0) {
+      res.status(400).json({ error: 'Invalid tenant IDs' });
+      return;
+    }
+
+    const results = await batchReactivateTenants(tenantIds, userId);
+    const succeeded = results.filter((r) => r.success).length;
+
+    res.json({
+      data: results,
+      summary: {
+        total: tenantIds.length,
+        succeeded,
+        failed: tenantIds.length - succeeded,
+      },
+    });
+  } catch (error) {
+    console.error('Error batch reactivating tenants:', error);
+    res.status(500).json({ error: 'Failed to batch reactivate tenants' });
+  }
+});
 
 // Get tenant quick status (UI indicator)
 tenantQuickActionsRouter.get('/:tenantId/status', async (req: Request, res: Response) => {
@@ -75,7 +132,8 @@ tenantQuickActionsRouter.post('/:tenantId/delete', async (req: Request, res: Res
     // Confirmation check
     const { confirm } = req.body;
     if (!confirm) {
-      return res.status(400).json({ error: 'Must confirm deletion' });
+      res.status(400).json({ error: 'Must confirm deletion' });
+      return;
     }
 
     const tenant = await deleteTenant(tenantId, userId);
@@ -86,59 +144,5 @@ tenantQuickActionsRouter.post('/:tenantId/delete', async (req: Request, res: Res
   } catch (error) {
     console.error('Error deleting tenant:', error);
     res.status(500).json({ error: 'Failed to delete tenant' });
-  }
-});
-
-// Batch suspend tenants
-tenantQuickActionsRouter.post('/batch/suspend', async (req: Request, res: Response) => {
-  try {
-    const { tenantIds, reason } = req.body;
-    const userId = (req as any).user?.id;
-
-    if (!Array.isArray(tenantIds) || tenantIds.length === 0) {
-      return res.status(400).json({ error: 'Invalid tenant IDs' });
-    }
-
-    const results = await batchSuspendTenants(tenantIds, reason, userId);
-    const succeeded = results.filter((r) => r.success).length;
-
-    res.json({
-      data: results,
-      summary: {
-        total: tenantIds.length,
-        succeeded,
-        failed: tenantIds.length - succeeded,
-      },
-    });
-  } catch (error) {
-    console.error('Error batch suspending tenants:', error);
-    res.status(500).json({ error: 'Failed to batch suspend tenants' });
-  }
-});
-
-// Batch reactivate tenants
-tenantQuickActionsRouter.post('/batch/reactivate', async (req: Request, res: Response) => {
-  try {
-    const { tenantIds } = req.body;
-    const userId = (req as any).user?.id;
-
-    if (!Array.isArray(tenantIds) || tenantIds.length === 0) {
-      return res.status(400).json({ error: 'Invalid tenant IDs' });
-    }
-
-    const results = await batchReactivateTenants(tenantIds, userId);
-    const succeeded = results.filter((r) => r.success).length;
-
-    res.json({
-      data: results,
-      summary: {
-        total: tenantIds.length,
-        succeeded,
-        failed: tenantIds.length - succeeded,
-      },
-    });
-  } catch (error) {
-    console.error('Error batch reactivating tenants:', error);
-    res.status(500).json({ error: 'Failed to batch reactivate tenants' });
   }
 });

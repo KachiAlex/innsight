@@ -3,6 +3,7 @@ import { createServer } from 'http';
 
 import { createApp } from './app';
 import { ws } from './utils/websocket';
+import { runDueBackupSchedules } from './utils/backupRunner';
 
 dotenv.config();
 
@@ -23,4 +24,14 @@ if (shouldStartServer) {
     console.log(`🔧 Server mode: ${isContainerEnvironment ? 'Container' : 'Local'}`);
     console.log(`🔌 WebSocket enabled on ws://localhost:${PORT}`);
   });
+
+  // Backup schedule runner — checks for due schedules + prunes expired backups
+  // every 60s. Runs in-process; idempotent across restarts.
+  const backupTick = () => {
+    runDueBackupSchedules().catch((error) => {
+      console.error('[backup] Scheduled backup check failed:', error);
+    });
+  };
+  setInterval(backupTick, 60 * 1000).unref();
+  setTimeout(backupTick, 15 * 1000).unref();
 }

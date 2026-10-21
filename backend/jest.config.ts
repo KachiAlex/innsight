@@ -9,9 +9,6 @@ const config: Config = {
   setupFilesAfterEnv: ['<rootDir>/tests/setup/testHooks.ts'],
   globalSetup: '<rootDir>/tests/setup/globalSetup.ts',
   testTimeout: 60000,
-  moduleNameMapper: {
-    '^firebase-admin$': '<rootDir>/tests/mocks/firebase-admin.ts',
-  },
   reporters: ['default'],
   clearMocks: true,
   maxWorkers: 1,

@@ -16,7 +16,7 @@ import {
 import toast from 'react-hot-toast';
 
 const PORTAL_ORIGIN =
-  (import.meta as any).env?.VITE_PUBLIC_PORTAL_ORIGIN || 'https://innsight-2025.web.app';
+  (import.meta as any).env?.VITE_PUBLIC_PORTAL_ORIGIN || 'http://67.211.210.8:3061';
 const WIDGET_SCRIPT_URL =
   (import.meta as any).env?.VITE_PUBLIC_WIDGET_URL || `${PORTAL_ORIGIN}/widget.js`;
 

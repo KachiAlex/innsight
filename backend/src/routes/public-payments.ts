@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import {
   verifyGatewayPayment,
   getTenantPaymentSettings,
+  buildGatewayCredentialSet,
 } from '../utils/publicPayments';
 import {
   findCheckoutIntentByReference,
@@ -43,10 +44,12 @@ const reconcileCheckoutIntent = async ({
   gateway,
   reference,
   tenantId,
+  credentials,
 }: {
-  gateway: 'paystack' | 'flutterwave';
+  gateway: 'paystack' | 'flutterwave' | 'monnify';
   reference: string;
   tenantId: string;
+  credentials?: import('../utils/paymentGateway').GatewayCredentialSet;
 }): Promise<GatewayResult> => {
   const startedAt = Date.now();
   const intent = await findCheckoutIntentByReference(reference);
@@ -91,7 +94,7 @@ const reconcileCheckoutIntent = async ({
     };
   }
 
-  const verification = await verifyGatewayPayment(gateway, reference);
+  const verification = await verifyGatewayPayment(gateway, reference, credentials);
 
   if (verification.status !== 'success') {
     await markIntentStatus(intent.id, 'failed', {
@@ -218,7 +221,13 @@ publicPaymentsRouter.post(
       .update(rawBody)
       .digest('hex');
 
-    if (computedHash !== signatureHeader) {
+    const expectedBuf = Buffer.from(computedHash);
+    const receivedBuf = Buffer.from(signatureHeader);
+    const signatureMatches =
+      expectedBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, receivedBuf);
+
+    if (!signatureMatches) {
       logWebhookEvent('warn', 'signature_mismatch', {
         gateway: 'paystack',
         tenantId,
@@ -288,26 +297,29 @@ publicPaymentsRouter.post(
     }
 
     const settings = await getTenantPaymentSettings(tenantId);
-    const flutterwaveSecret =
-      settings.flutterwaveSecretKey || process.env.FLUTTERWAVE_SECRET_KEY;
+    // Flutterwave does not sign the body: `verif-hash` is the literal secret
+    // hash configured in the Flutterwave dashboard webhook settings.
+    const expectedHash =
+      settings.flutterwaveSecretHash || process.env.FLUTTERWAVE_SECRET_HASH;
 
-    if (!flutterwaveSecret) {
-      logWebhookEvent('error', 'missing_flutterwave_secret', {
+    if (!expectedHash) {
+      logWebhookEvent('error', 'missing_flutterwave_secret_hash', {
         gateway: 'flutterwave',
         tenantId,
       });
       return res.status(500).json({
         success: false,
-        message: 'Flutterwave secret key not configured for tenant',
+        message: 'Flutterwave secret hash not configured for tenant',
       });
     }
 
-    const computedHash = crypto
-      .createHmac('sha256', flutterwaveSecret)
-      .update(rawBody)
-      .digest('hex');
+    const expectedBuf = Buffer.from(expectedHash);
+    const receivedBuf = Buffer.from(signatureHeader);
+    const signatureMatches =
+      expectedBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, receivedBuf);
 
-    if (computedHash !== signatureHeader) {
+    if (!signatureMatches) {
       logWebhookEvent('warn', 'signature_mismatch', {
         gateway: 'flutterwave',
         tenantId,
@@ -335,6 +347,107 @@ publicPaymentsRouter.post(
       return res.json({ success: true, ...result });
     } catch (error: any) {
       logWebhookEvent('error', 'flutterwave_webhook_error', {
+        tenantId,
+        reference,
+        message: error?.message,
+        durationMs: Date.now() - receivedAt,
+      });
+      return res.status(500).json({
+        success: false,
+        message: error?.message || 'Failed to process webhook',
+      });
+    }
+  }
+);
+
+publicPaymentsRouter.post(
+  '/webhook/monnify',
+  webhookRawMiddleware,
+  async (req, res) => {
+    const receivedAt = Date.now();
+    const rawBody = toBuffer(req.body);
+    const payload = parseJsonBody(rawBody);
+    const signatureHeader = req.headers['monnify-signature'];
+
+    if (!signatureHeader || typeof signatureHeader !== 'string') {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Missing Monnify signature' });
+    }
+
+    const eventData = payload?.eventData;
+    const tenantId =
+      eventData?.metaData?.tenantId || eventData?.metaData?.metadata?.tenantId;
+    const reference =
+      eventData?.paymentReference || eventData?.transactionReference;
+
+    if (!tenantId || !reference) {
+      logWebhookEvent('warn', 'missing_monnify_metadata', {
+        gateway: 'monnify',
+        durationMs: Date.now() - receivedAt,
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: 'Missing tenantId or reference' });
+    }
+
+    const settings = await getTenantPaymentSettings(tenantId);
+    // Monnify signs the raw body with HMAC-SHA512 keyed on the client secret.
+    const monnifySecret =
+      settings.monnifySecretKey || process.env.MONNIFY_SECRET_KEY;
+
+    if (!monnifySecret) {
+      logWebhookEvent('error', 'missing_monnify_secret', {
+        gateway: 'monnify',
+        tenantId,
+      });
+      return res.status(500).json({
+        success: false,
+        message: 'Monnify secret key not configured for tenant',
+      });
+    }
+
+    const computedHash = crypto
+      .createHmac('sha512', monnifySecret)
+      .update(rawBody)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(computedHash);
+    const receivedBuf = Buffer.from(signatureHeader);
+    const signatureMatches =
+      expectedBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, receivedBuf);
+
+    if (!signatureMatches) {
+      logWebhookEvent('warn', 'signature_mismatch', {
+        gateway: 'monnify',
+        tenantId,
+        durationMs: Date.now() - receivedAt,
+      });
+      return res.status(400).json({ success: false, message: 'Invalid signature' });
+    }
+
+    const paymentStatus = eventData?.paymentStatus;
+    if (paymentStatus !== 'PAID' && paymentStatus !== 'OVERPAID') {
+      logWebhookEvent('info', 'monnify_non_paid_event', {
+        tenantId,
+        reference,
+        paymentStatus,
+      });
+      return res.json({ success: true, processed: false, reason: paymentStatus });
+    }
+
+    try {
+      const result = await reconcileCheckoutIntent({
+        gateway: 'monnify',
+        reference,
+        tenantId,
+        credentials: buildGatewayCredentialSet(settings, 'monnify'),
+      });
+
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      logWebhookEvent('error', 'monnify_webhook_error', {
         tenantId,
         reference,
         message: error?.message,

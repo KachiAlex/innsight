@@ -81,15 +81,10 @@ try {
 
 Write-Host ""
 Write-Host "=== Next Steps ===" -ForegroundColor Cyan
-Write-Host "1. Set DATABASE_URL as Firebase secret:" -ForegroundColor White
-Write-Host "   firebase functions:secrets:set DATABASE_URL" -ForegroundColor Gray
+Write-Host "1. Set DATABASE_URL / JWT_SECRET / JWT_REFRESH_SECRET in /opt/innsight/.env on the VPS" -ForegroundColor White
 Write-Host ""
-Write-Host "2. Set JWT secrets:" -ForegroundColor White
-Write-Host "   firebase functions:secrets:set JWT_SECRET" -ForegroundColor Gray
-Write-Host "   firebase functions:secrets:set JWT_REFRESH_SECRET" -ForegroundColor Gray
-Write-Host ""
-Write-Host "3. Redeploy functions:" -ForegroundColor White
-Write-Host "   firebase deploy --only functions" -ForegroundColor Gray
+Write-Host "2. Redeploy:" -ForegroundColor White
+Write-Host "   bash deploy-vps.sh" -ForegroundColor Gray
 Write-Host ""
 
 cd ..

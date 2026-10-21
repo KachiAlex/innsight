@@ -403,7 +403,7 @@ await api.post(`/tenants/${tenantId}/folios/${folioId}/charges`, {
 
 4. **Deploy to Production**
    ```bash
-   firebase deploy --only functions
+   bash deploy-vps.sh
    ```
 
 ---

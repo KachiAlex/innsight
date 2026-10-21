@@ -1,3 +1,4 @@
+import 'express-async-errors';
 import express, { Request, Response } from 'express';
 import helmet from 'helmet';
 import path from 'path';
@@ -23,12 +24,12 @@ import { uploadsDir } from './utils/upload';
 import { ratePlanRouter } from './routes/ratePlans';
 import { guestRouter } from './routes/guests';
 import { guestEnhancedRouter } from './routes/guests-enhanced';
-import { depositsRouter } from './routes/deposits';
+import { depositsRouter, depositPoliciesRouter } from './routes/deposits';
 import { groupBookingRouter } from './routes/group-bookings';
 import { overbookingRouter } from './routes/overbooking';
 import { guestRequestsRouter } from './routes/guest-requests';
 import { lostFoundRouter } from './routes/lost-found';
-import { roomServiceRouter } from './routes/room-service';
+import { roomServiceRouter, menuRouter } from './routes/room-service';
 import { analyticsRouter } from './routes/analytics';
 import { automationRouter } from './routes/automation';
 import { calendarRouter } from './routes/calendar';
@@ -40,15 +41,16 @@ import { wagePlanRouter } from './routes/wagePlans';
 import { meetingHallRouter } from './routes/halls';
 import { publicPortalRouter } from './routes/public-portal';
 import { publicPaymentsRouter } from './routes/public-payments';
+import { publicTrackingRouter } from './routes/public-tracking';
 import { superadminRouter } from './routes/superadmin';
 import { settingsRouter as settingsAdminRouter } from './routes/settings-admin';
 import { superadminUsersRouter } from './routes/superadmin-users';
 import { billingRouter } from './routes/billing';
 import { platformAnalyticsRouter } from './routes/platform-analytics';
-// import { supportRouter } from './routes/support';
-// import { apiKeysRouter } from './routes/api-keys';
-// import { backupRouter } from './routes/backup';
-// import { communicationsRouter } from './routes/communications';
+import supportRouter from './routes/support';
+import apiKeysRouter, { apiMetricsRouter } from './routes/api-keys';
+import backupRouter from './routes/backup';
+import communicationsRouter from './routes/communications';
 import { auditLogsRouter } from './routes/audit-logs';
 import { tenantQuickActionsRouter } from './routes/tenant-quick-actions';
 import { systemHealthRouter } from './routes/system-health';
@@ -60,24 +62,14 @@ import roomStatusRouter from './routes/roomStatus';
 
 const defaultOrigins = [
   'http://localhost:5173',
-  'https://innsight-2025.web.app',
-  'https://innsight-frontend.onrender.com',
-  'https://innsightpms.netlify.app',
-  'https://innsight-pms.vercel.app',
-  'https://innsight-theta.vercel.app'
+  'http://67.211.210.8:3061'
 ];
 
 const buildAllowedOrigins = () => {
-  const rawOrigins = (process.env.CORS_ORIGIN || defaultOrigins.join(','))
+  return (process.env.CORS_ORIGIN || defaultOrigins.join(','))
     .split(',')
     .map(origin => origin.trim())
     .filter(Boolean);
-
-  if (!rawOrigins.includes('https://innsightpms.netlify.app')) {
-    rawOrigins.push('https://innsightpms.netlify.app');
-  }
-
-  return rawOrigins;
 };
 
 const attachCorsHeaders = (req: Request, res: Response, allowedOrigins: string[]) => {
@@ -111,8 +103,12 @@ export const createApp = () => {
   });
 
   app.use(helmet());
-  const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
-  app.use('/api/', limiter);
+  // Auth endpoints get a tighter limit; the general API needs a much higher
+  // ceiling since a front-desk NAT shares one IP across many staff.
+  const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30 });
+  const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 2000 });
+  app.use('/api/auth', authLimiter);
+  app.use('/api/', apiLimiter);
 
   app.use('/api/public/payments', publicPaymentsRouter);
   app.use(express.json({ limit: '10mb' }));
@@ -147,6 +143,8 @@ export const createApp = () => {
   app.use('/api/tenants/:tenantId/guest-requests', guestRequestsRouter);
   app.use('/api/tenants/:tenantId/lost-found', lostFoundRouter);
   app.use('/api/tenants/:tenantId/room-service', roomServiceRouter);
+  app.use('/api/tenants/:tenantId/menu', menuRouter);
+  app.use('/api/tenants/:tenantId/deposit-policies', depositPoliciesRouter);
   app.use('/api/tenants/:tenantId/analytics', analyticsRouter);
   app.use('/api/tenants/:tenantId/automation', automationRouter);
   app.use('/api/tenants/:tenantId/calendar', calendarRouter);
@@ -159,15 +157,17 @@ export const createApp = () => {
   app.use('/api/tenants/:tenantId/iot', iotRouter);
   app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);
   app.use('/api/public/portal', publicPortalRouter);
+  app.use('/api/public/track', publicTrackingRouter);
   app.use('/api/superadmin', superadminRouter);
   app.use('/api/superadmin/users', superadminUsersRouter);
   app.use('/api/superadmin/settings', settingsAdminRouter);
   app.use('/api/superadmin/billing', billingRouter);
   app.use('/api/superadmin/analytics', platformAnalyticsRouter);
-  // app.use('/api/superadmin/support', supportRouter);
-  // app.use('/api/superadmin/api-keys', apiKeysRouter);
-  // app.use('/api/superadmin/backup', backupRouter);
-  // app.use('/api/superadmin/communications', communicationsRouter);
+  app.use('/api/superadmin/support', supportRouter);
+  app.use('/api/superadmin/api-keys', apiKeysRouter);
+  app.use('/api/superadmin/api-metrics', apiMetricsRouter);
+  app.use('/api/superadmin', backupRouter);
+  app.use('/api/superadmin/communications', communicationsRouter);
   app.use('/api/superadmin/audit-logs', auditLogsRouter);
   app.use('/api/superadmin/tenant-actions', tenantQuickActionsRouter);
   app.use('/api/superadmin/health', systemHealthRouter);

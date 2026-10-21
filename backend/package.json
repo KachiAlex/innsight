@@ -2,7 +2,7 @@
   "name": "@innsight/backend",
   "version": "1.0.0",
   "description": "InnSight PMS Backend API",
-  "main": "index.js",
+  "main": "dist/bundle.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npx -y esbuild src/app.ts --bundle --platform=node --target=node18 --outfile=dist/bundle.js --external:@prisma/client --external:socket.io --external:stripe --external:paystack --external:nodemailer --external:multer --external:express --external:express-rate-limit --external:helmet --external:cors --format=esm --ignore-annotations --log-level=warning",
@@ -13,13 +13,10 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
     "create-admin": "curl -X POST http://localhost:3001/api/auth/create-admin",
-    "migrate:illuminate": "tsx scripts/migrate-illuminate-tenant.ts",
-    "migrate:illuminate-full": "tsx scripts/run-migration-with-credentials.ts",
     "generate:rooms-csv": "tsx scripts/generate-rooms-csv.ts",
     "import:rooms": "tsx scripts/import-rooms-from-csv.ts",
     "import:170-rooms": "tsx scripts/import-170-rooms-direct.ts",
-    "quick-setup:illuminate": "tsx scripts/quick-setup-illuminate.ts",
-    "backfill:order-journals": "tsx scripts/backfill-order-journals.ts"
+    "quick-setup:illuminate": "tsx scripts/quick-setup-illuminate.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -28,7 +25,6 @@
     "@prisma/client": "^5.7.1",
     "@prisma/debug": "^7.1.0",
     "@types/nodemailer": "^7.0.4",
-    "@vercel/node": "^3.0.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "date-fns": "^3.0.6",

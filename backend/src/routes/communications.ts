@@ -1,266 +1,186 @@
-import express, { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
-import * as communicationSettings from '../utils/communicationSettings';
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { authenticate, requireRole } from '../middleware/auth';
+import { prisma } from '../utils/prisma';
 
 const router = Router();
 
-// Middleware to verify superadmin
-router.use(requireRole('iitech_admin'));
+router.use(authenticate, requireRole('iitech_admin'));
 
-// ===== Email Templates =====
+const TEMPLATE_CATEGORIES = ['booking', 'cancellation', 'reminder', 'feedback', 'other'];
 
-// Get email templates
+const extractVariables = (body: string): string[] => {
+  const matches = body.match(/\{\{\s*([\w.]+)\s*\}\}/g) || [];
+  return [...new Set(matches.map((m) => m.replace(/\{\{\s*|\s*\}\}/g, '')))];
+};
+
+const serializeTemplate = (t: any) => ({
+  id: t.id,
+  name: t.name,
+  subject: t.subject,
+  category: t.category,
+  body: t.body,
+  variables: t.variables,
+  active: t.active,
+  createdAt: t.createdAt.toISOString(),
+  updatedAt: t.updatedAt.toISOString(),
+});
+
+const templateSchema = z.object({
+  name: z.string().min(1),
+  subject: z.string().min(1),
+  category: z.enum(TEMPLATE_CATEGORIES as [string, ...string[]]).default('other'),
+  body: z.string().min(1),
+  variables: z.array(z.string()).optional(),
+  active: z.boolean().optional(),
+});
+
+// GET /api/superadmin/communications/templates
 router.get('/templates', async (req: Request, res: Response) => {
-  try {
-    const { tenantId, limit = 50, offset = 0 } = req.query;
+  const { category, active, limit = '100', offset = '0' } = req.query;
 
-    const templates = await communicationSettings.getEmailTemplates(
-      tenantId as string,
-      parseInt(limit as string),
-      parseInt(offset as string)
-    );
+  const where: any = {};
+  if (category) where.category = category;
+  if (active !== undefined) where.active = active === 'true';
 
-    res.json({
-      success: true,
-      data: templates,
-      count: templates.length,
-    });
-  } catch (error: any) {
-    console.error('Error fetching templates:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  const templates = await prisma.emailTemplate.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+    take: Math.min(parseInt(limit as string) || 100, 500),
+    skip: parseInt(offset as string) || 0,
+  });
+
+  res.json({ success: true, data: templates.map(serializeTemplate) });
 });
 
-// Get single email template
+// GET /api/superadmin/communications/templates/:templateId
 router.get('/templates/:templateId', async (req: Request, res: Response) => {
-  try {
-    const { templateId } = req.params;
-    const template = await communicationSettings.getEmailTemplate(templateId);
-
-    if (!template) {
-      return res.status(404).json({ success: false, error: { message: 'Template not found' } });
-    }
-
-    res.json({ success: true, data: template });
-  } catch (error: any) {
-    console.error('Error fetching template:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+  const template = await prisma.emailTemplate.findUnique({
+    where: { id: req.params.templateId },
+  });
+  if (!template) {
+    res.status(404).json({ success: false, error: { message: 'Template not found' } });
+    return;
   }
+  res.json({ success: true, data: serializeTemplate(template) });
 });
 
-// Create email template
+// POST /api/superadmin/communications/templates
 router.post('/templates', async (req: Request, res: Response) => {
-  try {
-    const { name, category, subject, htmlContent, plainTextContent, variables, tenantId } = req.body;
+  const data = templateSchema.parse(req.body);
 
-    if (!name || !category || !subject || !htmlContent) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'name, category, subject, and htmlContent are required' },
-      });
-    }
-
-    const template = await communicationSettings.createEmailTemplate({
-      name,
-      category,
-      subject,
-      htmlContent,
-      plainTextContent,
-      variables: variables || [],
-      tenantId,
-      defaultTemplate: false,
-      enabled: true,
-    });
-
-    res.status(201).json({ success: true, data: template });
-  } catch (error: any) {
-    console.error('Error creating template:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+  const existing = await prisma.emailTemplate.findUnique({ where: { name: data.name } });
+  if (existing) {
+    res.status(409)
+      .json({ success: false, error: { message: 'A template with this name already exists' } });
+    return;
   }
+
+  const template = await prisma.emailTemplate.create({
+    data: {
+      name: data.name,
+      subject: data.subject,
+      body: data.body,
+      category: data.category,
+      variables: data.variables?.length ? data.variables : extractVariables(data.body),
+      active: data.active ?? true,
+    },
+  });
+
+  res.status(201).json({ success: true, data: serializeTemplate(template) });
 });
 
-// Update email template
+// PATCH /api/superadmin/communications/templates/:templateId
 router.patch('/templates/:templateId', async (req: Request, res: Response) => {
-  try {
-    const { templateId } = req.params;
-    const updates = req.body;
-
-    const updated = await communicationSettings.updateEmailTemplate(templateId, updates);
-
-    if (!updated) {
-      return res.status(404).json({ success: false, error: { message: 'Template not found' } });
-    }
-
-    res.json({ success: true, data: updated });
-  } catch (error: any) {
-    console.error('Error updating template:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+  const existing = await prisma.emailTemplate.findUnique({
+    where: { id: req.params.templateId },
+  });
+  if (!existing) {
+    res.status(404).json({ success: false, error: { message: 'Template not found' } });
+    return;
   }
+
+  const data = templateSchema.partial().parse(req.body);
+
+  const template = await prisma.emailTemplate.update({
+    where: { id: existing.id },
+    data: {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.subject !== undefined && { subject: data.subject }),
+      ...(data.category !== undefined && { category: data.category }),
+      ...(data.body !== undefined && {
+        body: data.body,
+        variables: data.variables?.length ? data.variables : extractVariables(data.body),
+      }),
+      ...(data.variables !== undefined && data.body === undefined && { variables: data.variables }),
+      ...(data.active !== undefined && { active: data.active }),
+    },
+  });
+
+  res.json({ success: true, data: serializeTemplate(template) });
 });
 
-// Delete email template
+// DELETE /api/superadmin/communications/templates/:templateId
 router.delete('/templates/:templateId', async (req: Request, res: Response) => {
-  try {
-    const { templateId } = req.params;
-    const deleted = await communicationSettings.deleteEmailTemplate(templateId);
-
-    if (!deleted) {
-      return res.status(404).json({ success: false, error: { message: 'Template not found' } });
-    }
-
-    res.json({ success: true, data: { message: 'Template deleted successfully' } });
-  } catch (error: any) {
-    console.error('Error deleting template:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
+  const existing = await prisma.emailTemplate.findUnique({
+    where: { id: req.params.templateId },
+  });
+  if (!existing) {
+    res.status(404).json({ success: false, error: { message: 'Template not found' } });
+    return;
   }
+
+  await prisma.emailTemplate.delete({ where: { id: existing.id } });
+  res.json({ success: true, message: 'Template deleted' });
 });
 
-// ===== Notification Channels =====
+// GET /api/superadmin/communications/metrics
+router.get('/metrics', async (_req: Request, res: Response) => {
+  const [templates, activeTemplates, emailSent, emailFailed, emailOpened, smsSent, smsFailed] =
+    await Promise.all([
+      prisma.emailTemplate.count(),
+      prisma.emailTemplate.count({ where: { active: true } }),
+      prisma.notificationLog.count({ where: { channel: 'email', status: 'sent' } }),
+      prisma.notificationLog.count({ where: { channel: 'email', status: 'failed' } }),
+      prisma.notificationLog.count({
+        where: { channel: 'email', status: 'sent', openedAt: { not: null } },
+      }),
+      prisma.notificationLog.count({ where: { channel: 'sms', status: 'sent' } }),
+      prisma.notificationLog.count({ where: { channel: 'sms', status: 'failed' } }),
+    ]);
 
-// Get notification channels
-router.get('/channels', async (req: Request, res: Response) => {
-  try {
-    const { tenantId } = req.query;
-    const channels = await communicationSettings.getNotificationChannels(tenantId as string);
-
-    res.json({
-      success: true,
-      data: channels,
-      count: channels.length,
-    });
-  } catch (error: any) {
-    console.error('Error fetching channels:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  res.json({
+    success: true,
+    data: {
+      emailsSent: emailSent,
+      emailOpenRate:
+        emailSent > 0 ? Math.round((emailOpened / emailSent) * 100) : 0,
+      smsDeliveryRate:
+        smsSent + smsFailed > 0 ? Math.round((smsSent / (smsSent + smsFailed)) * 100) : 0,
+      templates,
+      activeTemplates,
+      emailsFailed: emailFailed,
+    },
+  });
 });
 
-// Create notification channel
-router.post('/channels', async (req: Request, res: Response) => {
-  try {
-    const { type, name, config, tenantId } = req.body;
-
-    if (!type || !name || !config) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'type, name, and config are required' },
-      });
-    }
-
-    const channel = await communicationSettings.createNotificationChannel({
-      type: type as communicationSettings.NotificationChannel['type'],
-      name,
-      enabled: true,
-      config,
-      tenantId,
-    });
-
-    res.status(201).json({ success: true, data: channel });
-  } catch (error: any) {
-    console.error('Error creating channel:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// ===== Notification Rules =====
-
-// Get notification rules
-router.get('/rules', async (req: Request, res: Response) => {
-  try {
-    const { tenantId } = req.query;
-    const rules = await communicationSettings.getNotificationRules(tenantId as string);
-
-    res.json({
-      success: true,
-      data: rules,
-      count: rules.length,
-    });
-  } catch (error: any) {
-    console.error('Error fetching rules:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// Create notification rule
-router.post('/rules', async (req: Request, res: Response) => {
-  try {
-    const { name, trigger, actions, tenantId } = req.body;
-
-    if (!name || !trigger || !actions) {
-      return res.status(400).json({
-        success: false,
-        error: { message: 'name, trigger, and actions are required' },
-      });
-    }
-
-    const rule = await communicationSettings.createNotificationRule({
-      name,
-      enabled: true,
-      trigger,
-      actions,
-      tenantId,
-    });
-
-    res.status(201).json({ success: true, data: rule });
-  } catch (error: any) {
-    console.error('Error creating rule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// Update notification rule
-router.patch('/rules/:ruleId', async (req: Request, res: Response) => {
-  try {
-    const { ruleId } = req.params;
-    const updates = req.body;
-
-    const updated = await communicationSettings.updateNotificationRule(ruleId, updates);
-
-    if (!updated) {
-      return res.status(404).json({ success: false, error: { message: 'Rule not found' } });
-    }
-
-    res.json({ success: true, data: updated });
-  } catch (error: any) {
-    console.error('Error updating rule:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
-
-// ===== Communication Logs =====
-
-// Get communication logs
+// GET /api/superadmin/communications/logs — outbound delivery log
 router.get('/logs', async (req: Request, res: Response) => {
-  try {
-    const { tenantId, limit = 100, offset = 0 } = req.query;
+  const { channel, status, tenantId, limit = '100', offset = '0' } = req.query;
 
-    const logs = await communicationSettings.getCommunicationLogs(
-      tenantId as string,
-      parseInt(limit as string),
-      parseInt(offset as string)
-    );
+  const where: any = {};
+  if (channel) where.channel = channel;
+  if (status) where.status = status;
+  if (tenantId) where.tenantId = tenantId;
 
-    res.json({
-      success: true,
-      data: logs,
-      count: logs.length,
-    });
-  } catch (error: any) {
-    console.error('Error fetching logs:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
-});
+  const logs = await prisma.notificationLog.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: Math.min(parseInt(limit as string) || 100, 500),
+    skip: parseInt(offset as string) || 0,
+  });
 
-// Get communication statistics
-router.get('/stats/overview', async (req: Request, res: Response) => {
-  try {
-    const { tenantId } = req.query;
-    const stats = await communicationSettings.getCommunicationStats(tenantId as string);
-
-    res.json({ success: true, data: stats });
-  } catch (error: any) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ success: false, error: { message: error.message } });
-  }
+  res.json({ success: true, data: logs, count: logs.length });
 });
 
 export default router;

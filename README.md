@@ -12,7 +12,8 @@ A cloud multi-tenant PMS that runs hotels/hostels at scale, with native accounta
 - **Database**: PostgreSQL + Prisma ORM
 - **Frontend**: React + TypeScript + Vite
 - **Authentication**: JWT with RBAC
-- **Multi-tenancy**: Row-level security with tenant_id isolation
+- **Multi-tenancy**: tenant_id isolation
+- **Deployment**: Docker Compose on VPS
 
 ## Project Structure
 
@@ -44,56 +45,26 @@ innsight/
 
 ## Deployment
 
-### Vercel Deployment (Recommended)
+### VPS Deployment (Docker)
 
-The application is configured for Vercel deployment with both frontend and backend.
-
-**Quick Deploy:**
-```bash
-# 1. Login to Vercel
-vercel login
-
-# 2. Initialize project
-vercel
-
-# 3. Set environment variables in Vercel dashboard
-# DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, CORS_ORIGIN, VITE_API_URL
-
-# 4. Deploy
-vercel --prod
-```
-
-See `DEPLOYMENT.md` for detailed instructions.
-
-### Firebase Deployment (Alternative)
-
-The application is also configured for Firebase Hosting (frontend) and Firebase Functions (backend).
+The application is deployed as Docker containers on the VPS at `67.211.210.8`.
+All data lives in the PostgreSQL container.
 
 **Quick Deploy:**
 ```bash
-# 1. Login to Firebase
-firebase login
-
-# 2. Initialize project (first time only)
-firebase init
-
-# 3. Set environment variables
-firebase functions:secrets:set DATABASE_URL
-firebase functions:secrets:set JWT_SECRET
-firebase functions:secrets:set JWT_REFRESH_SECRET
-
-# 4. Deploy
-npm run deploy
+bash deploy-vps.sh
 ```
 
-See `FIREBASE_DEPLOYMENT.md` for detailed instructions.
-
-### Current Deployment Topology
+The script uploads the repo to `/opt/innsight`, generates server secrets on first run,
+and runs `docker compose up -d --build`.
 
 | Surface | Platform | Description |
 | --- | --- | --- |
-| Frontend SPA | **Vercel** (`frontend/dist`) | Served via Vercel static build |
-| Backend API | **Vercel Serverless** | Express app deployed as serverless function |
+| Frontend SPA | `innsight-web` container (nginx) | `http://67.211.210.8:3021` |
+| Backend API | `innsight-api` container (Express + Socket.IO) | proxied same-origin via `/api` |
+| Database | `innsight-db` container (PostgreSQL 16) | internal network only |
+
+See `DEPLOYMENT.md` for detailed instructions.
 
 ## Getting Started
 

@@ -4,20 +4,16 @@ import https from 'https';
 import { URL } from 'url';
 import { prisma } from './prisma';
 
-export const TENANT_WEBHOOK_EVENT_TYPES = ['reservation.confirmed', 'payment.completed', '*'] as const;
+export const TENANT_WEBHOOK_EVENT_TYPES = [
+  'reservation.confirmed',
+  'payment.completed',
+  'alert.created',
+  '*',
+] as const;
 
 export type TenantWebhookEventType = (typeof TENANT_WEBHOOK_EVENT_TYPES)[number];
 
-type TenantWebhookDoc = {
-  tenantId: string;
-  url: string;
-  description?: string | null;
-  eventTypes?: TenantWebhookEventType[];
-  secret: string;
-  active?: boolean;
-};
-
-const matchesEvent = (events: TenantWebhookEventType[] | undefined, event: TenantWebhookEventType) => {
+const matchesEvent = (events: string[] | undefined, event: TenantWebhookEventType) => {
   if (!events || events.length === 0) return event === 'reservation.confirmed';
   return events.includes('*') || events.includes(event);
 };
@@ -79,8 +75,45 @@ export const triggerTenantWebhookEvent = async ({
   eventType: TenantWebhookEventType;
   payload: Record<string, any>;
 }) => {
-  // TODO: Implement webhook storage in PostgreSQL via Prisma
-  // This is a stub - webhooks are not currently implemented in the new system
-  console.warn(`Webhook event ${eventType} for tenant ${tenantId} - webhook system not yet migrated to PostgreSQL`);
-  return;
+  const webhooks = await prisma.webhook.findMany({
+    where: { tenantId, isActive: true },
+  });
+
+  const matching = webhooks.filter((wh) => matchesEvent(wh.events, eventType));
+  if (matching.length === 0) return;
+
+  const body = JSON.stringify({
+    event: eventType,
+    tenantId,
+    timestamp: new Date().toISOString(),
+    data: payload,
+  });
+
+  await Promise.allSettled(
+    matching.map(async (webhook) => {
+      const headers: Record<string, string> = {};
+      if (webhook.secret) {
+        headers['X-InnSight-Signature'] = crypto
+          .createHmac('sha256', webhook.secret)
+          .update(body)
+          .digest('hex');
+      }
+
+      let status: string;
+      try {
+        await sendWebhookRequest(webhook.url, body, headers);
+        status = 'success';
+      } catch (error: any) {
+        status = `failed: ${(error?.message || 'unknown error').slice(0, 200)}`;
+        console.error(`Webhook delivery failed for ${webhook.id} (${webhook.url}):`, error?.message);
+      }
+
+      await prisma.webhook
+        .update({
+          where: { id: webhook.id },
+          data: { lastTriggeredAt: new Date(), lastStatus: status },
+        })
+        .catch(() => {});
+    })
+  );
 };

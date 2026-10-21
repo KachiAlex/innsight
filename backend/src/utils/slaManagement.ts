@@ -27,6 +27,7 @@ export interface SLAAgreement {
   supportResolutionHours: number;
   backupFrequencyHours: number;
   createdAt: Date;
+  updatedAt?: Date;
 }
 
 // Get platform uptime metrics
@@ -36,13 +37,13 @@ export const getPlatformUptimeMetrics = async (daysBack: number = 7) => {
 
     // Count successful requests
     const totalRequests = await prisma.audit.count({
-      where: { createdAt: { gte: since } },
+      where: { timestamp: { gte: since } },
     });
 
     const errorRequests = await prisma.audit.count({
       where: {
-        createdAt: { gte: since },
-        metadata: { path: 'status', equals: 'error' },
+        timestamp: { gte: since },
+        metadata: { path: ['status'], equals: 'error' },
       },
     });
 
@@ -78,7 +79,7 @@ export const getTenantSLACompliance = async (tenantId: string): Promise<SLAMetri
     const requests = await prisma.audit.findMany({
       where: {
         tenantId,
-        createdAt: { gte: since },
+        timestamp: { gte: since },
       },
     });
 
@@ -111,10 +112,12 @@ export const upsertSLAAgreement = async (
       where: { tenantId },
     });
 
+    const { id: _id, tenantId: _t, createdAt: _c, updatedAt: _u, ...updateData } = slaData;
+
     const agreement = existing
       ? await prisma.sLAAgreement.update({
           where: { tenantId },
-          data: slaData,
+          data: updateData,
         })
       : await prisma.sLAAgreement.create({
           data: {

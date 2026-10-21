@@ -397,36 +397,36 @@ export const completeCheckoutIntent = async ({
     createdBy,
   });
 
-  const paymentDocRef = db.collection('payments').doc();
-  const paymentTimestamp = now();
-  await paymentDocRef.set({
-    tenantId,
-    folioId: folio.id,
-    amount: intent.amountMajor,
-    method: 'card',
-    reference: verification.reference,
-    paymentGateway: intent.gateway,
-    gatewayTransactionId: verification.gatewayTransactionId,
-    status: 'completed',
-    processedBy: 'public_portal',
-    reconciled: false,
-    createdAt: paymentTimestamp,
-    updatedAt: paymentTimestamp,
-    paidAt: verification.paidAt ? toTimestamp(verification.paidAt) : paymentTimestamp,
+  const payment = await prisma.payment.create({
+    data: {
+      tenantId,
+      folioId: folio.id,
+      amount: new Prisma.Decimal(intent.amountMajor),
+      method: 'card',
+      reference: verification.reference,
+      currency: intent.currency,
+      paymentGateway: intent.gateway,
+      gatewayTransactionId: verification.gatewayTransactionId,
+      status: 'completed',
+      reconciled: false,
+      notes: 'public_portal',
+      userId: createdBy,
+    },
   });
+  const paymentDocumentId = payment.id;
 
   await triggerTenantWebhookEvent({
     tenantId,
     eventType: 'payment.completed',
     payload: {
-      paymentId: paymentDocRef.id,
+      paymentId: paymentDocumentId,
       folioId: folio.id,
       reservationId: reservation.id,
       amount: intent.amountMajor,
       currency: intent.currency,
       gateway: intent.gateway,
       reference: verification.reference,
-      paidAt: verification.paidAt ?? paymentTimestamp.toDate(),
+      paidAt: verification.paidAt ?? payment.createdAt,
     },
   });
 
@@ -442,7 +442,7 @@ export const completeCheckoutIntent = async ({
   await markIntentStatus(intent.id, 'confirmed', {
     reservationId: reservation.id,
     folioId: folio.id,
-    paymentDocumentId: paymentDocRef.id,
+    paymentDocumentId,
   });
 
   await triggerTenantWebhookEvent({
@@ -474,6 +474,6 @@ export const completeCheckoutIntent = async ({
   return {
     reservation,
     folioId: folio.id,
-    paymentDocumentId: paymentDocRef.id,
+    paymentDocumentId,
   };
 };

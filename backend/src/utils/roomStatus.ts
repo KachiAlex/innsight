@@ -92,7 +92,10 @@ export const bulkUpdateRoomStatus = async (
   reason?: string,
   staffId?: string
 ) => {
-  const results = [];
+  const results: Array<
+    | { roomId: string; success: true; room: unknown }
+    | { roomId: string; success: false; error: string }
+  > = [];
 
   for (const roomId of roomIds) {
     try {

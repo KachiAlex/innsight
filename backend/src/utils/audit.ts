@@ -1,7 +1,7 @@
 import { prisma } from './prisma';
 
 export interface AuditLogParams {
-  tenantId: string;
+  tenantId?: string | null;
   userId?: string;
   action: string;
   entityType: string;

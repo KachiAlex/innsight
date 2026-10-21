@@ -185,7 +185,7 @@ async function quickSetupIlluminate() {
     console.log('⚠️  Important:');
     console.log('- Change your password after first login');
     console.log('- You can add more rooms and categories manually');
-    console.log('- Use the Firebase migration script later to import all 170 rooms');
+    console.log('- Run the rooms import script to import all 170 rooms');
 
   } catch (error) {
     console.error('❌ Quick setup failed:', error);

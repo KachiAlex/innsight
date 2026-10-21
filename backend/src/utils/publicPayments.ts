@@ -1,4 +1,5 @@
 import { AppError } from '../middleware/errorHandler';
+import { prisma } from './prisma';
 import {
   paymentGatewayService,
   type PaymentGateway,
@@ -18,6 +19,7 @@ export type TenantPaymentSettingsDoc = {
   paystackSecretKey?: string;
   flutterwavePublicKey?: string;
   flutterwaveSecretKey?: string;
+  flutterwaveSecretHash?: string;
   monnifyApiKey?: string;
   monnifySecretKey?: string;
   monnifyContractCode?: string;
@@ -39,6 +41,7 @@ export type TenantPaymentSettings = {
   paystackSecretKey?: string;
   flutterwavePublicKey?: string;
   flutterwaveSecretKey?: string;
+  flutterwaveSecretHash?: string;
   monnifyApiKey?: string;
   monnifySecretKey?: string;
   monnifyContractCode?: string;
@@ -59,6 +62,7 @@ export type TenantPaymentSettingsUpdate = Partial<
     | 'paystackSecretKey'
     | 'flutterwavePublicKey'
     | 'flutterwaveSecretKey'
+    | 'flutterwaveSecretHash'
     | 'monnifyApiKey'
     | 'monnifySecretKey'
     | 'monnifyContractCode'
@@ -74,30 +78,48 @@ const DEFAULT_GATEWAY = (process.env.PUBLIC_PAYMENT_DEFAULT_GATEWAY || 'paystack
 const DEFAULT_CURRENCY = process.env.PUBLIC_PAYMENT_DEFAULT_CURRENCY || 'NGN';
 const DEFAULT_CALLBACK_URL = process.env.PUBLIC_PAYMENT_CALLBACK_URL;
 
+const readPaymentSettingsDoc = async (
+  tenantId: string
+): Promise<TenantPaymentSettingsDoc | null> => {
+  if (!prisma) {
+    return null;
+  }
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { paymentSettings: true },
+  });
+  return (tenant?.paymentSettings as TenantPaymentSettingsDoc | null) ?? null;
+};
+
 export const getTenantPaymentSettings = async (tenantId: string): Promise<TenantPaymentSettings> => {
-  // TODO: Implement using Prisma/PostgreSQL instead of Firebase
-  // For now, return default settings from environment variables
-  const defaultGateway = DEFAULT_GATEWAY;
-  const allowedGateways = [defaultGateway].filter((gateway) => 
-    ['paystack', 'flutterwave', 'stripe'].includes(gateway)
+  const doc = await readPaymentSettingsDoc(tenantId);
+
+  const defaultGateway = doc?.defaultGateway ?? DEFAULT_GATEWAY;
+  const allowedGateways = (doc?.allowedGateways?.length
+    ? doc.allowedGateways
+    : [defaultGateway]
+  ).filter((gateway) =>
+    ['paystack', 'flutterwave', 'stripe', 'monnify'].includes(gateway)
   ) as PaymentGateway[];
 
   return {
     tenantId,
     defaultGateway,
-    currency: DEFAULT_CURRENCY,
-    callbackUrl: DEFAULT_CALLBACK_URL || undefined,
-    paystackPublicKey: process.env.PAYSTACK_PUBLIC_KEY,
-    paystackSecretKey: process.env.PAYSTACK_SECRET_KEY,
-    flutterwavePublicKey: process.env.FLUTTERWAVE_PUBLIC_KEY,
-    flutterwaveSecretKey: process.env.FLUTTERWAVE_SECRET_KEY,
-    monnifyApiKey: process.env.MONNIFY_API_KEY,
-    monnifySecretKey: process.env.MONNIFY_SECRET_KEY,
-    monnifyContractCode: process.env.MONNIFY_CONTRACT_CODE,
-    monnifyCollectionAccount: process.env.MONNIFY_COLLECTION_ACCOUNT,
-    monnifyBaseUrl: process.env.MONNIFY_BASE_URL,
-    stripePublicKey: process.env.STRIPE_PUBLIC_KEY,
-    stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    currency: doc?.currency ?? DEFAULT_CURRENCY,
+    callbackUrl: doc?.callbackUrl ?? (DEFAULT_CALLBACK_URL || undefined),
+    paystackPublicKey: doc?.paystackPublicKey ?? process.env.PAYSTACK_PUBLIC_KEY,
+    paystackSecretKey: doc?.paystackSecretKey ?? process.env.PAYSTACK_SECRET_KEY,
+    flutterwavePublicKey: doc?.flutterwavePublicKey ?? process.env.FLUTTERWAVE_PUBLIC_KEY,
+    flutterwaveSecretKey: doc?.flutterwaveSecretKey ?? process.env.FLUTTERWAVE_SECRET_KEY,
+    flutterwaveSecretHash:
+      doc?.flutterwaveSecretHash ?? process.env.FLUTTERWAVE_SECRET_HASH,
+    monnifyApiKey: doc?.monnifyApiKey ?? process.env.MONNIFY_API_KEY,
+    monnifySecretKey: doc?.monnifySecretKey ?? process.env.MONNIFY_SECRET_KEY,
+    monnifyContractCode: doc?.monnifyContractCode ?? process.env.MONNIFY_CONTRACT_CODE,
+    monnifyCollectionAccount: doc?.monnifyCollectionAccount ?? process.env.MONNIFY_COLLECTION_ACCOUNT,
+    monnifyBaseUrl: doc?.monnifyBaseUrl ?? process.env.MONNIFY_BASE_URL,
+    stripePublicKey: doc?.stripePublicKey ?? process.env.STRIPE_PUBLIC_KEY,
+    stripeSecretKey: doc?.stripeSecretKey ?? process.env.STRIPE_SECRET_KEY,
     allowedGateways: allowedGateways.length > 0 ? Array.from(new Set(allowedGateways)) : [defaultGateway],
   };
 };
@@ -106,8 +128,24 @@ export const upsertTenantPaymentSettings = async (
   tenantId: string,
   updates: TenantPaymentSettingsUpdate
 ) => {
-  // TODO: Implement using Prisma/PostgreSQL instead of Firebase
-  throw new Error('upsertTenantPaymentSettings is not yet implemented for PostgreSQL');
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
+  }
+
+  const existing = await readPaymentSettingsDoc(tenantId);
+  const merged: TenantPaymentSettingsDoc = {
+    ...(existing ?? { tenantId }),
+    ...updates,
+    tenantId,
+    updatedAt: new Date(),
+  };
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: { paymentSettings: JSON.parse(JSON.stringify(merged)) },
+  });
+
+  return merged;
 };
 
 export const buildGatewayCredentialSet = (
@@ -123,6 +161,13 @@ export const buildGatewayCredentialSet = (
       return {
         flutterwavePublicKey: settings.flutterwavePublicKey,
         flutterwaveSecretKey: settings.flutterwaveSecretKey,
+      };
+    case 'monnify':
+      return {
+        monnifyApiKey: settings.monnifyApiKey,
+        monnifySecretKey: settings.monnifySecretKey,
+        monnifyContractCode: settings.monnifyContractCode,
+        monnifyBaseUrl: settings.monnifyBaseUrl,
       };
     case 'stripe':
       return {

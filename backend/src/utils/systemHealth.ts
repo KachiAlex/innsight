@@ -32,8 +32,8 @@ export const getSystemHealth = async (): Promise<SystemHealth> => {
       prisma.tenant.count({ where: { subscriptionStatus: 'active' } }),
       prisma.audit.count({
         where: {
-          createdAt: { gte: oneHourAgo },
-          metadata: { path: 'status', equals: 'error' },
+          timestamp: { gte: oneHourAgo },
+          metadata: { path: ['status'], equals: 'error' },
         },
       }),
       prisma.user.count(),
@@ -41,7 +41,7 @@ export const getSystemHealth = async (): Promise<SystemHealth> => {
 
     // Calculate error rate
     const totalActions = await prisma.audit.count({
-      where: { createdAt: { gte: oneHourAgo } },
+      where: { timestamp: { gte: oneHourAgo } },
     });
 
     const errorRate = totalActions > 0 ? Math.round((recentErrors / totalActions) * 100) : 0;

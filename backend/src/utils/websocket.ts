@@ -57,7 +57,9 @@ class WebSocketManager {
       this.handleConnection(socket);
     });
 
-    console.log('✅ WebSocket server initialized on', httpServer.address());
+    httpServer.on('listening', () => {
+      console.log('✅ WebSocket server initialized on', httpServer.address());
+    });
     return this.io;
   }
 

@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { createAuditLog } from './audit';
+import { AppError } from '../middleware/errorHandler';
 
 export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
 export type TicketStatus = 'open' | 'in-progress' | 'waiting-customer' | 'resolved' | 'closed';
@@ -54,90 +55,53 @@ export interface TicketStats {
   ticketsByStatus: Record<TicketStatus, number>;
 }
 
-// Mock storage - in production would use Firestore/PostgreSQL
-const ticketsStorage = new Map<string, SupportTicket>();
-
-// Generate mock tickets for demo
-const initializeMockTickets = () => {
-  if (ticketsStorage.size === 0) {
-    const mockTickets: SupportTicket[] = [
-      {
-        id: 'tk-001',
-        tenantId: 'tenant-1',
-        subject: 'Payment processing issue',
-        description: 'Unable to process credit card payments',
-        category: 'billing',
-        priority: 'high',
-        status: 'in-progress',
-        requesterEmail: 'john@hotel1.com',
-        requesterName: 'John Doe',
-        assignedTo: 'staff-1',
-        messages: [
-          {
-            from: 'john@hotel1.com',
-            message: 'We are unable to process any payments today',
-            timestamp: new Date(Date.now() - 86400000).toISOString(),
-          },
-          {
-            from: 'support@innsight.com',
-            message: 'Thank you for reporting this. We are investigating.',
-            timestamp: new Date(Date.now() - 72000000).toISOString(),
-          },
-        ],
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-        updatedAt: new Date(Date.now() - 3600000).toISOString(),
-      },
-      {
-        id: 'tk-002',
-        tenantId: 'tenant-2',
-        subject: 'Room category not showing',
-        description: 'Custom room categories not displaying in the system',
-        category: 'bug',
-        priority: 'medium',
-        status: 'waiting-customer',
-        requesterEmail: 'manager@hotel2.com',
-        requesterName: 'Jane Smith',
-        assignedTo: 'staff-2',
-        messages: [
-          {
-            from: 'manager@hotel2.com',
-            message: 'The new room categories I created are not showing up',
-            timestamp: new Date(Date.now() - 172800000).toISOString(),
-          },
-          {
-            from: 'support@innsight.com',
-            message: 'Can you try clearing your browser cache? Reply with results.',
-            timestamp: new Date(Date.now() - 169200000).toISOString(),
-          },
-        ],
-        createdAt: new Date(Date.now() - 172800000).toISOString(),
-        updatedAt: new Date(Date.now() - 169200000).toISOString(),
-      },
-      {
-        id: 'tk-003',
-        subject: 'API rate limit increased',
-        description: 'Request for higher API rate limits for bulk operations',
-        category: 'feature-request',
-        priority: 'low',
-        status: 'open',
-        requesterEmail: 'dev@partner.com',
-        requesterName: 'Developer Partner',
-        messages: [
-          {
-            from: 'dev@partner.com',
-            message: 'We need to increase our API rate limit to 10k requests/min',
-            timestamp: new Date(Date.now() - 259200000).toISOString(),
-          },
-        ],
-        createdAt: new Date(Date.now() - 259200000).toISOString(),
-        updatedAt: new Date(Date.now() - 259200000).toISOString(),
-      },
-    ];
-
-    mockTickets.forEach(ticket => {
-      ticketsStorage.set(ticket.id, ticket);
-    });
+const requirePrisma = () => {
+  if (!prisma) {
+    throw new AppError('Database connection not initialized', 500);
   }
+  return prisma;
+};
+
+const toTicket = (row: any): SupportTicket => ({
+  id: row.id,
+  tenantId: row.tenantId ?? undefined,
+  subject: row.subject,
+  description: row.description,
+  category: row.category,
+  priority: row.priority,
+  status: row.status,
+  requesterEmail: row.requesterEmail,
+  requesterName: row.requesterName,
+  assignedTo: row.assignedTo ?? undefined,
+  attachments: row.attachments ?? undefined,
+  messages: row.messages ?? [],
+  createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+  updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
+  resolvedAt: row.resolvedAt
+    ? row.resolvedAt instanceof Date
+      ? row.resolvedAt.toISOString()
+      : row.resolvedAt
+    : undefined,
+  resolutionNotes: row.resolutionNotes ?? undefined,
+  satisfactionRating: row.satisfactionRating ?? undefined,
+  customFields: row.customFields ?? undefined,
+});
+
+const logTicketAudit = async (
+  action: string,
+  ticket: Pick<SupportTicket, 'id' | 'tenantId'>,
+  afterState?: any
+) => {
+  if (!ticket.tenantId) {
+    return;
+  }
+  await createAuditLog({
+    tenantId: ticket.tenantId,
+    action,
+    entityType: 'SupportTicket',
+    entityId: ticket.id,
+    afterState,
+  });
 };
 
 export async function getTickets(
@@ -151,70 +115,62 @@ export async function getTickets(
   limit: number = 50,
   offset: number = 0
 ): Promise<SupportTicket[]> {
-  initializeMockTickets();
-  
-  let tickets = Array.from(ticketsStorage.values());
+  const client = requirePrisma();
 
-  if (filters) {
-    if (filters.tenantId) {
-      tickets = tickets.filter(t => t.tenantId === filters.tenantId);
-    }
-    if (filters.status) {
-      tickets = tickets.filter(t => t.status === filters.status);
-    }
-    if (filters.priority) {
-      tickets = tickets.filter(t => t.priority === filters.priority);
-    }
-    if (filters.category) {
-      tickets = tickets.filter(t => t.category === filters.category);
-    }
-    if (filters.assignedTo) {
-      tickets = tickets.filter(t => t.assignedTo === filters.assignedTo);
-    }
-  }
-
-  // Sort by priority then by date
-  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-  tickets.sort((a, b) => {
-    const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
-    if (priorityDiff !== 0) return priorityDiff;
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  const rows = await client.supportTicket.findMany({
+    where: {
+      tenantId: filters?.tenantId,
+      status: filters?.status,
+      priority: filters?.priority,
+      category: filters?.category,
+      assignedTo: filters?.assignedTo,
+    },
+    orderBy: { updatedAt: 'desc' },
   });
+
+  // Sort by priority then by date (priority ordering is app-level, not SQL)
+  const priorityOrder: Record<TicketPriority, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const tickets = rows
+    .map(toTicket)
+    .sort((a, b) => {
+      const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
 
   return tickets.slice(offset, offset + limit);
 }
 
 export async function getTicket(ticketId: string): Promise<SupportTicket | null> {
-  initializeMockTickets();
-  return ticketsStorage.get(ticketId) || null;
+  const client = requirePrisma();
+  const row = await client.supportTicket.findUnique({ where: { id: ticketId } });
+  return row ? toTicket(row) : null;
 }
 
 export async function createTicket(
   data: Omit<SupportTicket, 'id' | 'createdAt' | 'updatedAt' | 'messages'>
 ): Promise<SupportTicket> {
-  initializeMockTickets();
-  
-  const id = `tk-${Date.now()}`;
-  const now = new Date().toISOString();
+  const client = requirePrisma();
 
-  const ticket: SupportTicket = {
-    ...data,
-    id,
-    messages: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  ticketsStorage.set(id, ticket);
-
-  await createAuditLog({
-    action: 'CREATE_TICKET',
-    entityType: 'SupportTicket',
-    resourceId: id,
-    changes: ticket,
-    status: 'success'
+  const row = await client.supportTicket.create({
+    data: {
+      tenantId: data.tenantId ?? null,
+      subject: data.subject,
+      description: data.description,
+      category: data.category,
+      priority: data.priority,
+      status: data.status ?? 'open',
+      requesterEmail: data.requesterEmail,
+      requesterName: data.requesterName,
+      assignedTo: data.assignedTo ?? null,
+      attachments: data.attachments ?? undefined,
+      messages: [],
+      customFields: data.customFields ?? undefined,
+    },
   });
 
+  const ticket = toTicket(row);
+  await logTicketAudit('CREATE_TICKET', ticket, ticket);
   return ticket;
 }
 
@@ -222,28 +178,40 @@ export async function updateTicket(
   ticketId: string,
   updates: Partial<Omit<SupportTicket, 'id' | 'createdAt' | 'messages'>>
 ): Promise<SupportTicket | null> {
-  initializeMockTickets();
-  
-  const ticket = ticketsStorage.get(ticketId);
-  if (!ticket) return null;
+  const client = requirePrisma();
 
-  const updated = {
-    ...ticket,
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
+  const existing = await client.supportTicket.findUnique({ where: { id: ticketId } });
+  if (!existing) return null;
 
-  ticketsStorage.set(ticketId, updated);
+  const resolvedAt =
+    updates.resolvedAt !== undefined
+      ? updates.resolvedAt
+      : updates.status === 'resolved' && !existing.resolvedAt
+        ? new Date().toISOString()
+        : undefined;
 
-  await createAuditLog({
-    action: 'UPDATE_TICKET',
-    entityType: 'SupportTicket',
-    resourceId: ticketId,
-    changes: updates,
-    status: 'success'
+  const row = await client.supportTicket.update({
+    where: { id: ticketId },
+    data: {
+      ...(updates.subject !== undefined && { subject: updates.subject }),
+      ...(updates.description !== undefined && { description: updates.description }),
+      ...(updates.category !== undefined && { category: updates.category }),
+      ...(updates.priority !== undefined && { priority: updates.priority }),
+      ...(updates.status !== undefined && { status: updates.status }),
+      ...(updates.requesterEmail !== undefined && { requesterEmail: updates.requesterEmail }),
+      ...(updates.requesterName !== undefined && { requesterName: updates.requesterName }),
+      ...(updates.assignedTo !== undefined && { assignedTo: updates.assignedTo }),
+      ...(updates.attachments !== undefined && { attachments: updates.attachments }),
+      ...(updates.resolutionNotes !== undefined && { resolutionNotes: updates.resolutionNotes }),
+      ...(updates.satisfactionRating !== undefined && { satisfactionRating: updates.satisfactionRating }),
+      ...(updates.customFields !== undefined && { customFields: updates.customFields }),
+      ...(resolvedAt !== undefined && { resolvedAt: new Date(resolvedAt) }),
+    },
   });
 
-  return updated;
+  const ticket = toTicket(row);
+  await logTicketAudit('UPDATE_TICKET', ticket, updates);
+  return ticket;
 }
 
 export async function addTicketMessage(
@@ -254,75 +222,70 @@ export async function addTicketMessage(
     attachments?: { url: string; fileName: string }[];
   }
 ): Promise<SupportTicket | null> {
-  initializeMockTickets();
-  
-  const ticket = ticketsStorage.get(ticketId);
-  if (!ticket) return null;
+  const client = requirePrisma();
 
-  const newMessage = {
-    ...message,
-    timestamp: new Date().toISOString(),
-  };
+  const existing = await client.supportTicket.findUnique({ where: { id: ticketId } });
+  if (!existing) return null;
 
-  ticket.messages.push(newMessage);
-  ticket.updatedAt = new Date().toISOString();
+  const messages = Array.isArray(existing.messages) ? [...(existing.messages as any[])] : [];
+  messages.push({ ...message, timestamp: new Date().toISOString() });
 
   // Auto-update status based on reply
+  let status = existing.status;
   if (message.from.includes('support@')) {
-    ticket.status = 'waiting-customer';
-  } else if (message.from !== ticket.requesterEmail) {
-    ticket.status = 'in-progress';
+    status = 'waiting-customer';
+  } else if (message.from !== existing.requesterEmail) {
+    status = 'in-progress';
   }
 
-  ticketsStorage.set(ticketId, ticket);
-
-  await createAuditLog({
-    action: 'ADD_MESSAGE',
-    entityType: 'SupportTicket',
-    resourceId: ticketId,
-    changes: { message: newMessage },
-    status: 'success'
+  const row = await client.supportTicket.update({
+    where: { id: ticketId },
+    data: { messages, status },
   });
 
+  const ticket = toTicket(row);
+  await logTicketAudit('ADD_MESSAGE', ticket, { message });
   return ticket;
 }
 
 export async function getTicketStats(tenantId?: string): Promise<TicketStats> {
-  initializeMockTickets();
-  
-  let tickets = Array.from(ticketsStorage.values());
-  
-  if (tenantId) {
-    tickets = tickets.filter(t => t.tenantId === tenantId);
-  }
+  const client = requirePrisma();
 
-  const stats: TicketStats = {
-    totalTickets: tickets.length,
-    openTickets: tickets.filter(t => t.status !== 'closed' && t.status !== 'resolved').length,
-    averageResolutionTime: 24, // Mock: 24 hours
-    averageResponseTime: 2, // Mock: 2 hours
-    satisfactionScore: 4.2,
-    ticketsByPriority: {
-      low: tickets.filter(t => t.priority === 'low').length,
-      medium: tickets.filter(t => t.priority === 'medium').length,
-      high: tickets.filter(t => t.priority === 'high').length,
-      critical: tickets.filter(t => t.priority === 'critical').length,
+  const rows = await client.supportTicket.findMany({
+    where: tenantId ? { tenantId } : undefined,
+    select: {
+      status: true,
+      priority: true,
+      category: true,
+      satisfactionRating: true,
+      createdAt: true,
+      resolvedAt: true,
     },
-    ticketsByCategory: {
-      billing: tickets.filter(t => t.category === 'billing').length,
-      technical: tickets.filter(t => t.category === 'technical').length,
-      'feature-request': tickets.filter(t => t.category === 'feature-request').length,
-      bug: tickets.filter(t => t.category === 'bug').length,
-      other: tickets.filter(t => t.category === 'other').length,
-    },
-    ticketsByStatus: {
-      open: tickets.filter(t => t.status === 'open').length,
-      'in-progress': tickets.filter(t => t.status === 'in-progress').length,
-      'waiting-customer': tickets.filter(t => t.status === 'waiting-customer').length,
-      resolved: tickets.filter(t => t.status === 'resolved').length,
-      closed: tickets.filter(t => t.status === 'closed').length,
-    },
+  });
+
+  const resolved = rows.filter((r) => r.resolvedAt);
+  const averageResolutionTime = resolved.length
+    ? resolved.reduce(
+        (sum, r) => sum + (r.resolvedAt!.getTime() - r.createdAt.getTime()) / 3_600_000,
+        0
+      ) / resolved.length
+    : 0;
+  const rated = rows.filter((r) => r.satisfactionRating !== null);
+  const satisfactionScore = rated.length
+    ? rated.reduce((sum, r) => sum + (r.satisfactionRating ?? 0), 0) / rated.length
+    : 0;
+
+  const count = <T extends string>(key: 'priority' | 'category' | 'status', values: readonly T[]) =>
+    Object.fromEntries(values.map((v) => [v, rows.filter((r) => r[key] === v).length])) as Record<T, number>;
+
+  return {
+    totalTickets: rows.length,
+    openTickets: rows.filter((r) => r.status !== 'closed' && r.status !== 'resolved').length,
+    averageResolutionTime,
+    averageResponseTime: 0, // requires first-response tracking
+    satisfactionScore,
+    ticketsByPriority: count('priority', ['low', 'medium', 'high', 'critical'] as const),
+    ticketsByCategory: count('category', ['billing', 'technical', 'feature-request', 'bug', 'other'] as const),
+    ticketsByStatus: count('status', ['open', 'in-progress', 'waiting-customer', 'resolved', 'closed'] as const),
   };
-
-  return stats;
 }

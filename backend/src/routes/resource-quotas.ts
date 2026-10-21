@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { requireRole } from '../middleware/auth';
+import { authenticate, requireRole } from '../middleware/auth';
 import {
   getTenantQuotas,
   updateTenantQuotas,
@@ -9,6 +9,8 @@ import {
 } from '../utils/tenantResourceQuotas';
 
 const router = Router();
+
+router.use(authenticate);
 
 // Get quotas for a specific tenant
 router.get('/:tenantId', requireRole('iitech_admin'), async (req: Request, res: Response) => {

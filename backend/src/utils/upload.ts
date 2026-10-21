@@ -22,21 +22,33 @@ if (!resolvedPreferred && uploadsDir !== preferredUploadsDir) {
   console.warn(`Uploads directory default path was not writable; using fallback at ${uploadsDir}`);
 }
 
+// Map allowed mimetypes to fixed extensions — never trust the client-supplied
+// filename extension (a ".html" upload sent as image/png would become stored XSS).
+const mimeToExt: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
 // Configure storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
+    const ext = mimeToExt[file.mimetype];
+    if (!ext) {
+      return cb(new Error('Invalid file type'), '');
+    }
+    cb(null, `${uuidv4()}${ext}`);
   },
 });
 
 // File filter - only allow images
 const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-  if (allowedMimes.includes(file.mimetype)) {
+  if (mimeToExt[file.mimetype]) {
     cb(null, true);
   } else {
     cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'));

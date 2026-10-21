@@ -34,17 +34,12 @@ authRouter.post('/login', async (req, res) => {
     }
 
     // Query PostgreSQL for user
-    const whereClause: any = {
-      email,
-      isActive: true,
-    };
-
-    if (tenantId) {
-      whereClause.tenantId = tenantId;
-    }
-
-    const user = await prisma.user.findFirst({
-      where: whereClause,
+    const users = await prisma.user.findMany({
+      where: {
+        email,
+        isActive: true,
+        ...(tenantId ? { tenantId } : {}),
+      },
       include: {
         tenant: {
           select: {
@@ -56,14 +51,32 @@ authRouter.post('/login', async (req, res) => {
       },
     });
 
-    if (!user) {
+    if (users.length === 0) {
       throw new AppError('Invalid credentials', 401);
     }
 
-    // Verify password
-    const isValidPassword = await comparePassword(password, user.passwordHash);
-    if (!isValidPassword) {
-      throw new AppError('Invalid credentials', 401);
+    // If the same email exists in multiple tenants and no tenantId was given,
+    // disambiguate by password match rather than picking an arbitrary tenant.
+    let user;
+    if (tenantId || users.length === 1) {
+      user = users[0];
+      if (!(await comparePassword(password, user.passwordHash))) {
+        throw new AppError('Invalid credentials', 401);
+      }
+    } else {
+      const matches = [] as typeof users;
+      for (const candidate of users) {
+        if (await comparePassword(password, candidate.passwordHash)) {
+          matches.push(candidate);
+        }
+      }
+      if (matches.length === 0) {
+        throw new AppError('Invalid credentials', 401);
+      }
+      if (matches.length > 1) {
+        throw new AppError('Multiple accounts use this email. Please specify your tenant.', 400);
+      }
+      user = matches[0];
     }
 
     // Skip lastLoginAt update to avoid database locks in serverless environment
@@ -216,12 +229,22 @@ authRouter.get('/me', authenticate, async (req: AuthRequest, res) => {
 });
 
 // POST /api/auth/register
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', authenticate, async (req: AuthRequest, res) => {
   try {
     const { email, password, firstName, lastName, phone, role, tenantId } = registerSchema.parse(req.body);
 
     if (!prisma) {
       throw new AppError('Database connection not initialized', 500);
+    }
+
+    // Only iitech admins or a manager of this tenant may create accounts
+    const caller = req.user;
+    const isAdmin = caller?.role === 'iitech_admin';
+    const isTenantManager =
+      caller?.tenantId === tenantId &&
+      ['owner', 'general_manager'].includes(caller?.role || '');
+    if (!isAdmin && !isTenantManager) {
+      throw new AppError('Insufficient permissions to register users', 403);
     }
 
     // Check if tenant exists
@@ -308,11 +331,22 @@ authRouter.post('/register', async (req, res) => {
   }
 });
 
-// POST /api/auth/create-admin - Create admin account in PostgreSQL (one-time setup, no auth required)
+// POST /api/auth/create-admin - Bootstrap superadmin (requires ALLOW_ADMIN_BOOTSTRAP=true; disabled once an admin exists)
 authRouter.post('/create-admin', async (req, res) => {
   try {
     if (!prisma) {
       throw new AppError('Database connection not initialized', 500);
+    }
+
+    if (process.env.ALLOW_ADMIN_BOOTSTRAP !== 'true') {
+      throw new AppError('Admin bootstrap is disabled', 403);
+    }
+
+    const existingAdmin = await prisma.user.findFirst({
+      where: { role: 'iitech_admin' },
+    });
+    if (existingAdmin) {
+      throw new AppError('An admin account already exists', 403);
     }
 
     // Find or create IITECH tenant
@@ -383,6 +417,9 @@ authRouter.post('/create-admin', async (req, res) => {
       },
     });
   } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
     console.error('Error creating admin in PostgreSQL:', error);
     throw new AppError(`Failed to create admin account: ${error.message}`, 500);
   }

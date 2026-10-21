@@ -1,5 +1,4 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
-process.env.SUPPRESS_FIREBASE_WARNING = 'true';
 
 process.env.PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || 'test-paystack-secret';
 process.env.PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY || 'test-paystack-public';
