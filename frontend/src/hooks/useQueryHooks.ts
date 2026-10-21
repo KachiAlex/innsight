@@ -13,27 +13,136 @@ type AnyQueryOptions = UseQueryOptions<any, unknown, any, any>;
 // DASHBOARD HOOKS
 // ============================================
 
+export interface DashboardReservation {
+  id: string;
+  reservationNumber: string;
+  guestName: string;
+  status: string;
+  rate: number;
+  checkInDate: string;
+  checkOutDate: string;
+  room?: { id: string; roomNumber: string; roomType?: string };
+}
+
+export interface DashboardAlert {
+  id: string;
+  severity: string;
+  title: string;
+  message?: string;
+  createdAt: string;
+}
+
+export interface DashboardStats {
+  // KPIs
+  arrivalsToday: number;
+  awaitingCheckIn: number;
+  departuresToday: number;
+  inHouse: number;
+  todayRevenue: number;
+  yesterdayRevenue: number;
+  occupancyRate: number;
+  adr: number;
+  revpar: number;
+  totalRooms: number;
+  // Legacy aliases kept for compatibility
+  todayReservations: number;
+  checkedIn: number;
+  availableRooms: number;
+  // Detail data
+  arrivals: DashboardReservation[];
+  departures: DashboardReservation[];
+  roomStatusCounts: Record<string, number>;
+  housekeepingTotal: number;
+  housekeepingCompleted: number;
+  maintenanceOpen: number;
+  openAlerts: DashboardAlert[];
+  dailyOccupancy: { date: string; occupancyRate: number; occupiedRooms: number }[];
+  dailyRevenue: { date: string; amount: number }[];
+}
+
+const dateKey = (d: Date) => d.toISOString().slice(0, 10);
+const sameDay = (iso: string, key: string) => iso?.slice(0, 10) === key;
+
 export const useDashboardStats = (tenantId: string, options?: AnyQueryOptions) => {
   return useQuery(
     queryKeys.dashboard.stats(tenantId),
     async () => {
-      const today = new Date().toISOString().split('T')[0];
-      const [reservations, rooms, revenue, occupancy] = await Promise.all([
-        api.get(`/tenants/${tenantId}/reservations`, { params: { startDate: today, endDate: today } }),
-        api.get(`/tenants/${tenantId}/rooms`),
-        api.get(`/tenants/${tenantId}/reports/revenue`, { params: { startDate: today, endDate: today } }),
-        api.get(`/tenants/${tenantId}/reports/occupancy`, { params: { startDate: today, endDate: today } }),
+      const now = new Date();
+      const today = dateKey(now);
+      const from = dateKey(new Date(now.getTime() - 20 * 86400000));
+      // Reservation list supports checkInDate/checkOutDate window filters —
+      // widen it so in-house stays (checked in before today) are included.
+      const windowStart = dateKey(new Date(now.getTime() - 14 * 86400000));
+      const windowEnd = dateKey(new Date(now.getTime() + 30 * 86400000));
+
+      const [
+        reservations,
+        rooms,
+        revenue,
+        occupancy,
+        housekeeping,
+        maintenance,
+        alerts,
+      ] = await Promise.all([
+        api.get(`/tenants/${tenantId}/reservations`, {
+          params: { startDate: windowStart, endDate: windowEnd, limit: 200 },
+        }),
+        api.get(`/tenants/${tenantId}/rooms`, { params: { limit: 500 } }),
+        api.get(`/tenants/${tenantId}/reports/revenue`, { params: { from, to: today } }),
+        api.get(`/tenants/${tenantId}/reports/occupancy`, { params: { from, to: today } }),
+        api.get(`/tenants/${tenantId}/housekeeping`, { params: { limit: 100 } }),
+        api.get(`/tenants/${tenantId}/maintenance`, { params: { limit: 100 } }),
+        api.get(`/tenants/${tenantId}/alerts`, { params: { status: 'open', limit: 5 } }),
       ]);
-      
+
+      const reservationRows: DashboardReservation[] = reservations.data?.data ?? [];
+      const roomRows: { status: string }[] = rooms.data?.data ?? [];
+      const hkRows: { status: string }[] = housekeeping.data?.data ?? [];
+      const maintRows: { status: string }[] = maintenance.data?.data ?? [];
+      const occ = occupancy.data?.data ?? {};
+      const rev = revenue.data?.data ?? {};
+      const dailyRevenue: { date: string; amount: number }[] = rev.daily ?? [];
+
+      const arrivals = reservationRows.filter((r) => sameDay(r.checkInDate, today));
+      const departures = reservationRows.filter((r) => sameDay(r.checkOutDate, today));
+      const inHouse = reservationRows.filter((r) => r.status === 'checked_in');
+
+      const roomStatusCounts: Record<string, number> = {};
+      for (const room of roomRows) {
+        const s = room.status || 'unknown';
+        roomStatusCounts[s] = (roomStatusCounts[s] || 0) + 1;
+      }
+
       return {
-        todayReservations: reservations.data?.data?.length || 0,
-        checkedIn: reservations.data?.data?.filter((r: any) => r.status === 'checked_in')?.length || 0,
-        availableRooms: rooms.data?.data?.filter((r: any) => r.status === 'available')?.length || 0,
-        todayRevenue: revenue.data?.data?.totalRevenue || 0,
-        occupancyRate: occupancy.data?.data?.occupancyRate || 0,
-        adr: occupancy.data?.data?.adr || 0,
-        revpar: occupancy.data?.data?.revpar || 0,
-      };
+        arrivalsToday: arrivals.length,
+        awaitingCheckIn: arrivals.filter((r) => r.status === 'confirmed').length,
+        departuresToday: departures.length,
+        inHouse: inHouse.length,
+        todayRevenue: dailyRevenue.find((d) => d.date === today)?.amount ?? 0,
+        yesterdayRevenue:
+          dailyRevenue.find((d) => d.date === dateKey(new Date(now.getTime() - 86400000)))
+            ?.amount ?? 0,
+        occupancyRate: occ.averageOccupancyRate ?? 0,
+        adr: occ.adr ?? 0,
+        revpar: occ.revpar ?? 0,
+        totalRooms: occ.totalRooms ?? roomRows.length,
+        todayReservations: arrivals.length,
+        checkedIn: inHouse.length,
+        availableRooms: roomStatusCounts['available'] ?? 0,
+        arrivals,
+        departures,
+        roomStatusCounts,
+        housekeepingTotal: hkRows.length,
+        housekeepingCompleted: hkRows.filter(
+          (t) => t.status === 'completed' || t.status === 'inspected'
+        ).length,
+        maintenanceOpen: maintRows.filter(
+          (t) => !['resolved', 'closed', 'completed'].includes(t.status)
+        ).length,
+        openAlerts: alerts.data?.data ?? [],
+        dailyOccupancy: occ.daily ?? [],
+        dailyRevenue,
+      } satisfies DashboardStats;
     },
     {
       ...CACHE_STRATEGIES.DASHBOARD_METRICS,
