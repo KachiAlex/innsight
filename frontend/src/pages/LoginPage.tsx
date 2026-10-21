@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
+import { Button, Field, TextInput } from '../components/ui';
+import styles from './AuthPage.module.css';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,13 +22,8 @@ export default function LoginPage() {
       const response = await api.post('/auth/login', { email, password });
       const { token, refreshToken, user } = response.data.data;
       setAuth(token, refreshToken, user);
-      
-      // Redirect based on role
-      if (user.role === 'iitech_admin') {
-        navigate('/superadmin-dashboard');
-      } else {
-        navigate('/dashboard');
-      }
+
+      navigate(user.role === 'iitech_admin' ? '/superadmin-dashboard' : '/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.error?.message || 'Login failed');
     } finally {
@@ -35,89 +32,42 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-    }}>
-      <div style={{
-        background: 'white',
-        padding: '2rem',
-        borderRadius: '8px',
-        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-        width: '100%',
-        maxWidth: '400px'
-      }}>
-        <h1 style={{ marginBottom: '1.5rem', textAlign: 'center', color: '#333' }}>
-          InnSight PMS
-        </h1>
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem', color: '#666' }}>
-              Email
-            </label>
-            <input
+    <div className={styles.screen}>
+      <div className={styles.card}>
+        <div className={styles.brand}>
+          <div className={styles.brandMark}>In</div>
+          <h1 className={styles.brandName}>InnSight</h1>
+          <p className={styles.brandSub}>Sign in to your property</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="stack" style={{ gap: 'var(--space-3)' }}>
+          <Field label="Email" required>
+            <TextInput
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '1rem'
-              }}
+              autoComplete="email"
             />
-          </div>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', marginBottom: '0.5rem', color: '#666' }}>
-              Password
-            </label>
-            <input
+          </Field>
+          <Field label="Password" required>
+            <TextInput
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '1rem'
-              }}
+              autoComplete="current-password"
             />
-          </div>
-          {error && (
-            <div style={{
-              padding: '0.75rem',
-              background: '#fee',
-              color: '#c33',
-              borderRadius: '4px',
-              marginBottom: '1rem'
-            }}>
-              {error}
-            </div>
-          )}
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              background: loading ? '#ccc' : '#667eea',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '1rem',
-              cursor: loading ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
+          </Field>
+
+          {error && <div className={styles.errorBox} role="alert">{error}</div>}
+
+          <Button variant="primary" type="submit" loading={loading} block>
+            Sign in
+          </Button>
         </form>
+
+        <p className={styles.footer}>Hotel staff sign in here · Guests use the property portal</p>
       </div>
     </div>
   );

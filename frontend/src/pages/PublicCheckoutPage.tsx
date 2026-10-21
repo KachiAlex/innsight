@@ -19,6 +19,7 @@ import toast from 'react-hot-toast';
 import { publicApi, suppressToastHeaders } from '../lib/publicApi';
 import GuestSignupModal from '../components/GuestSignupModal';
 import { useCustomerAuthStore } from '../store/customerAuthStore';
+import { Stepper } from '../components/ui';
 
 type PublicGateway = 'paystack' | 'flutterwave' | 'stripe';
 
@@ -111,39 +112,35 @@ type CheckoutConfirmation = {
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  padding: 'clamp(0.75rem, 3vw, 0.95rem) 1rem',
-  borderRadius: '18px',
-  border: '1px solid rgba(16, 24, 40, 0.08)',
-  background: 'rgba(255,255,255,0.8)',
-  fontSize: '1rem',
-  color: '#111827',
-  fontFamily: "'Space Grotesk', 'Segoe UI', sans-serif",
+  padding: '0.8rem 1rem',
+  borderRadius: 'var(--radius-md)',
+  border: '1px solid var(--line)',
+  background: 'var(--surface)',
+  fontSize: '0.95rem',
+  color: 'var(--text)',
   outline: 'none',
 };
 
 const labelStyle: React.CSSProperties = {
   display: 'block',
   marginBottom: '0.5rem',
-  fontSize: '0.95rem',
+  fontSize: '0.9rem',
   fontWeight: 600,
-  color: '#334155',
+  color: 'var(--text-secondary)',
 };
 
 const sectionCardStyle: React.CSSProperties = {
-  borderRadius: '32px',
-  padding: 'clamp(1.25rem, 4vw, 2.2rem)',
-  background: 'rgba(255, 255, 255, 0.9)',
-  border: '1px solid rgba(17, 24, 39, 0.08)',
-  boxShadow: '0 25px 55px rgba(15, 23, 42, 0.12)',
-  backdropFilter: 'blur(14px)',
+  borderRadius: 'var(--radius-lg)',
+  padding: 'clamp(1.25rem, 4vw, 2rem)',
+  background: 'var(--surface)',
+  border: '1px solid var(--line)',
+  boxShadow: 'var(--shadow-md)',
 };
 
 const gradientBackground = {
   minHeight: '100vh',
-  background:
-    'radial-gradient(120% 120% at 0% 0%, #fef3c7 0%, transparent 55%), radial-gradient(100% 120% at 100% 0%, #cffafe 0%, transparent 60%), radial-gradient(120% 150% at 50% 100%, #e0e7ff 0%, transparent 55%)',
+  background: 'var(--bg)',
   padding: '2rem 0 4rem',
-  fontFamily: "'Space Grotesk', 'Segoe UI', sans-serif",
 };
 
 const accentButtonStyle: React.CSSProperties = {
@@ -620,8 +617,8 @@ const PublicCheckoutPage = () => {
     [tenantSlug, checkoutIntent]
   );
 
-  const accentColor = tenant?.branding?.primaryColor || '#0f172a';
-  const accentGradient = `linear-gradient(135deg, ${accentColor}, #7c3aed)`;
+  const accentColor = tenant?.branding?.primaryColor || 'var(--text)';
+  const accentGradient = accentColor;
 
   const nights = useMemo(() => {
     if (!form.checkInDate || !form.checkOutDate) return null;
@@ -788,7 +785,7 @@ const PublicCheckoutPage = () => {
         style={{
           borderRadius: '20px',
           padding: '1rem',
-          background: 'rgba(15,23,42,0.05)',
+          background: 'var(--surface-sunken)',
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
@@ -797,8 +794,8 @@ const PublicCheckoutPage = () => {
         }}
       >
         <div>
-          <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>Want faster checkouts?</p>
-          <p style={{ margin: '0.25rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+          <p style={{ margin: 0, fontWeight: 600, color: 'var(--text)' }}>Want faster checkouts?</p>
+          <p style={{ margin: '0.25rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             Save your contact info once and reuse it for every stay.
           </p>
         </div>
@@ -807,7 +804,7 @@ const PublicCheckoutPage = () => {
           onClick={handleInlineSignup}
           style={{
             ...accentButtonStyle,
-            background: '#0f172a',
+            background: 'var(--text)',
             color: '#fff',
             padding: '0.65rem 1.4rem',
           }}
@@ -888,19 +885,19 @@ const PublicCheckoutPage = () => {
           borderRadius: '20px',
           padding: '1rem',
           background: 'rgba(15, 23, 42, 0.04)',
-          border: '1px dashed rgba(15, 23, 42, 0.1)',
+          border: '1px dashed var(--line)',
         }}
       >
         {availabilityLoading ? (
-          <p style={{ margin: 0, color: '#475569' }}>Checking availability...</p>
+          <p style={{ margin: 0, color: 'var(--text-secondary)' }}>Checking availability...</p>
         ) : canFetchAvailability ? (
-          <p style={{ margin: 0, color: '#0f172a' }}>
+          <p style={{ margin: 0, color: 'var(--text)' }}>
             {availableRooms.length > 0
               ? `${availableRooms.length} room${availableRooms.length === 1 ? '' : 's'} currently open`
               : 'No rooms match those dates. Try adjusting your stay.'}
           </p>
         ) : (
-          <p style={{ margin: 0, color: '#475569' }}>Select dates to view availability.</p>
+          <p style={{ margin: 0, color: 'var(--text-secondary)' }}>Select dates to view availability.</p>
         )}
       </div>
     </div>
@@ -942,8 +939,8 @@ const PublicCheckoutPage = () => {
             ...accentButtonStyle,
             padding: '0.65rem 1.4rem',
             fontSize: '0.9rem',
-            background: 'rgba(15,23,42,0.08)',
-            color: '#0f172a',
+            background: 'var(--line)',
+            color: 'var(--text)',
           }}
           onClick={() => fetchAvailability()}
           disabled={!canFetchAvailability || availabilityLoading}
@@ -959,7 +956,7 @@ const PublicCheckoutPage = () => {
               borderRadius: '18px',
               border: '1px dashed rgba(15,23,42,0.2)',
               padding: '1rem',
-              color: '#475569',
+              color: 'var(--text-secondary)',
             }}
           >
             {canFetchAvailability
@@ -976,7 +973,7 @@ const PublicCheckoutPage = () => {
               onClick={() => handleInputChange('roomId', room.id)}
               style={{
                 borderRadius: '20px',
-                border: `2px solid ${isSelected ? accentColor : 'rgba(15,23,42,0.08)'}`,
+                border: `2px solid ${isSelected ? accentColor : 'var(--line)'}`,
                 padding: '1rem',
                 cursor: 'pointer',
                 background: isSelected ? 'rgba(15,23,42,0.04)' : '#fff',
@@ -985,21 +982,21 @@ const PublicCheckoutPage = () => {
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
                 <div>
-                  <p style={{ margin: 0, fontWeight: 600, color: '#0f172a' }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: 'var(--text)' }}>
                     {room.roomNumber ? `Room ${room.roomNumber}` : room.roomType || 'Room'}
                   </p>
-                  <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+                  <p style={{ margin: '0.2rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                     {room.roomType || room.ratePlan?.name || 'Standard room'} · Sleeps up to {room.maxOccupancy || 2}
                   </p>
-                  <p style={{ margin: '0.35rem 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>
+                  <p style={{ margin: '0.35rem 0 0', color: 'var(--muted)', fontSize: '0.85rem' }}>
                     {(room.amenities || []).slice(0, 3).join(' • ') || 'Essential amenities included'}
                   </p>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <p style={{ margin: 0, fontWeight: 700, color: '#0f172a' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: 'var(--text)' }}>
                     {rate !== null ? formatCurrency(rate, room.ratePlan?.currency || availabilityCurrency) : '--'}
                   </p>
-                  <p style={{ margin: 0, color: '#475569' }}>per night</p>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)' }}>per night</p>
                 </div>
               </div>
             </div>
@@ -1043,7 +1040,7 @@ const PublicCheckoutPage = () => {
               checked={form.payDepositOnly}
               onChange={(e) => handleInputChange('payDepositOnly', e.target.checked)}
             />
-            <label htmlFor="depositOnly" style={{ margin: 0, color: '#475569', fontWeight: 500 }}>
+            <label htmlFor="depositOnly" style={{ margin: 0, color: 'var(--text-secondary)', fontWeight: 500 }}>
               Collect deposit now, settle balance at check-in.
             </label>
           </div>
@@ -1078,16 +1075,16 @@ const PublicCheckoutPage = () => {
         style={{
           borderRadius: '20px',
           padding: '1rem',
-          border: '1px solid rgba(15,23,42,0.08)',
+          border: '1px solid var(--line)',
           background: '#fff',
-          boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+          boxShadow: '0 15px 35px var(--line)',
         }}
       >
-        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', fontSize: '0.8rem' }}>
           Guest
         </p>
-        <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>{form.guestName || '—'}</p>
-        <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+        <p style={{ margin: '0.25rem 0 0', color: 'var(--text)', fontWeight: 600 }}>{form.guestName || '—'}</p>
+        <p style={{ margin: '0.2rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
           {form.guestEmail || 'No email'} · {form.guestPhone || 'No phone'}
         </p>
       </div>
@@ -1095,18 +1092,18 @@ const PublicCheckoutPage = () => {
         style={{
           borderRadius: '20px',
           padding: '1rem',
-          border: '1px solid rgba(15,23,42,0.08)',
+          border: '1px solid var(--line)',
           background: '#fff',
-          boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+          boxShadow: '0 15px 35px var(--line)',
         }}
       >
-        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+        <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', fontSize: '0.8rem' }}>
           Stay
         </p>
-        <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+        <p style={{ margin: '0.25rem 0 0', color: 'var(--text)', fontWeight: 600 }}>
           {form.checkInDate || '—'} → {form.checkOutDate || '—'}
         </p>
-        <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+        <p style={{ margin: '0.2rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
           {form.adults} adult{form.adults === 1 ? '' : 's'}
           {form.children ? ` · ${form.children} child${form.children === 1 ? '' : 'ren'}` : ''}
         </p>
@@ -1116,22 +1113,22 @@ const PublicCheckoutPage = () => {
           style={{
             borderRadius: '20px',
             padding: '1rem',
-            border: '1px solid rgba(15,23,42,0.08)',
+            border: '1px solid var(--line)',
             background: '#fff',
-            boxShadow: '0 15px 35px rgba(15,23,42,0.08)',
+            boxShadow: '0 15px 35px var(--line)',
           }}
         >
-          <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94a3b8', fontSize: '0.8rem' }}>
+          <p style={{ margin: 0, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', fontSize: '0.8rem' }}>
             Room
           </p>
-          <p style={{ margin: '0.25rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+          <p style={{ margin: '0.25rem 0 0', color: 'var(--text)', fontWeight: 600 }}>
             {selectedRoom.roomNumber ? `Room ${selectedRoom.roomNumber}` : selectedRoom.roomType || 'Room'}
           </p>
-          <p style={{ margin: '0.2rem 0 0', color: '#475569', fontSize: '0.9rem' }}>
+          <p style={{ margin: '0.2rem 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             {selectedRoom.ratePlan?.name || selectedRoom.roomType || 'Standard'}
           </p>
           {selectedRoomRate !== null && nights && (
-            <p style={{ margin: '0.35rem 0 0', color: '#0f172a', fontWeight: 600 }}>
+            <p style={{ margin: '0.35rem 0 0', color: 'var(--text)', fontWeight: 600 }}>
               · {formatCurrency(selectedRoomRate, summaryCurrency)} / night
             </p>
           )}
@@ -1199,10 +1196,10 @@ const PublicCheckoutPage = () => {
               </div>
             )}
             <div>
-              <p style={{ margin: 0, letterSpacing: '0.12em', fontSize: '0.8rem', color: '#475569', textTransform: 'uppercase' }}>
+              <p style={{ margin: 0, letterSpacing: '0.12em', fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
                 {tenant?.name || 'Your stay'}
               </p>
-              <h1 style={{ margin: 0, fontSize: '1.75rem', letterSpacing: '-0.03em', color: '#0f172a' }}>
+              <h1 style={{ margin: 0, fontSize: '1.75rem', letterSpacing: '-0.03em', color: 'var(--text)' }}>
                 DIY Checkout Portal
               </h1>
             </div>
@@ -1212,8 +1209,8 @@ const PublicCheckoutPage = () => {
               <button
                 style={{
                   ...accentButtonStyle,
-                  background: 'rgba(15,23,42,0.08)',
-                  color: '#0f172a',
+                  background: 'var(--line)',
+                  color: 'var(--text)',
                   padding: '0.65rem 1.4rem',
                 }}
                 onClick={() => navigate(`/portal/${tenantSlug}/access`)}
@@ -1224,7 +1221,7 @@ const PublicCheckoutPage = () => {
             <button
               style={{
                 ...accentButtonStyle,
-                background: 'rgba(15,23,42,0.9)',
+                background: 'var(--teal-800)',
                 color: '#fff',
                 padding: '0.85rem 1.5rem',
               }}
@@ -1235,36 +1232,14 @@ const PublicCheckoutPage = () => {
           </div>
         </header>
 
-        <div style={{ marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
-          {STEP_LABELS.map(({ label, icon: Icon }, index) => {
-            const isActive = index === currentStep;
-            const isCompleted = index < currentStep;
-            return (
-              <div
-                key={label}
-                style={{
-                  flex: '1 1 120px',
-                  minWidth: '120px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.65rem 0.9rem',
-                  borderRadius: '999px',
-                  background: isActive
-                    ? accentGradient
-                    : isCompleted
-                      ? 'rgba(15,23,42,0.1)'
-                      : 'rgba(15,23,42,0.05)',
-                  color: isActive ? '#fff' : '#0f172a',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                }}
-              >
-                <Icon size={18} />
-                {label}
-              </div>
-            );
-          })}
+        <div style={{ marginBottom: '1.5rem' }}>
+          <Stepper
+            steps={STEP_LABELS.map(({ label }) => ({ key: label, label }))}
+            current={currentStep}
+            onStepClick={(index) => {
+              if (index < currentStep) setCurrentStep(index);
+            }}
+          />
         </div>
 
         <div
@@ -1277,8 +1252,8 @@ const PublicCheckoutPage = () => {
           <section style={sectionCardStyle}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
               <div>
-                <h2 style={{ margin: 0, color: '#0f172a' }}>{STEP_LABELS[currentStep].label} details</h2>
-                <p style={{ margin: 0, fontSize: '0.9rem', color: '#64748b' }}>
+                <h2 style={{ margin: 0, color: 'var(--text)' }}>{STEP_LABELS[currentStep].label} details</h2>
+                <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--muted)' }}>
                   Complete each step to mirror the full reservation workflow.
                 </p>
               </div>
@@ -1291,8 +1266,8 @@ const PublicCheckoutPage = () => {
                 disabled={currentStep === 0}
                 style={{
                   ...accentButtonStyle,
-                  background: 'rgba(15,23,42,0.05)',
-                  color: '#0f172a',
+                  background: 'var(--surface-sunken)',
+                  color: 'var(--text)',
                   padding: '0.75rem 1.5rem',
                   opacity: currentStep === 0 ? 0.5 : 1,
                 }}
@@ -1318,7 +1293,7 @@ const PublicCheckoutPage = () => {
             </div>
           </section>
 
-          <section style={{ ...sectionCardStyle, background: 'rgba(15, 23, 42, 0.9)', color: '#fff' }}>
+          <section style={{ ...sectionCardStyle, background: 'var(--teal-800)', color: '#fff' }}>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '1.5rem' }}>
               <ShieldCheck size={22} color="#a5f3fc" />
               <div>
@@ -1412,7 +1387,7 @@ const PublicCheckoutPage = () => {
                   style={{
                     ...accentButtonStyle,
                     background: '#22d3ee',
-                    color: '#0f172a',
+                    color: 'var(--text)',
                     fontWeight: 700,
                     marginTop: '0.5rem',
                   }}
@@ -1500,7 +1475,7 @@ const PublicCheckoutPage = () => {
                     style={{
                       ...accentButtonStyle,
                       background: '#fff',
-                      color: '#0f172a',
+                      color: 'var(--text)',
                       fontWeight: 700,
                     }}
                     onClick={handleNavigateToDashboard}
@@ -1512,7 +1487,7 @@ const PublicCheckoutPage = () => {
                     style={{
                       ...accentButtonStyle,
                       background: '#a5f3fc',
-                      color: '#0f172a',
+                      color: 'var(--text)',
                       fontWeight: 700,
                     }}
                     onClick={handlePostConfirmationSignup}
