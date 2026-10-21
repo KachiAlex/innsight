@@ -1,0 +1,81 @@
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.sticky {
+  position: sticky;
+  top: calc(var(--topbar-height) + var(--space-4));
+}
+
+.title {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  margin-bottom: var(--space-4);
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.lineLabel {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.note {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.lineAmount {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.negative {
+  color: var(--danger);
+}
+
+.totalRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-strong);
+}
+
+.totalLabel {
+  font-size: var(--fs-md);
+  font-weight: 700;
+}
+
+.totalAmount {
+  font-size: var(--fs-xl);
+  font-weight: 750;
+  color: var(--teal-800);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+
+[data-theme='dark'] .totalAmount {
+  color: var(--gold-500);
+}

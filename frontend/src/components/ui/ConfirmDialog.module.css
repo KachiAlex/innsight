@@ -1,0 +1,65 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 25, 29, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  animation: fadeIn var(--dur-fast) var(--ease);
+}
+
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-overlay);
+  padding: var(--space-8);
+  width: min(460px, 100%);
+  animation: popIn var(--dur-med) var(--ease);
+}
+
+.iconWrap {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-lg);
+  background: var(--danger-bg);
+  color: var(--danger);
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  margin-bottom: var(--space-2);
+}
+
+.body {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  line-height: var(--lh-body);
+  margin-bottom: var(--space-6);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes popIn {
+  from {
+    transform: scale(0.96) translateY(8px);
+    opacity: 0;
+  }
+}

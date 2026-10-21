@@ -1,0 +1,51 @@
+.chip {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--teal-100);
+  color: var(--teal-800);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease);
+  min-height: 24px;
+}
+
+.chip:hover {
+  filter: brightness(0.96);
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checked_in {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.checked_out {
+  background: var(--surface-sunken);
+  color: var(--muted);
+}
+
+.pending {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.cancelled,
+.no_show {
+  background: var(--danger-bg);
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+[data-theme='dark'] .chip {
+  color: var(--ink);
+}

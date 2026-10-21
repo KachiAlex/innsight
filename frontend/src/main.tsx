@@ -4,12 +4,14 @@ import { Toaster } from 'react-hot-toast'
 import { QueryClientProvider } from 'react-query'
 import App from './App.tsx'
 import { queryClient } from './lib/queryClient'
+import { ThemeProvider } from './theme/ThemeProvider'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <ThemeProvider>
+        <App />
       <Toaster
       position="top-right"
       toastOptions={{
@@ -34,6 +36,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
       }}
     />
+      </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 )

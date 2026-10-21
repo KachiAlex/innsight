@@ -1,0 +1,331 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width var(--dur-med) var(--ease);
+}
+
+.collapsed {
+  width: var(--sidebar-collapsed-width);
+}
+
+.collapsed .brand,
+.collapsed .navItem {
+  justify-content: center;
+}
+
+.mobile {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-drawer);
+  box-shadow: var(--shadow-overlay);
+  animation: slideInLeft var(--dur-med) var(--ease);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 25, 29, 0.45);
+  z-index: calc(var(--z-drawer) - 1);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+  min-height: var(--topbar-height);
+}
+
+.brandMark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--gold-500);
+  color: var(--teal-800);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.brandName {
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  letter-spacing: -0.6px;
+  color: var(--text);
+  flex: 1;
+}
+
+.contextCard {
+  margin: var(--space-3) var(--space-3) var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.contextCard strong {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contextCard small {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  text-transform: capitalize;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+
+.navGroup {
+  margin-top: var(--space-3);
+}
+
+.navGroup:first-child {
+  margin-top: 0;
+}
+
+.groupLabel {
+  font-size: var(--fs-2xs);
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 9px var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+  margin: 1px 0;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.navItem:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.navItem.active {
+  background: var(--teal-100);
+  color: var(--teal-800);
+  font-weight: 700;
+}
+
+[data-theme='dark'] .navItem.active {
+  color: var(--gold-500);
+}
+
+.navIcon {
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.navLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapseBtn {
+  display: grid;
+  place-items: center;
+  margin: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.collapseBtn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+/* ---------- Main column ---------- */
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-topbar);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: var(--topbar-height);
+  padding: 0 var(--space-6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+
+.crumb {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.crumbSep {
+  color: var(--line-strong);
+}
+
+.crumbCurrent {
+  color: var(--text);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.searchBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  margin-right: var(--space-2);
+}
+
+.searchBtn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.kbd {
+  font-family: inherit;
+  font-size: var(--fs-2xs);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--muted);
+}
+
+.iconBtn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  text-decoration: none;
+}
+
+.iconBtn:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--teal-800);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  margin: 0 var(--space-1);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+  padding: var(--space-6) var(--space-8) var(--space-10);
+  max-width: var(--content-max);
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .content {
+    padding: var(--space-4);
+  }
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    transform: translateX(-100%);
+  }
+}
