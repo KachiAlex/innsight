@@ -2,15 +2,32 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { X, Filter, Printer, Receipt } from 'lucide-react';
+import { Printer, Receipt, Plus, CreditCard } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import toast from 'react-hot-toast';
-import { TableSkeleton } from '../components/LoadingSkeleton';
-import SearchInput from '../components/SearchInput';
 import Pagination from '../components/Pagination';
 import { printFolio } from '../utils/print';
 import { useDebounce } from '../hooks/useDebounce';
-import EmptyState from '../components/EmptyState';
+import { useTenantSettings } from '../hooks/useTenantSettings';
+import { formatMoney } from '../lib/money';
+import {
+  Button,
+  ChargeSummary,
+  DataTable,
+  DetailDrawer,
+  EmptyState,
+  ErrorState,
+  Field,
+  FilterBar,
+  Modal,
+  PageHeader,
+  Select,
+  SkeletonTable,
+  StatusBadge,
+  TextInput,
+  Textarea,
+} from '../components/ui';
+import type { Column } from '../components/ui/DataTable';
 
 interface Folio {
   id: string;
@@ -19,58 +36,51 @@ interface Folio {
   totalCharges: number;
   totalPayments: number;
   balance: number;
-  room: {
+  room?: {
     roomNumber: string;
   };
   charges: any[];
   payments: any[];
 }
 
+const fmtDate = (d: string) => format(new Date(d), 'MMM dd, yyyy HH:mm');
+
 export default function FoliosPage() {
   const { user } = useAuthStore();
+  const settings = useTenantSettings();
+  const money = (n?: number | null) => formatMoney(n, settings.currencySymbol);
+
   const [folios, setFolios] = useState<Folio[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedFolio, setSelectedFolio] = useState<Folio | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    status: '',
-    startDate: '',
-    endDate: '',
-  });
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 20,
-    total: 0,
-    totalPages: 0,
-  });
+  const [filters, setFilters] = useState({ status: '', startDate: '', endDate: '' });
+  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 });
 
-  const fetchFolios = useCallback(async (page = pagination.page) => {
-    if (!user?.tenantId) return;
-    setLoading(true);
-    try {
-      const params: any = {
-        page,
-        limit: pagination.limit,
-      };
-      if (filters.status) params.status = filters.status;
-      if (filters.startDate) params.startDate = filters.startDate;
-      if (filters.endDate) params.endDate = filters.endDate;
-
-      const response = await api.get(`/tenants/${user.tenantId}/folios`, { params });
-      setFolios(response.data.data || []);
-      if (response.data.pagination) {
-        setPagination(response.data.pagination);
+  const fetchFolios = useCallback(
+    async (page = pagination.page) => {
+      if (!user?.tenantId) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const params: any = { page, limit: pagination.limit };
+        if (filters.status) params.status = filters.status;
+        if (filters.startDate) params.startDate = filters.startDate;
+        if (filters.endDate) params.endDate = filters.endDate;
+        const response = await api.get(`/tenants/${user.tenantId}/folios`, { params });
+        setFolios(response.data.data || []);
+        if (response.data.pagination) setPagination(response.data.pagination);
+      } catch (err: any) {
+        setError(err.response?.data?.error?.message || 'Failed to fetch folios');
+        setFolios([]);
+      } finally {
+        setLoading(false);
       }
-    } catch (error: any) {
-      console.error('Failed to fetch folios:', error);
-      toast.error(error.response?.data?.error?.message || 'Failed to fetch folios');
-      setFolios([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.tenantId, filters, pagination.limit]);
+    },
+    [user?.tenantId, filters, pagination.limit, pagination.page]
+  );
 
   useEffect(() => {
     fetchFolios(pagination.page);
@@ -80,631 +90,354 @@ export default function FoliosPage() {
     try {
       const response = await api.get(`/tenants/${user?.tenantId}/folios/${folioId}`);
       setSelectedFolio(response.data.data);
-    } catch (error: any) {
-      console.error('Failed to fetch folio details:', error);
-      toast.error(error.response?.data?.error?.message || 'Failed to fetch folio details');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to fetch folio details');
     }
   };
 
-  const handleRefreshFolio = async () => {
-    if (selectedFolio) {
-      await handleViewDetails(selectedFolio.id);
-    }
+  const filteredFolios = useMemo(
+    () =>
+      folios.filter((folio) => {
+        if (!debouncedSearchTerm) return true;
+        const s = debouncedSearchTerm.toLowerCase();
+        return (
+          folio.guestName.toLowerCase().includes(s) ||
+          folio.room?.roomNumber.toLowerCase().includes(s) ||
+          folio.status.toLowerCase().includes(s)
+        );
+      }),
+    [folios, debouncedSearchTerm]
+  );
+
+  const setFilter = (patch: Partial<typeof filters>) => {
+    setFilters((f) => ({ ...f, ...patch }));
+    setPagination((p) => ({ ...p, page: 1 }));
   };
 
-  const filteredFolios = useMemo(() => folios.filter((folio) => {
-    if (!debouncedSearchTerm) return true;
-    const searchLower = debouncedSearchTerm.toLowerCase();
-    return (
-      folio.guestName.toLowerCase().includes(searchLower) ||
-      folio.room?.roomNumber.toLowerCase().includes(searchLower) ||
-      folio.status.toLowerCase().includes(searchLower)
-    );
-  }), [folios, debouncedSearchTerm]);
+  const activeFilterCount =
+    (filters.status ? 1 : 0) + (filters.startDate ? 1 : 0) + (filters.endDate ? 1 : 0);
 
-  if (loading) {
-    return (
-      <Layout>
-        <div>
-          <h1 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>Folios</h1>
-          <TableSkeleton rows={8} columns={7} />
-        </div>
-      </Layout>
-    );
-  }
+  const columns: Column<Folio>[] = [
+    {
+      key: 'guest',
+      header: 'Guest',
+      render: (f) => <span style={{ fontWeight: 500, color: 'var(--text)' }}>{f.guestName}</span>,
+    },
+    { key: 'room', header: 'Room', render: (f) => f.room?.roomNumber ?? '—' },
+    {
+      key: 'charges',
+      header: 'Charges',
+      align: 'right',
+      render: (f) => <span style={{ fontWeight: 500 }}>{money(f.totalCharges)}</span>,
+    },
+    {
+      key: 'payments',
+      header: 'Payments',
+      align: 'right',
+      render: (f) => <span style={{ fontWeight: 500, color: 'var(--success)' }}>{money(f.totalPayments)}</span>,
+    },
+    {
+      key: 'balance',
+      header: 'Balance',
+      align: 'right',
+      render: (f) => (
+        <span style={{ fontWeight: 600, color: Number(f.balance) > 0 ? 'var(--danger)' : 'var(--success)' }}>
+          {money(f.balance)}
+        </span>
+      ),
+    },
+    { key: 'status', header: 'Status', render: (f) => <StatusBadge status={f.status} /> },
+  ];
 
   return (
     <Layout>
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <div>
-            <h1 style={{ margin: 0, color: '#1e293b' }}>Folios</h1>
-            {pagination.total > 0 && (
-              <p style={{ margin: '0.25rem 0 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-                {pagination.total} total folio{pagination.total !== 1 ? 's' : ''}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.75rem 1.5rem',
-              background: showFilters ? '#3b82f6' : '#f1f5f9',
-              color: showFilters ? 'white' : '#475569',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: '500',
-            }}
-          >
-            <Filter size={20} />
-            Filters
-          </button>
-        </div>
+      <PageHeader
+        title="Folios"
+        subtitle={pagination.total > 0 ? `${pagination.total} total folio${pagination.total !== 1 ? 's' : ''}` : 'Guest billing'}
+      />
 
-        {showFilters && (
-          <div
-            style={{
-              background: 'white',
-              padding: '1.5rem',
-              borderRadius: '8px',
-              marginBottom: '1.5rem',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ color: '#1e293b', fontSize: '1rem', fontWeight: '600' }}>Filter Folios</h3>
-              <button
-                onClick={() => {
-                  setFilters({ status: '', startDate: '', endDate: '' });
-                  setPagination({ ...pagination, page: 1 });
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.5rem 1rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-              >
-                <X size={16} />
-                Clear All
-              </button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#64748b', fontSize: '0.875rem' }}>
-                  Status
-                </label>
-                <select
-                  value={filters.status}
-                  onChange={(e) => {
-                    setFilters({ ...filters, status: e.target.value });
-                    setPagination({ ...pagination, page: 1 });
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '4px',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <option value="">All Statuses</option>
-                  <option value="open">Open</option>
-                  <option value="closed">Closed</option>
-                  <option value="voided">Voided</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#64748b', fontSize: '0.875rem' }}>
-                  Date From
-                </label>
-                <input
-                  type="date"
-                  value={filters.startDate}
-                  onChange={(e) => {
-                    setFilters({ ...filters, startDate: e.target.value });
-                    setPagination({ ...pagination, page: 1 });
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '4px',
-                    fontSize: '0.875rem',
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#64748b', fontSize: '0.875rem' }}>
-                  Date To
-                </label>
-                <input
-                  type="date"
-                  value={filters.endDate}
-                  onChange={(e) => {
-                    setFilters({ ...filters, endDate: e.target.value });
-                    setPagination({ ...pagination, page: 1 });
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '0.5rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '4px',
-                    fontSize: '0.875rem',
-                  }}
-                />
-              </div>
-            </div>
-            <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-              <button
-                onClick={() => {
-                  setFilters({
-                    status: '',
-                    startDate: format(subDays(new Date(), 7), 'yyyy-MM-dd'),
-                    endDate: format(new Date(), 'yyyy-MM-dd'),
-                  });
-                  setPagination({ ...pagination, page: 1 });
-                }}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-              >
-                Last 7 Days
-              </button>
-              <button
-                onClick={() => {
-                  setFilters({
-                    status: '',
-                    startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
-                    endDate: format(new Date(), 'yyyy-MM-dd'),
-                  });
-                  setPagination({ ...pagination, page: 1 });
-                }}
-                style={{
-                  padding: '0.5rem 1rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '0.875rem',
-                }}
-              >
-                Last 30 Days
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <div style={{ flex: 1 }}>
-            <SearchInput
-              value={searchTerm}
-              onChange={setSearchTerm}
-              placeholder="Search by guest name, room number, or status..."
-            />
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '8px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            overflow: 'hidden',
-          }}
+      <FilterBar
+        search={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Search by guest, room, or status…"
+        activeCount={activeFilterCount}
+        onClear={() => setFilter({ status: '', startDate: '', endDate: '' })}
+      >
+        <Select
+          value={filters.status}
+          onChange={(e) => setFilter({ status: e.target.value })}
+          aria-label="Filter by status"
         >
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Guest</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Room</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Charges</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Payments</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Balance</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Status</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#475569' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredFolios.length === 0 && !loading ? (
-                <tr>
-                  <td colSpan={7} style={{ padding: '3rem', textAlign: 'center' }}>
-                    <EmptyState
-                      icon={Receipt}
-                      title={searchTerm || filters.status || filters.startDate || filters.endDate 
-                        ? 'No folios match your filters' 
-                        : 'No folios yet'}
-                      description={searchTerm || filters.status || filters.startDate || filters.endDate
-                        ? 'Try adjusting your search or filter criteria'
-                        : 'Folios will appear here when guests make reservations'}
-                    />
-                  </td>
-                </tr>
-              ) : filteredFolios.length > 0 ? (
-                filteredFolios.map((folio) => (
-                  <tr key={folio.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                    <td style={{ padding: '1rem', color: '#1e293b' }}>{folio.guestName}</td>
-                    <td style={{ padding: '1rem', color: '#1e293b' }}>{folio.room?.roomNumber}</td>
-                    <td style={{ padding: '1rem', color: '#1e293b', fontWeight: '500' }}>
-                      ₦{Number(folio.totalCharges).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '1rem', color: '#10b981', fontWeight: '500' }}>
-                      ₦{Number(folio.totalPayments).toLocaleString()}
-                    </td>
-                    <td
-                      style={{
-                        padding: '1rem',
-                        color: Number(folio.balance) > 0 ? '#ef4444' : '#10b981',
-                        fontWeight: '500',
-                      }}
-                    >
-                      ₦{Number(folio.balance).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <span
-                        style={{
-                          padding: '0.25rem 0.75rem',
-                          borderRadius: '12px',
-                          fontSize: '0.75rem',
-                          fontWeight: '500',
-                          background:
-                            folio.status === 'open'
-                              ? '#dbeafe'
-                              : folio.status === 'closed'
-                              ? '#d1fae5'
-                              : '#fee2e2',
-                          color:
-                            folio.status === 'open'
-                              ? '#1e40af'
-                              : folio.status === 'closed'
-                              ? '#065f46'
-                              : '#991b1b',
-                        }}
-                      >
-                        {folio.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <button
-                        onClick={() => handleViewDetails(folio.id)}
-                        style={{
-                          padding: '0.5rem 1rem',
-                          background: '#3b82f6',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.875rem',
-                        }}
-                      >
-                        View Details
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : null}
-            </tbody>
-          </table>
-          {pagination.totalPages > 1 && (
-            <Pagination
-              page={pagination.page}
-              totalPages={pagination.totalPages}
-              total={pagination.total}
-              limit={pagination.limit}
-              onPageChange={(newPage) => {
-                setPagination({ ...pagination, page: newPage });
-                fetchFolios(newPage);
-              }}
-            />
-          )}
-        </div>
+          <option value="">All statuses</option>
+          <option value="open">Open</option>
+          <option value="closed">Closed</option>
+          <option value="voided">Voided</option>
+        </Select>
+        <TextInput
+          type="date"
+          value={filters.startDate}
+          onChange={(e) => setFilter({ startDate: e.target.value })}
+          aria-label="From date"
+        />
+        <TextInput
+          type="date"
+          value={filters.endDate}
+          onChange={(e) => setFilter({ endDate: e.target.value })}
+          aria-label="To date"
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            setFilter({
+              status: '',
+              startDate: format(subDays(new Date(), 7), 'yyyy-MM-dd'),
+              endDate: format(new Date(), 'yyyy-MM-dd'),
+            })
+          }
+        >
+          Last 7 days
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            setFilter({
+              status: '',
+              startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
+              endDate: format(new Date(), 'yyyy-MM-dd'),
+            })
+          }
+        >
+          Last 30 days
+        </Button>
+      </FilterBar>
 
-        {selectedFolio && (
-          <FolioDetailsModal 
-            folio={selectedFolio} 
-            onClose={() => setSelectedFolio(null)}
-            onRefresh={handleRefreshFolio}
+      {loading ? (
+        <SkeletonTable rows={8} cols={6} />
+      ) : error ? (
+        <ErrorState message={error} onRetry={() => fetchFolios()} />
+      ) : filteredFolios.length === 0 ? (
+        <EmptyState
+          icon={<Receipt size={28} strokeWidth={1.6} />}
+          title={
+            debouncedSearchTerm || activeFilterCount > 0
+              ? 'No folios match your filters'
+              : 'No folios yet'
+          }
+          description={
+            debouncedSearchTerm || activeFilterCount > 0
+              ? 'Try adjusting your search or filter criteria'
+              : 'Folios will appear here when guests make reservations'
+          }
+        />
+      ) : (
+        <>
+          <DataTable
+            columns={columns}
+            data={filteredFolios}
+            rowKey={(f) => f.id}
+            onRowClick={(f) => handleViewDetails(f.id)}
           />
-        )}
-      </div>
+          <Pagination
+            page={pagination.page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            limit={pagination.limit}
+            onPageChange={(newPage) => {
+              setPagination((p) => ({ ...p, page: newPage }));
+              fetchFolios(newPage);
+            }}
+          />
+        </>
+      )}
+
+      <FolioDetailsDrawer
+        folio={selectedFolio}
+        currency={settings.currencySymbol}
+        onClose={() => setSelectedFolio(null)}
+        onRefresh={() => selectedFolio && handleViewDetails(selectedFolio.id)}
+      />
     </Layout>
   );
 }
 
-function FolioDetailsModal({ 
-  folio, 
-  onClose, 
-  onRefresh 
-}: { 
-  folio: Folio; 
+/* ---------- Folio detail drawer ---------- */
+
+function FolioDetailsDrawer({
+  folio,
+  currency,
+  onClose,
+  onRefresh,
+}: {
+  folio: Folio | null;
+  currency: string;
   onClose: () => void;
   onRefresh: () => void;
 }) {
   const [showAddCharge, setShowAddCharge] = useState(false);
   const [showAddPayment, setShowAddPayment] = useState(false);
+  const money = (n?: number | null) => formatMoney(n, currency);
 
+  return (
+    <DetailDrawer
+      open={!!folio}
+      onClose={onClose}
+      title={folio ? `Folio — ${folio.guestName}` : 'Folio'}
+      width="lg"
+      headerExtra={
+        folio ? (
+          <div className="row">
+            <StatusBadge status={folio.status} />
+            <span className="text-sm muted">Room {folio.room?.roomNumber ?? '—'}</span>
+          </div>
+        ) : undefined
+      }
+      footer={
+        folio ? (
+          <div className="row wrap">
+            <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowAddCharge(true)}>
+              Add charge
+            </Button>
+            <Button variant="primary" size="sm" icon={<CreditCard size={14} />} onClick={() => setShowAddPayment(true)}>
+              Add payment
+            </Button>
+            <Button variant="ghost" size="sm" icon={<Printer size={14} />} onClick={() => printFolio(folio)}>
+              Print
+            </Button>
+          </div>
+        ) : undefined
+      }
+    >
+      {folio && (
+        <div className="stack-lg">
+          <div className="grid3">
+            <MiniStat label="Charges" value={money(folio.totalCharges)} />
+            <MiniStat label="Payments" value={money(folio.totalPayments)} color="var(--success)" />
+            <MiniStat
+              label="Balance"
+              value={money(folio.balance)}
+              color={Number(folio.balance) > 0 ? 'var(--danger)' : 'var(--success)'}
+            />
+          </div>
+
+          <section>
+            <h3 className="text-sm" style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+              Charges
+            </h3>
+            {folio.charges?.length ? (
+              <DataTable
+                columns={[
+                  { key: 'desc', header: 'Description', render: (c: any) => c.description },
+                  { key: 'cat', header: 'Category', render: (c: any) => <StatusBadge status={c.category} dot={false} /> },
+                  {
+                    key: 'amt',
+                    header: 'Amount',
+                    align: 'right',
+                    render: (c: any) => <span style={{ fontWeight: 500 }}>{money(c.total)}</span>,
+                  },
+                ]}
+                data={folio.charges}
+                rowKey={(c: any) => c.id}
+              />
+            ) : (
+              <div className="text-sm muted">No charges</div>
+            )}
+          </section>
+
+          <section>
+            <h3 className="text-sm" style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>
+              Payments
+            </h3>
+            {folio.payments?.length ? (
+              <DataTable
+                columns={[
+                  { key: 'date', header: 'Date', render: (p: any) => fmtDate(p.createdAt) },
+                  { key: 'method', header: 'Method', render: (p: any) => p.method },
+                  {
+                    key: 'amt',
+                    header: 'Amount',
+                    align: 'right',
+                    render: (p: any) => (
+                      <span style={{ fontWeight: 500, color: 'var(--success)' }}>{money(p.amount)}</span>
+                    ),
+                  },
+                  { key: 'status', header: 'Status', render: (p: any) => <StatusBadge status={p.status} /> },
+                ]}
+                data={folio.payments}
+                rowKey={(p: any) => p.id}
+              />
+            ) : (
+              <div className="text-sm muted">No payments</div>
+            )}
+          </section>
+
+          <ChargeSummary
+            title="Folio summary"
+            lines={[
+              { label: 'Total charges', amount: Number(folio.totalCharges) },
+              { label: 'Total payments', amount: Number(folio.totalPayments), negative: true },
+            ]}
+            total={Number(folio.balance)}
+            totalLabel="Balance due"
+            currency={currency}
+          />
+        </div>
+      )}
+
+      <AddChargeModal
+        open={showAddCharge}
+        folioId={folio?.id ?? ''}
+        currency={currency}
+        onClose={() => setShowAddCharge(false)}
+        onSuccess={() => {
+          setShowAddCharge(false);
+          onRefresh();
+        }}
+      />
+      <AddPaymentModal
+        open={showAddPayment}
+        folioId={folio?.id ?? ''}
+        currency={currency}
+        onClose={() => setShowAddPayment(false)}
+        onSuccess={() => {
+          setShowAddPayment(false);
+          onRefresh();
+        }}
+      />
+    </DetailDrawer>
+  );
+}
+
+function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: '1rem',
+        background: 'var(--surface-raised)',
+        borderRadius: 'var(--radius-md)',
+        padding: 'var(--space-3)',
       }}
-      onClick={onClose}
     >
-      <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '100%',
-          maxWidth: '800px',
-          maxHeight: '90vh',
-          overflow: 'auto',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ color: '#1e293b' }}>Folio Details</h2>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <button
-              onClick={() => printFolio(folio)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.5rem 1rem',
-                background: '#64748b',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-              }}
-            >
-              <Printer size={18} />
-              Print
-            </button>
-            <button
-              onClick={onClose}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '1.5rem',
-              cursor: 'pointer',
-              color: '#94a3b8',
-            }}
-          >
-            ×
-          </button>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div>
-              <div style={{ color: '#64748b', fontSize: '0.875rem' }}>Guest</div>
-              <div style={{ fontWeight: '500', color: '#1e293b' }}>{folio.guestName}</div>
-            </div>
-            <div>
-              <div style={{ color: '#64748b', fontSize: '0.875rem' }}>Room</div>
-              <div style={{ fontWeight: '500', color: '#1e293b' }}>{folio.room?.roomNumber}</div>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '1rem',
-              padding: '1rem',
-              background: '#f8fafc',
-              borderRadius: '6px',
-            }}
-          >
-            <div>
-              <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Total Charges</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1e293b' }}>
-                ₦{Number(folio.totalCharges).toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Total Payments</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#10b981' }}>
-                ₦{Number(folio.totalPayments).toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '0.25rem' }}>Balance</div>
-              <div
-                style={{
-                  fontSize: '1.25rem',
-                  fontWeight: 'bold',
-                  color: Number(folio.balance) > 0 ? '#ef4444' : '#10b981',
-                }}
-              >
-                ₦{Number(folio.balance).toLocaleString()}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-          <button
-            onClick={() => setShowAddCharge(true)}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            Add Charge
-          </button>
-          <button
-            onClick={() => setShowAddPayment(true)}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            Add Payment
-          </button>
-        </div>
-
-        <div style={{ marginBottom: '2rem' }}>
-          <h3 style={{ marginBottom: '1rem', color: '#1e293b' }}>Charges</h3>
-          <div style={{ background: '#f8fafc', borderRadius: '6px', padding: '1rem' }}>
-            {folio.charges?.length === 0 ? (
-              <div style={{ color: '#94a3b8', textAlign: 'center', padding: '1rem' }}>No charges</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.875rem' }}>
-                      Description
-                    </th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.875rem' }}>
-                      Category
-                    </th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#64748b', fontSize: '0.875rem' }}>
-                      Amount
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {folio.charges?.map((charge: any) => (
-                    <tr key={charge.id}>
-                      <td style={{ padding: '0.5rem', color: '#1e293b' }}>{charge.description}</td>
-                      <td style={{ padding: '0.5rem', color: '#64748b' }}>{charge.category}</td>
-                      <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: '500', color: '#1e293b' }}>
-                        ₦{Number(charge.total).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        <div>
-          <h3 style={{ marginBottom: '1rem', color: '#1e293b' }}>Payments</h3>
-          <div style={{ background: '#f8fafc', borderRadius: '6px', padding: '1rem' }}>
-            {folio.payments?.length === 0 ? (
-              <div style={{ color: '#94a3b8', textAlign: 'center', padding: '1rem' }}>No payments</div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.875rem' }}>
-                      Date
-                    </th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.875rem' }}>
-                      Method
-                    </th>
-                    <th style={{ padding: '0.5rem', textAlign: 'right', color: '#64748b', fontSize: '0.875rem' }}>
-                      Amount
-                    </th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#64748b', fontSize: '0.875rem' }}>
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {folio.payments?.map((payment: any) => (
-                    <tr key={payment.id}>
-                      <td style={{ padding: '0.5rem', color: '#1e293b' }}>
-                        {format(new Date(payment.createdAt), 'MMM dd, yyyy HH:mm')}
-                      </td>
-                      <td style={{ padding: '0.5rem', color: '#64748b' }}>{payment.method}</td>
-                      <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: '500', color: '#10b981' }}>
-                        ₦{Number(payment.amount).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '0.5rem' }}>
-                        <span
-                          style={{
-                            padding: '0.25rem 0.5rem',
-                            borderRadius: '4px',
-                            fontSize: '0.75rem',
-                            background: payment.status === 'completed' ? '#d1fae5' : '#fee2e2',
-                            color: payment.status === 'completed' ? '#065f46' : '#991b1b',
-                          }}
-                        >
-                          {payment.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {showAddCharge && (
-          <AddChargeModal
-            folioId={folio.id}
-            onClose={() => setShowAddCharge(false)}
-            onSuccess={() => {
-              setShowAddCharge(false);
-              onRefresh();
-            }}
-          />
-        )}
-
-        {showAddPayment && (
-          <AddPaymentModal
-            folioId={folio.id}
-            onClose={() => setShowAddPayment(false)}
-            onSuccess={() => {
-              setShowAddPayment(false);
-              onRefresh();
-            }}
-          />
-        )}
+      <div className="text-xs muted">{label}</div>
+      <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700, color: color ?? 'var(--text)' }}>
+        {value}
       </div>
     </div>
   );
 }
 
+/* ---------- Add charge ---------- */
+
 function AddChargeModal({
+  open,
   folioId,
+  currency,
   onClose,
   onSuccess,
 }: {
+  open: boolean;
   folioId: string;
+  currency: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -716,12 +449,15 @@ function AddChargeModal({
     quantity: '1',
     taxRate: '',
   });
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setFormData({ description: '', category: 'other', amount: '', quantity: '1', taxRate: '' });
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-
+    setSaving(true);
     try {
       await api.post(`/tenants/${user?.tenantId}/folios/${folioId}/charges`, {
         description: formData.description,
@@ -732,210 +468,98 @@ function AddChargeModal({
       });
       toast.success('Charge added successfully');
       onSuccess();
-    } catch (error: any) {
+    } catch {
       // Error is handled by API interceptor
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 2000,
-        padding: '1rem',
-      }}
-      onClick={onClose}
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Add charge"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={saving} onClick={handleSubmit}>
+            Add charge
+          </Button>
+        </>
+      }
     >
-      <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '100%',
-          maxWidth: '500px',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ color: '#1e293b' }}>Add Charge</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '1.5rem',
-              cursor: 'pointer',
-              color: '#94a3b8',
-            }}
+      <form onSubmit={handleSubmit} className="stack">
+        <Field label="Description" required>
+          <TextInput
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            required
+            placeholder="e.g., Room service, mini bar"
+          />
+        </Field>
+        <Field label="Category" required>
+          <Select
+            value={formData.category}
+            onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
+            required
           >
-            <X size={24} />
-          </button>
+            <option value="room_rate">Room rate</option>
+            <option value="extra">Extra</option>
+            <option value="tax">Tax</option>
+            <option value="discount">Discount</option>
+            <option value="other">Other</option>
+          </Select>
+        </Field>
+        <div className="grid2">
+          <Field label={`Amount (${currency})`} required>
+            <TextInput
+              type="number"
+              step="0.01"
+              min="0"
+              value={formData.amount}
+              onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+              required
+              placeholder="0.00"
+            />
+          </Field>
+          <Field label="Quantity" required>
+            <TextInput
+              type="number"
+              min="1"
+              value={formData.quantity}
+              onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+              required
+            />
+          </Field>
         </div>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Description *
-              </label>
-              <input
-                type="text"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-                placeholder="e.g., Room service, Mini bar, etc."
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Category *
-              </label>
-              <select
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-              >
-                <option value="room_rate">Room Rate</option>
-                <option value="extra">Extra</option>
-                <option value="tax">Tax</option>
-                <option value="discount">Discount</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Amount (₦) *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Quantity *
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={formData.quantity}
-                  onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
-                  required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Tax Rate (%)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
-                value={formData.taxRate}
-                onChange={(e) => setFormData({ ...formData, taxRate: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-                placeholder="Optional"
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  background: loading ? '#94a3b8' : '#3b82f6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  fontWeight: '500',
-                }}
-              >
-                {loading ? 'Adding...' : 'Add Charge'}
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Field label="Tax rate (%)" hint="Optional">
+          <TextInput
+            type="number"
+            step="0.01"
+            min="0"
+            max="100"
+            value={formData.taxRate}
+            onChange={(e) => setFormData({ ...formData, taxRate: e.target.value })}
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }
 
+/* ---------- Add payment ---------- */
+
 function AddPaymentModal({
+  open,
   folioId,
+  currency,
   onClose,
   onSuccess,
 }: {
+  open: boolean;
   folioId: string;
+  currency: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -948,12 +572,23 @@ function AddPaymentModal({
     gatewayTransactionId: '',
     notes: '',
   });
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open)
+      setFormData({
+        amount: '',
+        method: 'cash',
+        reference: '',
+        paymentGateway: 'manual',
+        gatewayTransactionId: '',
+        notes: '',
+      });
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-
+    setSaving(true);
     try {
       await api.post(`/tenants/${user?.tenantId}/payments`, {
         folioId,
@@ -966,216 +601,87 @@ function AddPaymentModal({
       });
       toast.success('Payment added successfully');
       onSuccess();
-    } catch (error: any) {
+    } catch {
       // Error is handled by API interceptor
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 2000,
-        padding: '1rem',
-      }}
-      onClick={onClose}
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Add payment"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={saving} onClick={handleSubmit}>
+            Add payment
+          </Button>
+        </>
+      }
     >
-      <div
-        style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '2rem',
-          width: '100%',
-          maxWidth: '500px',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ color: '#1e293b' }}>Add Payment</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '1.5rem',
-              cursor: 'pointer',
-              color: '#94a3b8',
-            }}
-          >
-            <X size={24} />
-          </button>
+      <form onSubmit={handleSubmit} className="stack">
+        <Field label={`Amount (${currency})`} required>
+          <TextInput
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={formData.amount}
+            onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+            required
+            placeholder="0.00"
+          />
+        </Field>
+        <div className="grid2">
+          <Field label="Payment method" required>
+            <Select
+              value={formData.method}
+              onChange={(e) => setFormData({ ...formData, method: e.target.value as any })}
+              required
+            >
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="other">Other</option>
+            </Select>
+          </Field>
+          <Field label="Gateway">
+            <Select
+              value={formData.paymentGateway}
+              onChange={(e) => setFormData({ ...formData, paymentGateway: e.target.value as any })}
+            >
+              <option value="manual">Manual entry</option>
+              <option value="paystack">Paystack</option>
+              <option value="flutterwave">Flutterwave</option>
+              <option value="stripe">Stripe</option>
+            </Select>
+          </Field>
         </div>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gap: '1rem' }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Amount (₦) *
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={formData.amount}
-                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-                placeholder="0.00"
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Payment Method *
-              </label>
-              <select
-                value={formData.method}
-                onChange={(e) => setFormData({ ...formData, method: e.target.value as any })}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-              >
-                <option value="cash">Cash</option>
-                <option value="card">Card</option>
-                <option value="bank_transfer">Bank Transfer</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Payment Gateway
-              </label>
-              <select
-                value={formData.paymentGateway}
-                onChange={(e) => setFormData({ ...formData, paymentGateway: e.target.value as any })}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-              >
-                <option value="manual">Manual Entry</option>
-                <option value="paystack">Paystack</option>
-                <option value="flutterwave">Flutterwave</option>
-                <option value="stripe">Stripe</option>
-              </select>
-            </div>
-
-            {formData.paymentGateway !== 'manual' && (
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                  Gateway Transaction ID
-                </label>
-                <input
-                  type="text"
-                  value={formData.gatewayTransactionId}
-                  onChange={(e) => setFormData({ ...formData, gatewayTransactionId: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: '6px',
-                  }}
-                  placeholder="Transaction ID from gateway"
-                />
-              </div>
-            )}
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Reference Number
-              </label>
-              <input
-                type="text"
-                value={formData.reference}
-                onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                }}
-                placeholder="Optional reference number"
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                Notes
-              </label>
-              <textarea
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                rows={3}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                  resize: 'vertical',
-                }}
-                placeholder="Optional notes"
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  background: '#f1f5f9',
-                  color: '#475569',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: '500',
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem',
-                  background: loading ? '#94a3b8' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  fontWeight: '500',
-                }}
-              >
-                {loading ? 'Adding...' : 'Add Payment'}
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-    </div>
+        {formData.paymentGateway !== 'manual' && (
+          <Field label="Gateway transaction ID">
+            <TextInput
+              value={formData.gatewayTransactionId}
+              onChange={(e) => setFormData({ ...formData, gatewayTransactionId: e.target.value })}
+              placeholder="Transaction ID from gateway"
+            />
+          </Field>
+        )}
+        <Field label="Reference number" hint="Optional">
+          <TextInput
+            value={formData.reference}
+            onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+          />
+        </Field>
+        <Field label="Notes" hint="Optional">
+          <Textarea
+            value={formData.notes}
+            onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+            rows={3}
+          />
+        </Field>
+      </form>
+    </Modal>
   );
 }

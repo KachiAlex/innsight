@@ -1,0 +1,210 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  position: relative;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.urgentTag {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  background: var(--danger);
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.04em;
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.cardHeadLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.typeIcon {
+  font-size: 20px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.cardTitle {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.cardMeta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.cardDesc {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--space-3);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cardFoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.cardFootLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.due {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dueOverdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* Drawer */
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.msg {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  max-width: 90%;
+}
+
+.msgGuest {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  align-self: flex-start;
+}
+
+.msgStaff {
+  background: var(--teal-50);
+  border: 1px solid color-mix(in srgb, var(--teal-600) 20%, transparent);
+  align-self: flex-end;
+}
+
+.msgMeta {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.msgVisibility {
+  font-size: var(--fs-2xs);
+  color: var(--info);
+  margin-left: var(--space-2);
+}
+
+.replyRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-6);
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kvKey {
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.kvVal {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.statusActions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+}

@@ -1,0 +1,121 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--space-4);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-card);
+  position: relative;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--radius-lg);
+  bottom: var(--radius-lg);
+  width: 4px;
+  border-radius: var(--radius-full);
+  background: var(--priority-color, var(--line));
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.cardTitle {
+  margin: 0 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 700;
+}
+
+.cardRoom {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.badges {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.cardDesc {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--space-3);
+  line-height: 1.55;
+}
+
+.cardFoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  gap: var(--space-2);
+}
+
+.cardActions {
+  margin-top: var(--space-4);
+}
+
+.photoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+
+.photoGrid img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+}
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-6);
+}
+
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kvKey {
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.kvVal {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-weight: 500;
+}
