@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Layout from '../components/Layout';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
@@ -7,13 +7,26 @@ import {
   Link as LinkIcon,
   Code2,
   Globe,
-  Activity,
   ShieldCheck,
   Play,
   Trash2,
   Copy,
+  Pause,
+  Webhook,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  PageHeader,
+  Panel,
+  Skeleton,
+  StatusBadge,
+  TextInput,
+} from '../components/ui';
+import styles from './IntegrationPage.module.css';
 
 const PORTAL_ORIGIN =
   (import.meta as any).env?.VITE_PUBLIC_PORTAL_ORIGIN || 'http://67.211.210.8:3061';
@@ -61,7 +74,9 @@ export default function IntegrationPage() {
   const [creatingWebhook, setCreatingWebhook] = useState(false);
   const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null);
   const [updatingWebhookId, setUpdatingWebhookId] = useState<string | null>(null);
-  const [deletingWebhookId, setDeletingWebhookId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<TenantWebhook | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [webhookForm, setWebhookForm] = useState({
     url: '',
     description: '',
@@ -100,10 +115,6 @@ export default function IntegrationPage() {
       toast.error('Webhook URL is required');
       return;
     }
-    if (!webhookForm.eventTypes.length) {
-      toast.error('Select at least one event type');
-      return;
-    }
     setCreatingWebhook(true);
     try {
       await api.post(`/tenants/${tenantId}/webhooks`, {
@@ -112,11 +123,8 @@ export default function IntegrationPage() {
         eventTypes: webhookForm.eventTypes,
       });
       toast.success('Webhook endpoint added');
-      setWebhookForm({
-        url: '',
-        description: '',
-        eventTypes: ['reservation.confirmed'],
-      });
+      setWebhookForm({ url: '', description: '', eventTypes: ['reservation.confirmed'] });
+      setShowCreate(false);
       fetchWebhooks();
     } catch {
       toast.error('Unable to create webhook');
@@ -125,17 +133,18 @@ export default function IntegrationPage() {
     }
   };
 
-  const handleDeleteWebhook = async (id: string) => {
-    if (!tenantId) return;
-    setDeletingWebhookId(id);
+  const handleDeleteWebhook = async () => {
+    if (!tenantId || !deleteTarget) return;
+    setDeleting(true);
     try {
-      await api.delete(`/tenants/${tenantId}/webhooks/${id}`);
+      await api.delete(`/tenants/${tenantId}/webhooks/${deleteTarget.id}`);
       toast.success('Webhook removed');
+      setDeleteTarget(null);
       fetchWebhooks();
     } catch {
       toast.error('Unable to delete webhook');
     } finally {
-      setDeletingWebhookId(null);
+      setDeleting(false);
     }
   };
 
@@ -143,9 +152,7 @@ export default function IntegrationPage() {
     if (!tenantId) return;
     setUpdatingWebhookId(hook.id);
     try {
-      await api.patch(`/tenants/${tenantId}/webhooks/${hook.id}`, {
-        active: !hook.active,
-      });
+      await api.patch(`/tenants/${tenantId}/webhooks/${hook.id}`, { active: !hook.active });
       toast.success(hook.active ? 'Webhook paused' : 'Webhook resumed');
       fetchWebhooks();
     } catch {
@@ -191,563 +198,254 @@ export default function IntegrationPage() {
     },
   ];
 
-  const eventSelection = webhookForm.eventTypes;
   const handleEventToggle = (value: string) => {
     setWebhookForm((prev) => {
       const alreadySelected = prev.eventTypes.includes(value);
       const next = alreadySelected
         ? prev.eventTypes.filter((v) => v !== value)
         : [...prev.eventTypes, value];
-      return {
-        ...prev,
-        eventTypes: next.length ? next : prev.eventTypes,
-      };
+      return { ...prev, eventTypes: next.length ? next : prev.eventTypes };
     });
   };
 
-  const webhookEmptyState = !webhookLoading && !webhooks.length;
-
-  const webhookInstructions = useMemo(
-    () =>
-      `Verify deliveries by hashing the raw JSON body with the shared secret using HMAC-SHA256 and comparing against the x-innsight-signature header. Rotate secrets by deleting/re-adding endpoints.`,
-    []
-  );
-
   return (
     <Layout>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <div>
-          <h1 style={{ marginBottom: '0.5rem', color: '#0f172a' }}>Integrations</h1>
-          <p style={{ color: '#475569', maxWidth: 640, lineHeight: 1.6 }}>
-            Share the hosted guest portal, embed the booking widget, and subscribe to reservation webhooks—all scoped to your tenant account so the data stays isolated from other properties.
-          </p>
-        </div>
+      <PageHeader
+        title="Integrations"
+        subtitle="Hosted portal, booking widget, and webhooks — scoped to your property"
+      />
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-            gap: '1.5rem',
-          }}
-        >
-          <div
-            style={{
-              background: 'white',
-              borderRadius: '12px',
-              padding: '1.5rem',
-              border: '1px solid #e2e8f0',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-              <LinkIcon size={20} color="#3b82f6" />
-              Hosted Portal Link
-            </div>
-            <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
-              Drop this tenant-specific URL on a “Book Now” button or marketing email.
-            </p>
-            <input
-              type="text"
-              readOnly
-              value={hostedPortalUrl}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #cbd5f5',
-                borderRadius: '8px',
-                fontSize: '0.95rem',
-                color: '#0f172a',
-              }}
-            />
-            <button
-              onClick={() => copyToClipboard(hostedPortalUrl, 'Portal link copied')}
-              style={{
-                marginTop: '0.25rem',
-                padding: '0.65rem',
-                borderRadius: '8px',
-                border: 'none',
-                background: '#3b82f6',
-                color: '#fff',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Copy hosted link
-            </button>
-          </div>
-
-          <div
-            style={{
-              background: 'white',
-              borderRadius: '12px',
-              padding: '1.5rem',
-              border: '1px solid #e2e8f0',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-              <Code2 size={20} color="#0f172a" />
-              Embeddable Widget
-            </div>
-            <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
-              Paste the snippet into any site. It auto-applies your branding via tenant settings and opens a modal checkout.
-            </p>
-            <textarea
-              readOnly
-              value={widgetSnippet}
-              rows={5}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #cbd5f5',
-                borderRadius: '8px',
-                fontSize: '0.85rem',
-                fontFamily: 'monospace',
-                background: '#f8fafc',
-                color: '#0f172a',
-              }}
-            />
-            <button
-              onClick={() => copyToClipboard(widgetSnippet, 'Widget snippet copied')}
-              style={{
-                padding: '0.65rem',
-                borderRadius: '8px',
-                border: 'none',
-                background: '#0f172a',
-                color: '#fff',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Copy embed snippet
-            </button>
-          </div>
-
-          <div
-            style={{
-              background: 'white',
-              borderRadius: '12px',
-              padding: '1.5rem',
-              border: '1px solid #e2e8f0',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-              <ShieldCheck size={20} color="#3b82f6" />
-              Integration Guide (PDF)
-            </div>
-            <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
-              Hand this document to your agency or internal dev team. It covers widget embedding, public APIs, webhook payloads, and signature verification.
-            </p>
-            <a
-              href={integrationGuideUrl}
-              target="_blank"
-              rel="noreferrer"
-              download
-              style={{
-                marginTop: '0.5rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.35rem',
-                padding: '0.7rem 1rem',
-                borderRadius: '10px',
-                fontWeight: 600,
-                background: '#0f172a',
-                color: '#fff',
-                textDecoration: 'none',
-              }}
-            >
-              Download guide
-            </a>
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            border: '1px solid #e2e8f0',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1rem',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
-            <Globe size={20} color="#3b82f6" />
-            Public API endpoints
-          </div>
-          <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>
-            The portal + widget talk to these routes. Use them directly if you have a custom front end.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {portalApiDocs.map((doc) => (
-              <div
-                key={doc.title}
-                style={{
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  padding: '1rem',
-                  background: '#f8fafc',
-                }}
+      <div className="stack">
+        <div className={styles.cardGrid}>
+          <Panel>
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <div className="row" style={{ fontWeight: 600 }}>
+                <LinkIcon size={18} />
+                Hosted portal link
+              </div>
+              <p className="text-sm muted" style={{ margin: 0 }}>
+                Drop this tenant-specific URL on a "Book Now" button or marketing email.
+              </p>
+              <input type="text" readOnly value={hostedPortalUrl} className={styles.codeBox} />
+              <Button
+                variant="primary"
+                icon={<Copy size={14} />}
+                onClick={() => copyToClipboard(hostedPortalUrl, 'Portal link copied')}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                  <span style={{ fontWeight: 600, color: '#0f172a' }}>{doc.title}</span>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      color: doc.method === 'POST' ? '#0f172a' : '#15803d',
-                    }}
-                  >
+                Copy hosted link
+              </Button>
+            </div>
+          </Panel>
+
+          <Panel>
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <div className="row" style={{ fontWeight: 600 }}>
+                <Code2 size={18} />
+                Embeddable widget
+              </div>
+              <p className="text-sm muted" style={{ margin: 0 }}>
+                Paste the snippet into any site — it applies your branding and opens a modal checkout.
+              </p>
+              <textarea readOnly value={widgetSnippet} rows={4} className={styles.codeBox} />
+              <Button
+                variant="secondary"
+                icon={<Copy size={14} />}
+                onClick={() => copyToClipboard(widgetSnippet, 'Widget snippet copied')}
+              >
+                Copy embed snippet
+              </Button>
+            </div>
+          </Panel>
+
+          <Panel>
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <div className="row" style={{ fontWeight: 600 }}>
+                <ShieldCheck size={18} />
+                Integration guide
+              </div>
+              <p className="text-sm muted" style={{ margin: 0 }}>
+                Covers widget embedding, public APIs, webhook payloads, and signature verification.
+              </p>
+              <a href={integrationGuideUrl} target="_blank" rel="noreferrer" download>
+                <Button variant="secondary" block>
+                  Download guide
+                </Button>
+              </a>
+            </div>
+          </Panel>
+        </div>
+
+        <Panel title="Public API endpoints" subtitle="Use these directly for a custom front end">
+          <div className="stack" style={{ gap: 'var(--space-3)' }}>
+            {portalApiDocs.map((doc) => (
+              <div key={doc.title} className={styles.apiDoc}>
+                <div className={styles.apiDocHead}>
+                  <span className={styles.apiDocTitle}>{doc.title}</span>
+                  <span className={`${styles.method} ${doc.method === 'POST' ? styles.methodPost : styles.methodGet}`}>
                     {doc.method}
                   </span>
                 </div>
-                <code
-                  style={{
-                    display: 'block',
-                    wordBreak: 'break-all',
-                    fontSize: '0.85rem',
-                    color: '#0f172a',
-                    marginBottom: '0.5rem',
-                  }}
-                >
-                  {doc.path}
-                </code>
-                <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569' }}>{doc.note}</p>
+                <code className={styles.apiDocPath}>{doc.path}</code>
+                <p className="text-sm muted" style={{ margin: 0 }}>{doc.note}</p>
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
 
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            border: '1px solid #e2e8f0',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1.25rem',
-          }}
+        <Panel
+          title="Webhook notifications"
+          subtitle="Receive real-time reservation and payment events. Verify deliveries with the shared secret (HMAC-SHA256 against the x-innsight-signature header)."
+          actions={
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Webhook size={14} />}
+              onClick={() => setShowCreate((v) => !v)}
+            >
+              {showCreate ? 'Cancel' : 'Add endpoint'}
+            </Button>
+          }
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Activity size={20} color="#0f172a" />
-            <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem' }}>Webhook notifications</h2>
-          </div>
-          <p style={{ margin: 0, color: '#475569', lineHeight: 1.6 }}>
-            Create HTTPS endpoints to receive real-time reservation + payment events. Every delivery includes a shared secret so you can verify the signature.
-          </p>
-
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '1.5rem',
-            }}
-          >
-            <div style={{ flex: '2 1 420px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {webhookEmptyState && (
-                <div
-                  style={{
-                    padding: '1.5rem',
-                    border: '1px dashed #cbd5f5',
-                    borderRadius: '12px',
-                    background: '#f8fafc',
-                    color: '#475569',
-                  }}
-                >
-                  No webhooks yet. Add your first endpoint to receive reservation confirmations or payment completions.
+          <div className="stack">
+            {showCreate && (
+              <div className={styles.webhookCard} style={{ background: 'var(--cloud)' }}>
+                <div className="grid2">
+                  <Field label="Endpoint URL" required>
+                    <TextInput
+                      value={webhookForm.url}
+                      onChange={(e) => setWebhookForm({ ...webhookForm, url: e.target.value })}
+                      placeholder="https://example.com/webhooks/innsight"
+                    />
+                  </Field>
+                  <Field label="Description">
+                    <TextInput
+                      value={webhookForm.description}
+                      onChange={(e) => setWebhookForm({ ...webhookForm, description: e.target.value })}
+                      placeholder="Optional"
+                    />
+                  </Field>
                 </div>
-              )}
-              {webhookLoading && (
-                <div style={{ padding: '1rem', color: '#475569' }}>Loading webhooks…</div>
-              )}
-              {webhooks.map((hook) => (
-                <div
-                  key={hook.id}
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '12px',
-                    padding: '1.25rem',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.75rem',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <div>
-                      <p style={{ margin: 0, fontWeight: 600, color: '#0f172a', wordBreak: 'break-all' }}>{hook.url}</p>
-                      {hook.description ? (
-                        <p style={{ margin: 0, color: '#64748b', fontSize: '0.9rem' }}>{hook.description}</p>
-                      ) : null}
-                    </div>
-                    <span
-                      style={{
-                        alignSelf: 'flex-start',
-                        padding: '0.3rem 0.8rem',
-                        borderRadius: '999px',
-                        fontSize: '0.8rem',
-                        fontWeight: 600,
-                        background: hook.active ? 'rgba(34,197,94,0.15)' : 'rgba(148,163,184,0.2)',
-                        color: hook.active ? '#15803d' : '#475569',
-                      }}
-                    >
-                      {hook.active ? 'Active' : 'Paused'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    {hook.eventTypes.map((evt) => (
-                      <span
-                        key={evt}
-                        style={{
-                          padding: '0.25rem 0.6rem',
-                          borderRadius: '999px',
-                          fontSize: '0.75rem',
-                          background: 'rgba(191,219,254,0.5)',
-                          color: '#1d4ed8',
-                        }}
-                      >
-                        {evt === 'reservation.confirmed' ? 'Reservation confirmed' : 'Payment completed'}
-                      </span>
+                <Field label="Events">
+                  <div className="row">
+                    {EVENT_OPTIONS.map((opt) => (
+                      <label key={opt.value} className="row text-sm" style={{ cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={webhookForm.eventTypes.includes(opt.value)}
+                          onChange={() => handleEventToggle(opt.value)}
+                        />
+                        {opt.label}
+                      </label>
                     ))}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem' }}>
+                </Field>
+                <div className="row" style={{ justifyContent: 'flex-end' }}>
+                  <Button variant="primary" loading={creatingWebhook} onClick={handleCreateWebhook}>
+                    Create endpoint
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {webhookLoading ? (
+              <Skeleton height="120px" />
+            ) : webhooks.length === 0 ? (
+              <EmptyState
+                icon={<Globe size={28} strokeWidth={1.6} />}
+                title="No webhooks yet"
+                description="Add your first endpoint to receive reservation confirmations or payment completions."
+              />
+            ) : (
+              webhooks.map((hook) => (
+                <div key={hook.id} className={styles.webhookCard}>
+                  <div className="row-between" style={{ alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
                     <div>
-                      <p style={{ margin: 0, fontSize: '0.75rem', textTransform: 'uppercase', color: '#94a3b8' }}>Last delivery</p>
-                      <p style={{ margin: 0, color: '#0f172a' }}>{formatDate(hook.lastTriggeredAt)}</p>
+                      <p className={styles.webhookUrl}>{hook.url}</p>
+                      {hook.description && <p className="text-sm muted" style={{ margin: 0 }}>{hook.description}</p>}
+                    </div>
+                    <StatusBadge tone={hook.active ? 'success' : 'neutral'} dot={false}>
+                      {hook.active ? 'Active' : 'Paused'}
+                    </StatusBadge>
+                  </div>
+
+                  <div className="row">
+                    {hook.eventTypes.map((evt) => (
+                      <StatusBadge key={evt} tone="info" dot={false}>
+                        {evt === 'reservation.confirmed' ? 'Reservation confirmed' : 'Payment completed'}
+                      </StatusBadge>
+                    ))}
+                  </div>
+
+                  <div className={styles.metaGrid}>
+                    <div>
+                      <p className={styles.metaLabel}>Last delivery</p>
+                      <p className={styles.metaValue}>{formatDate(hook.lastTriggeredAt)}</p>
                     </div>
                     <div>
-                      <p style={{ margin: 0, fontSize: '0.75rem', textTransform: 'uppercase', color: '#94a3b8' }}>Last status</p>
-                      <p style={{ margin: 0, color: hook.lastStatus === 'failed' ? '#b91c1c' : '#0f172a' }}>
-                        {hook.lastStatus ? hook.lastStatus : '—'}
+                      <p className={styles.metaLabel}>Last status</p>
+                      <p className={styles.metaValue} style={{ color: hook.lastStatus === 'failed' ? 'var(--danger)' : undefined }}>
+                        {hook.lastStatus ?? '—'}
                       </p>
                     </div>
                   </div>
-                  {hook.lastError && (
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#b91c1c' }}>{hook.lastError}</p>
-                  )}
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '0.5rem',
-                    }}
-                  >
-                    <button
-                      onClick={() => hook.secret && copyToClipboard(hook.secret, 'Secret copied')}
+
+                  {hook.lastError && <p className="text-sm" style={{ margin: 0, color: 'var(--danger)' }}>{hook.lastError}</p>}
+
+                  <div className="row" style={{ flexWrap: 'wrap' }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Copy size={14} />}
                       disabled={!hook.secret}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        border: '1px solid #cbd5f5',
-                        borderRadius: '8px',
-                        padding: '0.45rem 0.85rem',
-                        background: '#fff',
-                        cursor: hook.secret ? 'pointer' : 'not-allowed',
-                        color: '#0f172a',
-                      }}
+                      onClick={() => hook.secret && copyToClipboard(hook.secret, 'Secret copied')}
                     >
-                      <Copy size={15} />
-                      Secret
-                    </button>
-                    <button
+                      Copy secret
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Play size={14} />}
+                      loading={testingWebhookId === hook.id}
                       onClick={() => handleSendTest(hook)}
-                      disabled={testingWebhookId === hook.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        borderRadius: '8px',
-                        padding: '0.45rem 0.85rem',
-                        border: 'none',
-                        background: '#0f172a',
-                        color: '#fff',
-                        cursor: 'pointer',
-                        opacity: testingWebhookId === hook.id ? 0.6 : 1,
-                      }}
                     >
-                      <Play size={15} />
-                      {testingWebhookId === hook.id ? 'Sending…' : 'Send test'}
-                    </button>
-                    <button
+                      Send test
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Pause size={14} />}
+                      loading={updatingWebhookId === hook.id}
                       onClick={() => handleToggleWebhook(hook)}
-                      disabled={updatingWebhookId === hook.id}
-                      style={{
-                        borderRadius: '8px',
-                        padding: '0.45rem 0.85rem',
-                        border: '1px solid #e2e8f0',
-                        background: '#fff',
-                        cursor: 'pointer',
-                        opacity: updatingWebhookId === hook.id ? 0.6 : 1,
-                      }}
                     >
                       {hook.active ? 'Pause' : 'Resume'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteWebhook(hook.id)}
-                      disabled={deletingWebhookId === hook.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                        borderRadius: '8px',
-                        padding: '0.45rem 0.85rem',
-                        border: '1px solid rgba(248,113,113,0.6)',
-                        background: '#fff5f5',
-                        color: '#b91c1c',
-                        cursor: 'pointer',
-                        opacity: deletingWebhookId === hook.id ? 0.6 : 1,
-                      }}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Trash2 size={14} />}
+                      onClick={() => setDeleteTarget(hook)}
                     >
-                      <Trash2 size={15} />
-                      Remove
-                    </button>
+                      Delete
+                    </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-
-            <div
-              style={{
-                flex: '1 1 320px',
-                border: '1px solid #e2e8f0',
-                borderRadius: '12px',
-                padding: '1.25rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <ShieldCheck size={18} color="#3b82f6" />
-                <strong style={{ color: '#0f172a' }}>Add endpoint</strong>
-              </div>
-              <label style={{ color: '#475569', fontSize: '0.9rem' }}>POST URL</label>
-              <input
-                type="url"
-                placeholder="https://example.com/webhooks/innsight"
-                value={webhookForm.url}
-                onChange={(e) => setWebhookForm((prev) => ({ ...prev, url: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  borderRadius: '8px',
-                  border: '1px solid #e2e8f0',
-                }}
-              />
-              <label style={{ color: '#475569', fontSize: '0.9rem' }}>Description (optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. CRM reservation sync"
-                value={webhookForm.description}
-                onChange={(e) => setWebhookForm((prev) => ({ ...prev, description: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  borderRadius: '8px',
-                  border: '1px solid #e2e8f0',
-                }}
-              />
-              <label style={{ color: '#475569', fontSize: '0.9rem' }}>Events</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {EVENT_OPTIONS.map((option) => (
-                  <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', color: '#0f172a' }}>
-                    <input
-                      type="checkbox"
-                      checked={eventSelection.includes(option.value)}
-                      onChange={() => handleEventToggle(option.value)}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
-              <button
-                onClick={handleCreateWebhook}
-                disabled={!webhookForm.url || creatingWebhook}
-                style={{
-                  marginTop: '0.5rem',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '0.75rem',
-                  fontWeight: 600,
-                  background: '#0f172a',
-                  color: '#fff',
-                  cursor: webhookForm.url && !creatingWebhook ? 'pointer' : 'not-allowed',
-                  opacity: !webhookForm.url || creatingWebhook ? 0.7 : 1,
-                }}
-              >
-                {creatingWebhook ? 'Saving…' : 'Create webhook'}
-              </button>
-              <div
-                style={{
-                  fontSize: '0.85rem',
-                  color: '#475569',
-                  lineHeight: 1.5,
-                  background: '#f8fafc',
-                  borderRadius: '8px',
-                  padding: '0.75rem',
-                }}
-              >
-                {webhookInstructions}
-              </div>
-            </div>
+              ))
+            )}
           </div>
-        </div>
-
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '1.5rem',
-            border: '1px solid #e2e8f0',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '1rem',
-          }}
-        >
-          <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem' }}>Implementation checklist</h2>
-          <ol style={{ margin: 0, paddingLeft: '1.25rem', color: '#475569', lineHeight: 1.65 }}>
-            <li>Drop the hosted link or widget snippet onto your site (preferably on a dedicated “Book Now” page).</li>
-            <li>Whitelist <code style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{PORTAL_ORIGIN}</code> inside your CMS if external scripts must be approved.</li>
-            <li>After checkout, persist the returned <code style={{ fontFamily: 'monospace' }}>customerToken</code> if you plan to call tenant APIs directly.</li>
-            <li>Use the form above to add webhook endpoints for reservation + payment activity, then verify deliveries with the shared secret.</li>
-            <li>Need deeper automation (custom theming, folio sync, loyalty)? Contact InnSight support with your tenant slug for concierge onboarding.</li>
-          </ol>
-          <div style={{ background: '#f8fafc', borderRadius: '10px', padding: '1rem', border: '1px dashed #cbd5f5' }}>
-            <p style={{ marginTop: 0, color: '#0f172a', fontWeight: 600 }}>Signature verification snippet (Node.js)</p>
-            <pre
-              style={{
-                margin: 0,
-                background: '#0f172a',
-                color: '#e2e8f0',
-                padding: '1rem',
-                borderRadius: '8px',
-                fontSize: '0.85rem',
-                overflowX: 'auto',
-              }}
-            >{`const crypto = require('crypto');
-
-const signature = req.headers['x-innsight-signature'];
-const computed = crypto
-  .createHmac('sha256', process.env.INNSIGHT_WEBHOOK_SECRET)
-  .update(rawBody) // raw JSON string
-  .digest('hex');
-
-if (computed !== signature) {
-  return res.status(401).send('invalid signature');
-}`}</pre>
-          </div>
-        </div>
+        </Panel>
       </div>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteWebhook}
+        title="Delete webhook"
+        confirmLabel="Delete webhook"
+        loading={deleting}
+        destructive
+      >
+        Delete the endpoint <strong>{deleteTarget?.url}</strong>? Events will stop being delivered immediately.
+      </ConfirmDialog>
     </Layout>
   );
 }

@@ -1,0 +1,97 @@
+.group {
+  margin-bottom: var(--space-6);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--line);
+}
+
+.groupTitle {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.catDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.groupCount {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.cardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.cardName {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cardDesc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.cardCat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.cardRate {
+  font-size: var(--fs-2xl, 1.6rem);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cardMeta {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.cardFoot {
+  display: flex;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+  margin-top: auto;
+}

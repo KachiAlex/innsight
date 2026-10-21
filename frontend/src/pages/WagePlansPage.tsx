@@ -1,1404 +1,505 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Plus, Edit, Trash2, X, Users, Wallet } from 'lucide-react';
+import { Plus, Pencil, Trash2, UserPlus, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { CardSkeleton } from '../components/LoadingSkeleton';
-import SearchInput from '../components/SearchInput';
 import { useDebounce } from '../hooks/useDebounce';
-import EmptyState from '../components/EmptyState';
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  FilterBar,
+  Modal,
+  PageHeader,
+  RoleGate,
+  Select,
+  Skeleton,
+  StatusBadge,
+  TextInput,
+  Textarea,
+} from '../components/ui';
+import { ErrorState } from '../components/ui';
+import { useTenantSettings } from '../hooks/useTenantSettings';
+import { formatMoney } from '../lib/money';
+import styles from './WagePlansPage.module.css';
+
+interface AssignedStaff {
+  id: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+}
 
 interface WagePlan {
   id: string;
   name: string;
-  description?: string;
-  roleClassification: 'normal_staff' | 'supervisor' | 'manager' | 'senior_executive';
-  role?: string;
-  wageType: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'annual';
-  baseAmount: number;
+  description?: string | null;
+  payType: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'salary';
+  amount: number;
   currency: string;
-  overtimeRate?: number;
-  benefits: string[];
+  payFrequency: 'weekly' | 'biweekly' | 'monthly';
   isActive: boolean;
-  createdAt?: Date;
-  updatedAt?: Date;
+  assignedStaff?: AssignedStaff[];
+  assignedCount?: number;
 }
 
-const roleClassificationLabels: Record<string, string> = {
-  normal_staff: 'Normal Staff',
-  supervisor: 'Supervisor',
-  manager: 'Manager',
-  senior_executive: 'Senior Executive',
-};
+interface StaffMember {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: string;
+  isActive: boolean;
+  permissions?: { wagePlanId?: string } | null;
+}
 
-const wageTypeLabels: Record<string, string> = {
-  hourly: 'Per Hour',
-  daily: 'Per Day',
-  weekly: 'Per Week',
-  monthly: 'Per Month',
-  annual: 'Per Year',
+const PAY_TYPES: { value: WagePlan['payType']; label: string }[] = [
+  { value: 'hourly', label: 'Per hour' },
+  { value: 'daily', label: 'Per day' },
+  { value: 'weekly', label: 'Per week' },
+  { value: 'monthly', label: 'Per month' },
+  { value: 'salary', label: 'Salary (annual)' },
+];
+
+const PAY_FREQUENCIES: { value: WagePlan['payFrequency']; label: string }[] = [
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'biweekly', label: 'Every two weeks' },
+  { value: 'monthly', label: 'Monthly' },
+];
+
+const payTypeLabel = (t: WagePlan['payType']) => PAY_TYPES.find((p) => p.value === t)?.label ?? t;
+
+const MANAGER_ROLES = ['owner', 'general_manager'];
+
+interface FormState {
+  name: string;
+  description: string;
+  payType: WagePlan['payType'];
+  amount: string;
+  currency: string;
+  payFrequency: WagePlan['payFrequency'];
+  isActive: boolean;
+}
+
+const EMPTY_FORM: FormState = {
+  name: '',
+  description: '',
+  payType: 'monthly',
+  amount: '',
+  currency: 'NGN',
+  payFrequency: 'monthly',
+  isActive: true,
 };
 
 export default function WagePlansPage() {
   const { user } = useAuthStore();
+  const { currencySymbol } = useTenantSettings();
   const [wagePlans, setWagePlans] = useState<WagePlan[]>([]);
-  const [staff, setStaff] = useState<any[]>([]);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [selectedWagePlan, setSelectedWagePlan] = useState<WagePlan | null>(null);
-  const [selectedStaff, setSelectedStaff] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
-  const [filterClassification, setFilterClassification] = useState<string>('');
-  const [filterActive, setFilterActive] = useState<boolean | null>(null);
+  const [filterActive, setFilterActive] = useState('');
   const [saving, setSaving] = useState(false);
-  const [deletingPlans, setDeletingPlans] = useState<Set<string>>(new Set());
-  const [formData, setFormData] = useState<{
-    name: string;
-    description: string;
-    roleClassification: 'normal_staff' | 'supervisor' | 'manager' | 'senior_executive';
-    role: string;
-    wageType: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'annual';
-    baseAmount: string;
-    currency: string;
-    overtimeRate: string;
-    benefits: string[];
-    newBenefit: string;
-    isActive: boolean;
-  }>({
-    name: '',
-    description: '',
-    roleClassification: 'normal_staff',
-    role: '',
-    wageType: 'monthly',
-    baseAmount: '',
-    currency: 'NGN',
-    overtimeRate: '',
-    benefits: [],
-    newBenefit: '',
-    isActive: true,
-  });
+  const [deleting, setDeleting] = useState(false);
+  const [formData, setFormData] = useState<FormState>(EMPTY_FORM);
+  const [editingPlan, setEditingPlan] = useState<WagePlan | 'new' | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WagePlan | null>(null);
+  const [assignPlan, setAssignPlan] = useState<WagePlan | null>(null);
+  const [assignStaffId, setAssignStaffId] = useState('');
 
   const fetchWagePlans = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
+    setError(null);
     try {
       const params: any = {};
-      if (filterClassification) params.roleClassification = filterClassification;
-      if (filterActive !== null) params.isActive = filterActive.toString();
-
+      if (filterActive) params.isActive = filterActive;
       const response = await api.get(`/tenants/${user.tenantId}/wage-plans`, { params });
       setWagePlans(response.data.data || []);
-    } catch (error: any) {
-      console.error('Failed to fetch wage plans:', error);
-      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to fetch wage plans');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || 'Failed to fetch wage plans');
       setWagePlans([]);
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId, filterClassification, filterActive]);
+  }, [user?.tenantId, filterActive]);
 
   useEffect(() => {
-    if (!user?.tenantId) return;
     fetchWagePlans();
-    fetchStaff();
-  }, [user, fetchWagePlans]);
+    api
+      .get(`/tenants/${user?.tenantId}/staff`)
+      .then((res) => setStaff(res.data.data || []))
+      .catch(() => setStaff([]));
+  }, [fetchWagePlans, user?.tenantId]);
 
-  const fetchStaff = useCallback(async () => {
-    if (!user?.tenantId) return;
-    try {
-      const response = await api.get(`/tenants/${user.tenantId}/staff`);
-      setStaff(response.data.data || []);
-    } catch (error: any) {
-      console.error('Failed to fetch staff:', error);
-      toast.error(error.response?.data?.error?.message || 'Failed to fetch staff');
-    }
-  }, [user?.tenantId]);
+  const openEdit = (plan: WagePlan) => {
+    setFormData({
+      name: plan.name,
+      description: plan.description || '',
+      payType: plan.payType,
+      amount: String(plan.amount),
+      currency: plan.currency,
+      payFrequency: plan.payFrequency,
+      isActive: plan.isActive,
+    });
+    setEditingPlan(plan);
+  };
 
-  const handleCreate = async () => {
-    if (!formData.name || !formData.baseAmount) {
-      toast.error('Please fill in all required fields');
+  const handleSave = async () => {
+    if (!formData.name || !formData.amount) {
+      toast.error('Name and amount are required');
       return;
     }
-
     setSaving(true);
     try {
-      const wagePlanData: any = {
+      const payload = {
         name: formData.name,
         description: formData.description || undefined,
-        roleClassification: formData.roleClassification,
-        wageType: formData.wageType,
-        baseAmount: parseFloat(formData.baseAmount),
+        payType: formData.payType,
+        amount: parseFloat(formData.amount),
         currency: formData.currency,
-        benefits: formData.benefits,
+        payFrequency: formData.payFrequency,
         isActive: formData.isActive,
       };
-
-      if (formData.role) {
-        wagePlanData.role = formData.role;
+      if (editingPlan === 'new') {
+        await api.post(`/tenants/${user?.tenantId}/wage-plans`, payload);
+        toast.success('Wage plan created');
+      } else if (editingPlan) {
+        await api.patch(`/tenants/${user?.tenantId}/wage-plans/${editingPlan.id}`, payload);
+        toast.success('Wage plan updated');
       }
-
-      if (formData.overtimeRate) {
-        wagePlanData.overtimeRate = parseFloat(formData.overtimeRate);
-      }
-
-      await api.post(`/tenants/${user?.tenantId}/wage-plans`, wagePlanData);
-      toast.success('Wage plan created successfully');
-      setShowCreateModal(false);
-      resetForm();
+      setEditingPlan(null);
+      setFormData(EMPTY_FORM);
       fetchWagePlans();
-    } catch (error: any) {
-      console.error('Failed to create wage plan:', error);
-      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to create wage plan');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to save wage plan');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEdit = async () => {
-    if (!selectedWagePlan) return;
-
-    if (!formData.name || !formData.baseAmount) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    setSaving(true);
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      const wagePlanData: any = {
-        name: formData.name,
-        description: formData.description || undefined,
-        roleClassification: formData.roleClassification,
-        wageType: formData.wageType,
-        baseAmount: parseFloat(formData.baseAmount),
-        currency: formData.currency,
-        benefits: formData.benefits,
-        isActive: formData.isActive,
-      };
-
-      if (formData.role) {
-        wagePlanData.role = formData.role;
-      } else {
-        wagePlanData.role = null;
-      }
-
-      if (formData.overtimeRate) {
-        wagePlanData.overtimeRate = parseFloat(formData.overtimeRate);
-      } else {
-        wagePlanData.overtimeRate = null;
-      }
-
-      await api.patch(`/tenants/${user?.tenantId}/wage-plans/${selectedWagePlan.id}`, wagePlanData);
-      toast.success('Wage plan updated successfully');
-      setShowEditModal(false);
-      setSelectedWagePlan(null);
-      resetForm();
+      await api.delete(`/tenants/${user?.tenantId}/wage-plans/${deleteTarget.id}`);
+      toast.success('Wage plan deleted');
+      setDeleteTarget(null);
       fetchWagePlans();
-    } catch (error: any) {
-      console.error('Failed to update wage plan:', error);
-      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to update wage plan');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to delete wage plan');
     } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (wagePlanId: string) => {
-    if (!window.confirm('Are you sure you want to delete this wage plan?')) return;
-
-    setDeletingPlans(prev => new Set(prev).add(wagePlanId));
-    try {
-      await api.delete(`/tenants/${user?.tenantId}/wage-plans/${wagePlanId}`);
-      toast.success('Wage plan deleted successfully');
-      fetchWagePlans();
-    } catch (error: any) {
-      console.error('Failed to delete wage plan:', error);
-      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to delete wage plan');
-    } finally {
-      setDeletingPlans(prev => {
-        const next = new Set(prev);
-        next.delete(wagePlanId);
-        return next;
-      });
+      setDeleting(false);
     }
   };
 
   const handleAssign = async () => {
-    if (!selectedWagePlan || !selectedStaff) {
-      toast.error('Please select a staff member');
-      return;
-    }
-
+    if (!assignPlan || !assignStaffId) return;
     setSaving(true);
     try {
-      await api.post(`/tenants/${user?.tenantId}/wage-plans/${selectedWagePlan.id}/assign-to-staff/${selectedStaff}`);
-      toast.success('Wage plan assigned successfully');
-      setShowAssignModal(false);
-      setSelectedWagePlan(null);
-      setSelectedStaff('');
-      fetchStaff();
-    } catch (error: any) {
-      console.error('Failed to assign wage plan:', error);
-      toast.error(error.response?.data?.error?.message || error.response?.data?.message || 'Failed to assign wage plan');
+      await api.post(
+        `/tenants/${user?.tenantId}/wage-plans/${assignPlan.id}/assign-to-staff/${assignStaffId}`
+      );
+      toast.success('Wage plan assigned');
+      setAssignPlan(null);
+      setAssignStaffId('');
+      fetchWagePlans();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to assign wage plan');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEditClick = (wagePlan: WagePlan) => {
-    setSelectedWagePlan(wagePlan);
-    setFormData({
-      name: wagePlan.name,
-      description: wagePlan.description || '',
-      roleClassification: wagePlan.roleClassification,
-      role: wagePlan.role || '',
-      wageType: wagePlan.wageType,
-      baseAmount: wagePlan.baseAmount.toString(),
-      currency: wagePlan.currency,
-      overtimeRate: wagePlan.overtimeRate?.toString() || '',
-      benefits: wagePlan.benefits || [],
-      newBenefit: '',
-      isActive: wagePlan.isActive,
-    });
-    setShowEditModal(true);
-  };
-
-  const handleAssignClick = (wagePlan: WagePlan) => {
-    setSelectedWagePlan(wagePlan);
-    setSelectedStaff('');
-    setShowAssignModal(true);
-  };
-
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      description: '',
-      roleClassification: 'normal_staff',
-      role: '',
-      wageType: 'monthly',
-      baseAmount: '',
-      currency: 'NGN',
-      overtimeRate: '',
-      benefits: [],
-      newBenefit: '',
-      isActive: true,
-    });
-  };
-
-  const addBenefit = () => {
-    if (formData.newBenefit.trim()) {
-      setFormData({
-        ...formData,
-        benefits: [...formData.benefits, formData.newBenefit.trim()],
-        newBenefit: '',
-      });
-    }
-  };
-
-  const removeBenefit = (index: number) => {
-    setFormData({
-      ...formData,
-      benefits: formData.benefits.filter((_, i) => i !== index),
-    });
-  };
-
-  const filteredWagePlans = useMemo(() => wagePlans.filter((plan) => {
+  const filteredPlans = wagePlans.filter((plan) => {
     if (!debouncedSearchTerm) return true;
-    const searchLower = debouncedSearchTerm.toLowerCase();
-    return (
-      plan.name.toLowerCase().includes(searchLower) ||
-      plan.description?.toLowerCase().includes(searchLower) ||
-      (plan.role && plan.role.toLowerCase().includes(searchLower))
-    );
-  }), [wagePlans, debouncedSearchTerm]);
+    const s = debouncedSearchTerm.toLowerCase();
+    return plan.name.toLowerCase().includes(s) || plan.description?.toLowerCase().includes(s);
+  });
 
-  // Group by classification
-  const groupedPlans = useMemo(() => filteredWagePlans.reduce((acc: Record<string, WagePlan[]>, plan: WagePlan) => {
-    const key = plan.roleClassification;
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(plan);
-    return acc;
-  }, {} as Record<string, WagePlan[]>), [filteredWagePlans]);
-
-  if (loading) {
-    return (
-      <Layout>
-        <div>
-          <h1 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>Wage Plans</h1>
-          <CardSkeleton count={6} />
-        </div>
-      </Layout>
-    );
-  }
+  const unassignedStaff = staff.filter(
+    (s) => s.isActive && s.permissions?.wagePlanId !== assignPlan?.id
+  );
 
   return (
     <Layout>
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h1 style={{ color: '#1e293b' }}>Wage Plans</h1>
-          <button
-            onClick={() => {
-              resetForm();
-              setShowCreateModal(true);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.75rem 1.5rem',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: '500',
-            }}
-          >
-            <Plus size={20} />
-            Create Wage Plan
-          </button>
+      <PageHeader
+        title="Wage plans"
+        subtitle={`${wagePlans.length} plan${wagePlans.length !== 1 ? 's' : ''}`}
+        actions={
+          <RoleGate roles={MANAGER_ROLES}>
+            <Button
+              variant="primary"
+              icon={<Plus size={16} />}
+              onClick={() => {
+                setFormData(EMPTY_FORM);
+                setEditingPlan('new');
+              }}
+            >
+              Create wage plan
+            </Button>
+          </RoleGate>
+        }
+      />
+
+      <FilterBar
+        search={searchTerm}
+        onSearchChange={setSearchTerm}
+        searchPlaceholder="Search wage plans…"
+        activeCount={filterActive ? 1 : 0}
+        onClear={() => setFilterActive('')}
+      >
+        <Select value={filterActive} onChange={(e) => setFilterActive(e.target.value)} aria-label="Filter by status">
+          <option value="">All statuses</option>
+          <option value="true">Active</option>
+          <option value="false">Inactive</option>
+        </Select>
+      </FilterBar>
+
+      {loading ? (
+        <div className={styles.cardGrid}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} height="200px" />
+          ))}
         </div>
-
-        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: '300px' }}>
-            <SearchInput
-              placeholder="Search wage plans..."
-              value={searchTerm}
-              onChange={(value) => setSearchTerm(value)}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <select
-              value={filterClassification}
-              onChange={(e) => setFilterClassification(e.target.value)}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '6px',
-                background: 'white',
-                color: '#64748b',
-                cursor: 'pointer',
-              }}
-            >
-              <option value="">All Classifications</option>
-              <option value="normal_staff">Normal Staff</option>
-              <option value="supervisor">Supervisor</option>
-              <option value="manager">Manager</option>
-              <option value="senior_executive">Senior Executive</option>
-            </select>
-            <button
-              onClick={() => setFilterActive(null)}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '6px',
-                background: filterActive === null ? '#3b82f6' : 'white',
-                color: filterActive === null ? 'white' : '#64748b',
-                cursor: 'pointer',
-              }}
-            >
-              All
-            </button>
-            <button
-              onClick={() => setFilterActive(true)}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '6px',
-                background: filterActive === true ? '#10b981' : 'white',
-                color: filterActive === true ? 'white' : '#64748b',
-                cursor: 'pointer',
-              }}
-            >
-              Active
-            </button>
-            <button
-              onClick={() => setFilterActive(false)}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '6px',
-                background: filterActive === false ? '#ef4444' : 'white',
-                color: filterActive === false ? 'white' : '#64748b',
-                cursor: 'pointer',
-              }}
-            >
-              Inactive
-            </button>
-          </div>
-        </div>
-
-        {!loading && filteredWagePlans.length === 0 ? (
-          <EmptyState
-            icon={Wallet}
-            title={searchTerm || filterClassification ? 'No wage plans match your filters' : 'No wage plans yet'}
-            description={searchTerm || filterClassification
-              ? 'Try adjusting your search or filter criteria'
-              : 'Create your first wage plan to get started'}
-            action={searchTerm || filterClassification ? undefined : {
-              label: 'Create Wage Plan',
-              onClick: () => {
-                resetForm();
-                setShowCreateModal(true);
-              },
-            }}
-          />
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-            {Object.entries(groupedPlans).map(([classification, plans]) => (
-              <div key={classification}>
-                <div style={{ marginBottom: '1rem', paddingBottom: '0.5rem', borderBottom: '2px solid #e2e8f0' }}>
-                  <h2 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', fontWeight: '600' }}>
-                    {roleClassificationLabels[classification]} ({plans.length})
-                  </h2>
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchWagePlans} />
+      ) : filteredPlans.length === 0 ? (
+        <EmptyState
+          icon={<Wallet size={28} strokeWidth={1.6} />}
+          title={debouncedSearchTerm || filterActive ? 'No wage plans match your filters' : 'No wage plans yet'}
+          description={
+            debouncedSearchTerm || filterActive
+              ? 'Try adjusting your search or filters'
+              : 'Create a wage plan to define how staff are paid'
+          }
+          action={
+            <RoleGate roles={MANAGER_ROLES}>
+              {!debouncedSearchTerm && !filterActive && (
+                <Button variant="primary" onClick={() => setEditingPlan('new')}>
+                  Create wage plan
+                </Button>
+              )}
+            </RoleGate>
+          }
+        />
+      ) : (
+        <div className={styles.cardGrid}>
+          {filteredPlans.map((plan) => (
+            <div key={plan.id} className={styles.card}>
+              <div className={styles.cardHead}>
+                <div style={{ flex: 1 }}>
+                  <h3 className={styles.cardName}>{plan.name}</h3>
+                  {plan.description && <p className={styles.cardDesc}>{plan.description}</p>}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1.5rem' }}>
-                  {plans.map((plan) => (
-                    <div
-                      key={plan.id}
-                      style={{
-                        background: 'white',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '8px',
-                        padding: '1.5rem',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                        <div>
-                          <h3 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', fontWeight: '600' }}>
-                            {plan.name}
-                          </h3>
-                          {plan.description && (
-                            <p style={{ margin: '0.5rem 0 0', color: '#64748b', fontSize: '0.875rem' }}>
-                              {plan.description}
-                            </p>
-                          )}
-                          {plan.role && (
-                            <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#64748b' }}>
-                              Role: {plan.role}
-                            </p>
-                          )}
-                        </div>
-                        <span
-                          style={{
-                            padding: '0.25rem 0.75rem',
-                            borderRadius: '12px',
-                            fontSize: '0.75rem',
-                            fontWeight: '500',
-                            background: plan.isActive ? '#d1fae5' : '#fee2e2',
-                            color: plan.isActive ? '#065f46' : '#991b1b',
-                          }}
-                        >
-                          {plan.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
-
-                      <div style={{ marginBottom: '1rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '2rem', fontWeight: '700', color: '#1e293b' }}>
-                            {plan.currency} {plan.baseAmount.toLocaleString()}
-                          </span>
-                          <span style={{ color: '#64748b', fontSize: '0.875rem' }}>
-                            {wageTypeLabels[plan.wageType]}
-                          </span>
-                        </div>
-                        {plan.overtimeRate && (
-                          <p style={{ margin: '0.5rem 0 0', fontSize: '0.875rem', color: '#64748b' }}>
-                            Overtime: {plan.overtimeRate}x
-                          </p>
-                        )}
-                      </div>
-
-                      {plan.benefits && plan.benefits.length > 0 && (
-                        <div style={{ marginBottom: '1rem' }}>
-                          <p style={{ margin: '0 0 0.5rem', fontSize: '0.875rem', color: '#64748b', fontWeight: '500' }}>
-                            Benefits:
-                          </p>
-                          <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.875rem', color: '#64748b' }}>
-                            {plan.benefits.map((benefit: string, idx: number) => (
-                              <li key={idx}>{benefit}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid #e2e8f0', paddingTop: '1rem' }}>
-                        <button
-                          onClick={() => handleAssignClick(plan)}
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            background: 'white',
-                            color: '#64748b',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.5rem',
-                            fontSize: '0.875rem',
-                          }}
-                          title="Assign to Staff"
-                        >
-                          <Users size={16} />
-                          Assign
-                        </button>
-                        <button
-                          onClick={() => handleEditClick(plan)}
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            background: 'white',
-                            color: '#64748b',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.5rem',
-                            fontSize: '0.875rem',
-                          }}
-                        >
-                          <Edit size={16} />
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDelete(plan.id)}
-                          disabled={deletingPlans.has(plan.id)}
-                          style={{
-                            flex: 1,
-                            padding: '0.5rem',
-                            border: '1px solid #fee2e2',
-                            borderRadius: '6px',
-                            background: 'white',
-                            color: deletingPlans.has(plan.id) ? '#94a3b8' : '#ef4444',
-                            cursor: deletingPlans.has(plan.id) ? 'not-allowed' : 'pointer',
-                            opacity: deletingPlans.has(plan.id) ? 0.6 : 1,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '0.5rem',
-                            fontSize: '0.875rem',
-                          }}
-                        >
-                          <Trash2 size={16} />
-                          {deletingPlans.has(plan.id) ? 'Deleting...' : 'Delete'}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Create Modal */}
-        {showCreateModal && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 1000,
-            }}
-            onClick={() => setShowCreateModal(false)}
-          >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '2rem',
-                width: '90%',
-                maxWidth: '600px',
-                maxHeight: '90vh',
-                overflow: 'auto',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0, color: '#1e293b' }}>Create Wage Plan</h2>
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '0.5rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  <X size={20} color="#64748b" />
-                </button>
+                <StatusBadge tone={plan.isActive ? 'success' : 'neutral'} dot={false}>
+                  {plan.isActive ? 'Active' : 'Inactive'}
+                </StatusBadge>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Plan Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g., Standard Chef Wage"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Description
-                  </label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                      minHeight: '80px',
-                      resize: 'vertical',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Role Classification *
-                  </label>
-                  <select
-                    value={formData.roleClassification}
-                    onChange={(e) => setFormData({ ...formData, roleClassification: e.target.value as any })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  >
-                    <option value="normal_staff">Normal Staff</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="manager">Manager</option>
-                    <option value="senior_executive">Senior Executive</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Specific Role (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                    placeholder="e.g., Chef, Housekeeper (leave blank for general plan)"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Wage Type *
-                    </label>
-                    <select
-                      value={formData.wageType}
-                      onChange={(e) => setFormData({ ...formData, wageType: e.target.value as any })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    >
-                      <option value="hourly">Hourly</option>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="annual">Annual</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Currency
-                    </label>
-                    <select
-                      value={formData.currency}
-                      onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    >
-                      <option value="NGN">NGN</option>
-                      <option value="USD">USD</option>
-                      <option value="EUR">EUR</option>
-                      <option value="GBP">GBP</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Base Amount *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.baseAmount}
-                      onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Overtime Rate (Multiplier)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={formData.overtimeRate}
-                      onChange={(e) => setFormData({ ...formData, overtimeRate: e.target.value })}
-                      placeholder="e.g., 1.5 for 1.5x"
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Benefits
-                  </label>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <input
-                      type="text"
-                      value={formData.newBenefit}
-                      onChange={(e) => setFormData({ ...formData, newBenefit: e.target.value })}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addBenefit();
-                        }
-                      }}
-                      placeholder="Add benefit..."
-                      style={{
-                        flex: 1,
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={addBenefit}
-                      style={{
-                        padding: '0.75rem 1rem',
-                        border: 'none',
-                        borderRadius: '6px',
-                        background: '#3b82f6',
-                        color: 'white',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {formData.benefits.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                      {formData.benefits.map((benefit, idx) => (
-                        <span
-                          key={idx}
-                          style={{
-                            padding: '0.5rem 0.75rem',
-                            background: '#f1f5f9',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                          }}
-                        >
-                          {benefit}
-                          <button
-                            type="button"
-                            onClick={() => removeBenefit(idx)}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              padding: 0,
-                              display: 'flex',
-                              alignItems: 'center',
-                            }}
-                          >
-                            <X size={14} color="#ef4444" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={formData.isActive}
-                      onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                    />
-                    <span style={{ color: '#1e293b' }}>Active</span>
-                  </label>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                  <button
-                    onClick={() => setShowCreateModal(false)}
-                    style={{
-                      flex: 1,
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      background: 'white',
-                      color: '#64748b',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleCreate}
-                    style={{
-                      flex: 1,
-                      padding: '0.75rem',
-                      border: 'none',
-                      borderRadius: '6px',
-                      background: '#3b82f6',
-                      color: 'white',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                    }}
-                  >
-                    Create
-                  </button>
-                </div>
+              <div>
+                <span className={styles.cardAmount}>{formatMoney(plan.amount, currencySymbol)}</span>
+                <span className={styles.cardAmountSuffix}>{payTypeLabel(plan.payType)}</span>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Modal - Similar structure to Create Modal */}
-        {showEditModal && selectedWagePlan && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 1000,
-            }}
-            onClick={() => {
-              setShowEditModal(false);
-              setSelectedWagePlan(null);
-            }}
-          >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '2rem',
-                width: '90%',
-                maxWidth: '600px',
-                maxHeight: '90vh',
-                overflow: 'auto',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0, color: '#1e293b' }}>Edit Wage Plan</h2>
-                <button
-                  onClick={() => {
-                    setShowEditModal(false);
-                    setSelectedWagePlan(null);
-                  }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '0.5rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  <X size={20} color="#64748b" />
-                </button>
+              <div className="text-sm muted">
+                Paid {PAY_FREQUENCIES.find((f) => f.value === plan.payFrequency)?.label.toLowerCase() ?? plan.payFrequency}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {plan.assignedStaff && plan.assignedStaff.length > 0 ? (
                 <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Plan Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Description
-                  </label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                      minHeight: '80px',
-                      resize: 'vertical',
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Role Classification *
-                  </label>
-                  <select
-                    value={formData.roleClassification}
-                    onChange={(e) => setFormData({ ...formData, roleClassification: e.target.value as any })}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  >
-                    <option value="normal_staff">Normal Staff</option>
-                    <option value="supervisor">Supervisor</option>
-                    <option value="manager">Manager</option>
-                    <option value="senior_executive">Senior Executive</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Specific Role (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                    placeholder="Leave blank for general plan"
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      fontSize: '1rem',
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Wage Type *
-                    </label>
-                    <select
-                      value={formData.wageType}
-                      onChange={(e) => setFormData({ ...formData, wageType: e.target.value as any })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    >
-                      <option value="hourly">Hourly</option>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="annual">Annual</option>
-                    </select>
+                  <div className="text-xs muted" style={{ marginBottom: 4 }}>
+                    {plan.assignedCount} assigned
                   </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Currency
-                    </label>
-                    <select
-                      value={formData.currency}
-                      onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    >
-                      <option value="NGN">NGN</option>
-                      <option value="USD">USD</option>
-                      <option value="EUR">EUR</option>
-                      <option value="GBP">GBP</option>
-                    </select>
+                  <div className={styles.assignedRow}>
+                    {plan.assignedStaff.slice(0, 4).map((s) => (
+                      <span key={s.id} className={styles.staffChip}>
+                        {s.firstName} {s.lastName}
+                      </span>
+                    ))}
+                    {plan.assignedStaff.length > 4 && (
+                      <span className={styles.staffChip}>+{plan.assignedStaff.length - 4}</span>
+                    )}
                   </div>
                 </div>
+              ) : (
+                <div className="text-xs muted">No staff assigned</div>
+              )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Base Amount *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.baseAmount}
-                      onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                      Overtime Rate
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={formData.overtimeRate}
-                      onChange={(e) => setFormData({ ...formData, overtimeRate: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                    Benefits
-                  </label>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                    <input
-                      type="text"
-                      value={formData.newBenefit}
-                      onChange={(e) => setFormData({ ...formData, newBenefit: e.target.value })}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addBenefit();
-                        }
-                      }}
-                      placeholder="Add benefit..."
-                      style={{
-                        flex: 1,
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '1rem',
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={addBenefit}
-                      style={{
-                        padding: '0.75rem 1rem',
-                        border: 'none',
-                        borderRadius: '6px',
-                        background: '#3b82f6',
-                        color: 'white',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Add
-                    </button>
-                  </div>
-                  {formData.benefits.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                      {formData.benefits.map((benefit, idx) => (
-                        <span
-                          key={idx}
-                          style={{
-                            padding: '0.5rem 0.75rem',
-                            background: '#f1f5f9',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.5rem',
-                          }}
-                        >
-                          {benefit}
-                          <button
-                            type="button"
-                            onClick={() => removeBenefit(idx)}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              padding: 0,
-                              display: 'flex',
-                              alignItems: 'center',
-                            }}
-                          >
-                            <X size={14} color="#ef4444" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={formData.isActive}
-                      onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                    />
-                    <span style={{ color: '#1e293b' }}>Active</span>
-                  </label>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                  <button
+              <RoleGate roles={MANAGER_ROLES}>
+                <div className={styles.cardFoot}>
+                  <Button variant="ghost" size="sm" icon={<Pencil size={14} />} onClick={() => openEdit(plan)}>
+                    Edit
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<UserPlus size={14} />}
                     onClick={() => {
-                      setShowEditModal(false);
-                      setSelectedWagePlan(null);
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '0.75rem',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: '6px',
-                      background: 'white',
-                      color: '#64748b',
-                      cursor: 'pointer',
-                      fontWeight: '500',
+                      setAssignPlan(plan);
+                      setAssignStaffId('');
                     }}
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleEdit}
-                    disabled={saving}
-                    style={{
-                      flex: 1,
-                      padding: '0.75rem',
-                      border: 'none',
-                      borderRadius: '6px',
-                      background: saving ? '#94a3b8' : '#3b82f6',
-                      color: 'white',
-                      cursor: saving ? 'not-allowed' : 'pointer',
-                      opacity: saving ? 0.6 : 1,
-                      fontWeight: '500',
-                    }}
+                    Assign
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Trash2 size={14} />}
+                    onClick={() => setDeleteTarget(plan)}
                   >
-                    {saving ? 'Updating...' : 'Update'}
-                  </button>
+                    Delete
+                  </Button>
                 </div>
-              </div>
+              </RoleGate>
             </div>
+          ))}
+        </div>
+      )}
+
+      <Modal
+        open={editingPlan !== null}
+        onClose={() => setEditingPlan(null)}
+        title={editingPlan === 'new' ? 'Create wage plan' : 'Edit wage plan'}
+        width="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditingPlan(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" loading={saving} onClick={handleSave}>
+              {editingPlan === 'new' ? 'Create plan' : 'Save changes'}
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <Field label="Plan name" required>
+            <TextInput
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="e.g., Front Desk — Monthly"
+            />
+          </Field>
+          <Field label="Description">
+            <Textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={2}
+            />
+          </Field>
+          <div className="grid2">
+            <Field label="Pay type" required>
+              <Select
+                value={formData.payType}
+                onChange={(e) => setFormData({ ...formData, payType: e.target.value as WagePlan['payType'] })}
+              >
+                {PAY_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Amount" required>
+              <TextInput
+                type="number"
+                min="0"
+                step="0.01"
+                value={formData.amount}
+                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                placeholder="0.00"
+              />
+            </Field>
           </div>
-        )}
-
-        {/* Assign Modal */}
-        {showAssignModal && selectedWagePlan && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 1000,
-            }}
-            onClick={() => {
-              setShowAssignModal(false);
-              setSelectedWagePlan(null);
-            }}
-          >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '2rem',
-                width: '90%',
-                maxWidth: '500px',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0, color: '#1e293b' }}>Assign Wage Plan</h2>
-                <button
-                  onClick={() => {
-                    setShowAssignModal(false);
-                    setSelectedWagePlan(null);
-                  }}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '0.5rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  <X size={20} color="#64748b" />
-                </button>
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <p style={{ margin: '0 0 0.5rem', color: '#64748b' }}>Wage Plan:</p>
-                <p style={{ margin: 0, fontWeight: '600', color: '#1e293b' }}>{selectedWagePlan.name}</p>
-              </div>
-
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#1e293b', fontWeight: '500' }}>
-                  Select Staff Member *
-                </label>
-                <select
-                  value={selectedStaff}
-                  onChange={(e) => setSelectedStaff(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '6px',
-                    fontSize: '1rem',
-                  }}
-                >
-                  <option value="">Select staff member...</option>
-                  {staff.filter(s => s.isActive).map((staffMember) => (
-                    <option key={staffMember.id} value={staffMember.id}>
-                      {staffMember.firstName} {staffMember.lastName} - {staffMember.role}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button
-                  onClick={() => {
-                    setShowAssignModal(false);
-                    setSelectedWagePlan(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '0.75rem',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '6px',
-                    background: 'white',
-                    color: '#64748b',
-                    cursor: 'pointer',
-                    fontWeight: '500',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAssign}
-                  style={{
-                    flex: 1,
-                    padding: '0.75rem',
-                    border: 'none',
-                    borderRadius: '6px',
-                    background: '#3b82f6',
-                    color: 'white',
-                    cursor: 'pointer',
-                    fontWeight: '500',
-                  }}
-                >
-                  Assign
-                </button>
-              </div>
-            </div>
+          <div className="grid2">
+            <Field label="Currency">
+              <Select
+                value={formData.currency}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+              >
+                <option value="NGN">NGN (₦)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+              </Select>
+            </Field>
+            <Field label="Pay frequency">
+              <Select
+                value={formData.payFrequency}
+                onChange={(e) =>
+                  setFormData({ ...formData, payFrequency: e.target.value as WagePlan['payFrequency'] })
+                }
+              >
+                {PAY_FREQUENCIES.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
+          {editingPlan !== 'new' && (
+            <label className="row text-sm" style={{ cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={formData.isActive}
+                onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
+              />
+              Active plan
+            </label>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!assignPlan}
+        onClose={() => setAssignPlan(null)}
+        title={`Assign "${assignPlan?.name}" to staff`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAssignPlan(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" loading={saving} disabled={!assignStaffId} onClick={handleAssign}>
+              Assign plan
+            </Button>
+          </>
+        }
+      >
+        <Field label="Staff member" required hint="Assigning replaces their current wage plan">
+          <Select value={assignStaffId} onChange={(e) => setAssignStaffId(e.target.value)}>
+            <option value="">Select a staff member</option>
+            {unassignedStaff.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.firstName} {s.lastName} — {s.role.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete wage plan"
+        confirmLabel="Delete plan"
+        loading={deleting}
+        destructive
+      >
+        {deleteTarget && (
+          <>
+            Delete <strong>{deleteTarget.name}</strong>?
+            {deleteTarget.assignedCount
+              ? ` ${deleteTarget.assignedCount} staff member${deleteTarget.assignedCount !== 1 ? 's are' : ' is'} currently assigned to this plan.`
+              : ''}
+          </>
         )}
-      </div>
+      </ConfirmDialog>
     </Layout>
   );
 }
-

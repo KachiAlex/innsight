@@ -123,7 +123,7 @@ export const SUPERADMIN_NAV: NavGroup[] = [
       { path: '/sla-dashboard', label: 'Service Levels', icon: ShieldCheck },
       { path: '/support-tickets', label: 'Support Tickets', icon: LifeBuoy },
       { path: '/api-management', label: 'API Management', icon: KeyRound },
-      { path: '/integrations', label: 'Integrations', icon: Globe },
+      { path: '/superadmin/integrations', label: 'Integrations', icon: Globe },
     ],
   },
   {

@@ -384,7 +384,7 @@ function App() {
               }
             />
             <Route
-              path="/integrations"
+              path="/superadmin/integrations"
               element={
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>

@@ -1,0 +1,94 @@
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+
+.codeBox {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-family: var(--font-mono, monospace);
+  background: var(--cloud);
+  color: var(--text);
+  resize: vertical;
+}
+
+.apiDoc {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--cloud);
+}
+
+.apiDocHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+
+.apiDocTitle {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.method {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.methodGet {
+  color: var(--success);
+}
+
+.methodPost {
+  color: var(--teal);
+}
+
+.apiDocPath {
+  display: block;
+  word-break: break-all;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  margin-bottom: var(--space-1);
+}
+
+.webhookCard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.webhookUrl {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.metaLabel {
+  margin: 0;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.metaValue {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
