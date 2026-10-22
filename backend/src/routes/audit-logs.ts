@@ -24,7 +24,7 @@ interface AuditLogQuery {
 // Get audit logs with filtering
 auditLogsRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const { dateRange = '24h', action, entityType, status, skip = 0, take = 100 } = req.query as any;
+    const { dateRange = '24h', action, entityType, status, tenantId, skip = 0, take = 100 } = req.query as any;
 
     const dateMap: { [key: string]: number } = {
       '1h': 1,
@@ -42,6 +42,7 @@ auditLogsRouter.get('/', async (req: Request, res: Response) => {
 
     if (action) where.action = action;
     if (entityType) where.entityType = entityType;
+    if (tenantId) where.tenantId = tenantId;
     if (status === 'success') where.metadata = { path: ['status'], equals: 'success' };
     if (status === 'error') where.metadata = { path: ['status'], equals: 'error' };
 
@@ -130,7 +131,7 @@ auditLogsRouter.get('/metrics', async (req: Request, res: Response) => {
 // Export audit logs as CSV
 auditLogsRouter.get('/export', async (req: Request, res: Response) => {
   try {
-    const { dateRange = '24h', action, entityType, status, format = 'csv' } = req.query as any;
+    const { dateRange = '24h', action, entityType, status, tenantId, format = 'csv' } = req.query as any;
 
     const dateMap: { [key: string]: number } = {
       '1h': 1,
@@ -148,6 +149,7 @@ auditLogsRouter.get('/export', async (req: Request, res: Response) => {
 
     if (action) where.action = action;
     if (entityType) where.entityType = entityType;
+    if (tenantId) where.tenantId = tenantId;
 
     const logs = await prisma.audit.findMany({
       where,

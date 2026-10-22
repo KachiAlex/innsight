@@ -14,6 +14,7 @@ import {
   RefreshCcw,
 } from 'lucide-react';
 import {
+  AlertPanel,
   Button,
   DataTable,
   ErrorState,
@@ -23,6 +24,7 @@ import {
   StatCard,
   StatusBadge,
 } from '../components/ui';
+import type { AlertItem } from '../components/ui/AlertPanel';
 
 interface DashboardData {
   totalStats: {
@@ -64,6 +66,7 @@ export default function SuperadminDashboardPage() {
   const [metrics, setMetrics] = useState<DashboardData | null>(null);
   const [topTenants, setTopTenants] = useState<TopTenant[]>([]);
   const [health, setHealth] = useState<{ status: string; uptime: number } | null>(null);
+  const [attention, setAttention] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
@@ -71,14 +74,70 @@ export default function SuperadminDashboardPage() {
     try {
       setLoading(true);
       setError(null);
-      const [dash, top, hlth] = await Promise.all([
+      const safe = (p: Promise<any>) => p.catch(() => ({ data: { data: null } }));
+      const [dash, top, hlth, tickets, sla, backups] = await Promise.all([
         api.get('/superadmin/dashboard'),
         api.get('/superadmin/top-tenants?limit=5'),
-        api.get('/superadmin/health'),
+        safe(api.get('/superadmin/health')),
+        safe(api.get('/superadmin/support/stats')),
+        safe(api.get('/superadmin/sla/summary')),
+        safe(api.get('/superadmin/backup-metrics')),
       ]);
       setMetrics(dash.data.data);
       setTopTenants(top.data.data || []);
-      setHealth(hlth.data.data);
+      setHealth(hlth.data?.data || null);
+
+      const items: AlertItem[] = [];
+      const openTickets = (tickets.data?.data?.openTickets || 0) + (tickets.data?.data?.inProgressTickets || 0);
+      if (openTickets > 0) {
+        items.push({
+          id: 'tickets',
+          severity: 'high',
+          title: `${openTickets} support ticket${openTickets > 1 ? 's' : ''} awaiting action`,
+          description: 'Tenants are waiting on replies or resolution.',
+          link: { label: 'Open tickets', onClick: () => navigate('/support-tickets') },
+        });
+      }
+      const suspended = dash.data.data?.tenantMetrics?.activeSubscriptions?.suspended || 0;
+      if (suspended > 0) {
+        items.push({
+          id: 'suspended',
+          severity: 'medium',
+          title: `${suspended} tenant${suspended > 1 ? 's' : ''} suspended`,
+          description: 'Suspended tenants cannot access the platform.',
+          link: { label: 'Review tenants', onClick: () => navigate('/superadmin/tenants') },
+        });
+      }
+      const slaViolations = sla.data?.data?.tenantsWithViolations || 0;
+      if (slaViolations > 0) {
+        items.push({
+          id: 'sla',
+          severity: 'critical',
+          title: `${slaViolations} tenant${slaViolations > 1 ? 's' : ''} breaching SLA`,
+          description: 'Service-level agreements are being violated.',
+          link: { label: 'SLA dashboard', onClick: () => navigate('/sla-dashboard') },
+        });
+      }
+      const failedBackups = backups.data?.data?.failedBackups || 0;
+      const lastBackup = backups.data?.data?.lastBackupTime;
+      if (failedBackups > 0) {
+        items.push({
+          id: 'backups',
+          severity: 'high',
+          title: `${failedBackups} failed backup${failedBackups > 1 ? 's' : ''} on record`,
+          description: lastBackup ? `Most recent backup: ${new Date(lastBackup).toLocaleString()}` : undefined,
+          link: { label: 'Backups', onClick: () => navigate('/backup-restore') },
+        });
+      } else if (lastBackup && Date.now() - new Date(lastBackup).getTime() > 48 * 3600 * 1000) {
+        items.push({
+          id: 'backup-stale',
+          severity: 'medium',
+          title: 'No successful backup in 48h',
+          description: `Last backup ran ${new Date(lastBackup).toLocaleString()}`,
+          link: { label: 'Backups', onClick: () => navigate('/backup-restore') },
+        });
+      }
+      setAttention(items);
     } catch (err: any) {
       setError(new Error(err.response?.data?.error?.message || 'Failed to load platform metrics'));
     } finally {
@@ -130,6 +189,12 @@ export default function SuperadminDashboardPage() {
 
       {metrics && !loading && (
         <>
+          {attention.length > 0 && (
+            <Panel title="Needs attention" subtitle={`${attention.length} item${attention.length > 1 ? 's' : ''} requiring action`}>
+              <AlertPanel items={attention} />
+            </Panel>
+          )}
+
           <div className="stats-grid">
             <StatCard label="Total tenants" value={metrics.totalStats.totalTenants} icon={<Building2 size={18} />} delta={`${metrics.tenantMetrics.newTenantsThisMonth} new this month`} />
             <StatCard label="Active subscriptions" value={metrics.totalStats.activeTenants} tone="good" icon={<Activity size={18} />} delta={subscriptions ? `${subscriptions.suspended} suspended · ${subscriptions.trial} trial` : undefined} />
@@ -157,7 +222,18 @@ export default function SuperadminDashboardPage() {
                 data={topTenants}
                 rowKey={(row) => row.tenantId}
                 columns={[
-                  { key: 'tenantName', header: 'Tenant' },
+                  {
+                    key: 'tenantName',
+                    header: 'Tenant',
+                    render: (row: TopTenant) => (
+                      <span
+                        style={{ fontWeight: 600, cursor: 'pointer', color: 'var(--teal-700)' }}
+                        onClick={() => navigate(`/superadmin/tenants/${row.tenantId}`)}
+                      >
+                        {row.tenantName}
+                      </span>
+                    ),
+                  },
                   { key: 'tenantSlug', header: 'Slug' },
                   {
                     key: 'totalRevenue',

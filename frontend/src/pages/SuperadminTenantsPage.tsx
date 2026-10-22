@@ -152,7 +152,7 @@ export default function SuperadminTenantsPage() {
             header: 'Tenant',
             render: (t: Tenant) => (
               <div>
-                <div style={{ fontWeight: 600 }}>{t.name}</div>
+                <div style={{ fontWeight: 600, cursor: 'pointer', color: 'var(--teal-700)' }} onClick={() => navigate(`/superadmin/tenants/${t.id}`)}>{t.name}</div>
                 <div className="text-xs muted">{t.email} · {t.slug}</div>
               </div>
             ),
@@ -188,8 +188,8 @@ export default function SuperadminTenantsPage() {
             align: 'right',
             render: (t: Tenant) => (
               <div className="row" style={{ justifyContent: 'flex-end' }}>
-                <Button variant="ghost" size="sm" icon={<Eye size={14} />} onClick={() => navigate('/tenants')}>
-                  Manage
+                <Button variant="ghost" size="sm" icon={<Eye size={14} />} onClick={() => navigate(`/superadmin/tenants/${t.id}`)}>
+                  View
                 </Button>
                 {t.subscriptionStatus === 'active' && (
                   <Button variant="ghost" size="sm" icon={<Ban size={14} />} onClick={() => setConfirm({ tenant: t, status: 'suspended' })}>
