@@ -120,7 +120,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          background: 'white',
+          background: 'var(--surface)',
           borderRadius: '12px',
           boxShadow: '0 10px 40px rgba(0, 0, 0, 0.1)',
           zIndex: 51,
@@ -133,9 +133,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         }}
       >
         {/* Search Input */}
-        <div style={{ padding: '1rem', borderBottom: '1px solid #e2e8f0' }}>
+        <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Search size={20} style={{ color: '#94a3b8' }} />
+            <Search size={20} style={{ color: 'var(--muted)' }} />
             <input
               ref={inputRef}
               type="text"
@@ -150,7 +150,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 border: 'none',
                 outline: 'none',
                 fontSize: '1rem',
-                color: '#1e293b',
+                color: 'var(--text)',
               }}
             />
             <button
@@ -159,7 +159,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
-                color: '#94a3b8',
+                color: 'var(--muted)',
                 display: 'flex',
                 alignItems: 'center',
               }}
@@ -182,7 +182,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               style={{
                 padding: '2rem',
                 textAlign: 'center',
-                color: '#94a3b8',
+                color: 'var(--muted)',
               }}
             >
               No commands found
@@ -194,7 +194,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 <div
                   style={{
                     padding: '0.5rem 1rem 0.25rem',
-                    color: '#94a3b8',
+                    color: 'var(--muted)',
                     fontSize: '0.75rem',
                     fontWeight: 600,
                     textTransform: 'uppercase',
@@ -219,7 +219,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       }}
                       style={{
                         padding: '0.75rem 1rem',
-                        background: globalIndex === selectedIndex ? '#f1f5f9' : 'transparent',
+                        background: globalIndex === selectedIndex ? 'var(--surface-sunken)' : 'transparent',
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -230,16 +230,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       onMouseLeave={() => setSelectedIndex(-1)}
                     >
                       {cmd.icon && (
-                        <div style={{ color: '#64748b' }}>
+                        <div style={{ color: 'var(--text-secondary)' }}>
                           {cmd.icon}
                         </div>
                       )}
                       <div style={{ flex: 1 }}>
-                        <div style={{ color: '#1e293b', fontWeight: 500 }}>
+                        <div style={{ color: 'var(--text)', fontWeight: 500 }}>
                           {cmd.title}
                         </div>
                         {cmd.description && (
-                          <div style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+                          <div style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>
                             {cmd.description}
                           </div>
                         )}
@@ -248,10 +248,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         <div
                           style={{
                             padding: '0.25rem 0.5rem',
-                            background: '#e2e8f0',
+                            background: 'var(--border)',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
-                            color: '#64748b',
+                            color: 'var(--text-secondary)',
                             fontFamily: 'monospace',
                           }}
                         >
@@ -270,12 +270,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         <div
           style={{
             padding: '0.75rem 1rem',
-            borderTop: '1px solid #e2e8f0',
+            borderTop: '1px solid var(--border)',
             display: 'flex',
             justifyContent: 'flex-end',
             gap: '1rem',
             fontSize: '0.75rem',
-            color: '#94a3b8',
+            color: 'var(--muted)',
           }}
         >
           <span>↑ ↓ to navigate</span>

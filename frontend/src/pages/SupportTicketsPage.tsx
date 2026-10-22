@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import {
@@ -63,9 +64,19 @@ export default function SupportTicketsPage() {
   const [stats, setStats] = useState<TicketStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('all');
-  const [selectedPriority, setSelectedPriority] = useState('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
+  const [selectedStatus, setSelectedStatus] = useState(searchParams.get('status') || 'all');
+  const [selectedPriority, setSelectedPriority] = useState(searchParams.get('priority') || 'all');
+
+  // URL-sync filters so views are shareable
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    if (searchTerm) next.q = searchTerm;
+    if (selectedStatus !== 'all') next.status = selectedStatus;
+    if (selectedPriority !== 'all') next.priority = selectedPriority;
+    setSearchParams(next, { replace: true });
+  }, [searchTerm, selectedStatus, selectedPriority, setSearchParams]);
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreate);

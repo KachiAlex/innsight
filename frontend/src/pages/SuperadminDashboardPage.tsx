@@ -25,6 +25,7 @@ import {
   StatusBadge,
 } from '../components/ui';
 import type { AlertItem } from '../components/ui/AlertPanel';
+import { formatMoney as fmtMoney } from '../lib/money';
 
 interface DashboardData {
   totalStats: {
@@ -56,8 +57,7 @@ interface TopTenant {
   totalRevenue: number;
 }
 
-const formatMoney = (n: number) =>
-  `₦${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+const formatMoney = (n: number) => fmtMoney(n, '₦');
 
 export default function SuperadminDashboardPage() {
   const navigate = useNavigate();

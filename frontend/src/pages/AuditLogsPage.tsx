@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
@@ -48,6 +48,51 @@ const actionTone = (action: string): 'info' | 'danger' | 'warning' | 'neutral' =
   return 'neutral';
 };
 
+const fmtVal = (v: any) =>
+  v === undefined ? '—' : typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
+
+function StateDiff({ before, after }: { before: any; after: any }) {
+  const beforeObj = before && typeof before === 'object' ? before : null;
+  const afterObj = after && typeof after === 'object' ? after : null;
+
+  if (!beforeObj && !afterObj) {
+    return (
+      <pre style={{ background: 'var(--surface-sunken)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', overflow: 'auto', maxHeight: 220, margin: 0 }}>
+        {JSON.stringify(before ?? after, null, 2)}
+      </pre>
+    );
+  }
+
+  const keys = Array.from(new Set([...Object.keys(beforeObj || {}), ...Object.keys(afterObj || {})]));
+  const changed = keys.filter((k) => JSON.stringify(beforeObj?.[k]) !== JSON.stringify(afterObj?.[k]));
+  const unchanged = keys.filter((k) => !changed.includes(k));
+  const rows = [...changed, ...unchanged];
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+          <th style={{ padding: '6px 8px', color: 'var(--muted)', fontWeight: 600 }}>Field</th>
+          <th style={{ padding: '6px 8px', color: 'var(--muted)', fontWeight: 600 }}>Before</th>
+          <th style={{ padding: '6px 8px', color: 'var(--muted)', fontWeight: 600 }}>After</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((k) => {
+          const isChanged = changed.includes(k);
+          return (
+            <tr key={k} style={{ borderBottom: '1px solid var(--border)', background: isChanged ? 'var(--warning-bg)' : 'transparent' }}>
+              <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontWeight: isChanged ? 700 : 400 }}>{k}</td>
+              <td style={{ padding: '6px 8px', fontFamily: 'monospace', color: 'var(--text-secondary)', maxWidth: 180, wordBreak: 'break-all' }}>{fmtVal(beforeObj?.[k])}</td>
+              <td style={{ padding: '6px 8px', fontFamily: 'monospace', maxWidth: 180, wordBreak: 'break-all' }}>{fmtVal(afterObj?.[k])}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 export default function AuditLogsPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
@@ -57,12 +102,24 @@ export default function AuditLogsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [actionFilter, setActionFilter] = useState('all');
-  const [entityTypeFilter, setEntityTypeFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [dateRange, setDateRange] = useState<'1h' | '24h' | '7d' | '30d'>('24h');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '');
+  const [actionFilter, setActionFilter] = useState(searchParams.get('action') || 'all');
+  const [entityTypeFilter, setEntityTypeFilter] = useState(searchParams.get('entity') || 'all');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'all');
+  const [dateRange, setDateRange] = useState<'1h' | '24h' | '7d' | '30d'>((searchParams.get('range') as any) || '24h');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+
+  // Keep the URL in sync so filtered views are shareable links
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    if (searchTerm) next.q = searchTerm;
+    if (actionFilter !== 'all') next.action = actionFilter;
+    if (entityTypeFilter !== 'all') next.entity = entityTypeFilter;
+    if (statusFilter !== 'all') next.status = statusFilter;
+    if (dateRange !== '24h') next.range = dateRange;
+    setSearchParams(next, { replace: true });
+  }, [searchTerm, actionFilter, entityTypeFilter, statusFilter, dateRange, setSearchParams]);
 
   const buildQuery = () =>
     new URLSearchParams({
@@ -227,20 +284,10 @@ export default function AuditLogsPage() {
               <div><p className="text-xs muted" style={{ margin: 0 }}>User</p><p className="text-sm" style={{ margin: 0 }}>{selectedLog.userName || 'System'}</p></div>
               <div><p className="text-xs muted" style={{ margin: 0 }}>Log ID</p><p className="text-sm" style={{ margin: 0, fontFamily: 'monospace' }}>{selectedLog.id.slice(0, 12)}…</p></div>
             </div>
-            {selectedLog.beforeState && (
+            {(selectedLog.beforeState || selectedLog.afterState) && (
               <div>
-                <p className="text-sm" style={{ margin: '0 0 var(--space-2)', fontWeight: 600 }}>Before</p>
-                <pre style={{ background: 'var(--surface-sunken)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', overflow: 'auto', maxHeight: 220, margin: 0 }}>
-                  {JSON.stringify(selectedLog.beforeState, null, 2)}
-                </pre>
-              </div>
-            )}
-            {selectedLog.afterState && (
-              <div>
-                <p className="text-sm" style={{ margin: '0 0 var(--space-2)', fontWeight: 600 }}>After</p>
-                <pre style={{ background: 'var(--surface-sunken)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', overflow: 'auto', maxHeight: 220, margin: 0 }}>
-                  {JSON.stringify(selectedLog.afterState, null, 2)}
-                </pre>
+                <p className="text-sm" style={{ margin: '0 0 var(--space-2)', fontWeight: 600 }}>Changes</p>
+                <StateDiff before={selectedLog.beforeState} after={selectedLog.afterState} />
               </div>
             )}
             {selectedLog.metadata && (

@@ -2,12 +2,15 @@ import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
+  Building2,
   ChevronsLeft,
   ChevronsRight,
+  DatabaseBackup,
   HelpCircle,
   LogOut,
   Menu,
   Moon,
+  Plus,
   Search,
   Sun,
   X,
@@ -16,6 +19,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../theme/ThemeProvider';
 import { CommandPalette, Command } from '../CommandPalette';
 import { navForRole, visibleNav, flattenNav, type NavGroup } from './navConfig';
+import { api } from '../../lib/api';
 import styles from './AppShell.module.css';
 
 const MOBILE_BREAKPOINT = 900;
@@ -54,6 +58,39 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pageTitle = titleForPath(location.pathname, groups);
   const isSuperadmin = user?.role === 'iitech_admin';
 
+  // Superadmin console signals — nav badges + palette tenant search
+  const [navBadges, setNavBadges] = useState<Record<string, number>>({});
+  const [tenants, setTenants] = useState<Array<{ id: string; name: string; slug: string }>>([]);
+
+  useEffect(() => {
+    if (!isSuperadmin) return;
+    const safe = (p: Promise<any>) => p.catch(() => ({ data: { data: null } }));
+    Promise.all([
+      safe(api.get('/superadmin/support/stats')),
+      safe(api.get('/superadmin/sla/summary')),
+      safe(api.get('/superadmin/backup-metrics')),
+      safe(api.get('/superadmin/tenants?limit=100')),
+    ]).then(([tickets, sla, backups, tenantRes]) => {
+      const openTickets =
+        (tickets.data?.data?.openTickets || 0) + (tickets.data?.data?.inProgressTickets || 0);
+      const badges: Record<string, number> = {};
+      if (openTickets > 0) badges['/support-tickets'] = openTickets;
+      if ((sla.data?.data?.tenantsWithViolations || 0) > 0)
+        badges['/sla-dashboard'] = sla.data.data.tenantsWithViolations;
+      if ((backups.data?.data?.failedBackups || 0) > 0)
+        badges['/backup-restore'] = backups.data.data.failedBackups;
+      setNavBadges(badges);
+      setTenants(
+        (tenantRes.data?.data?.tenants || tenantRes.data?.data || []).map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          slug: t.slug,
+        }))
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperadmin]);
+
   const handleLogout = useCallback(() => {
     logout();
     navigate('/login');
@@ -76,17 +113,48 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const commands: Command[] = useMemo(
-    () =>
-      flattenNav(groups).map((item) => ({
-        id: item.path,
-        title: item.label,
-        category: 'Navigation',
-        action: () => navigate(item.path),
-        icon: <item.icon size={16} />,
+  const commands: Command[] = useMemo(() => {
+    const nav: Command[] = flattenNav(groups).map((item) => ({
+      id: item.path,
+      title: item.label,
+      category: 'Navigation',
+      action: () => navigate(item.path),
+      icon: <item.icon size={16} />,
+    }));
+    if (!isSuperadmin) return nav;
+    return [
+      ...nav,
+      {
+        id: 'action-create-tenant',
+        title: 'Provision new tenant',
+        category: 'Actions',
+        action: () => navigate('/tenants'),
+        icon: <Plus size={16} />,
+      },
+      {
+        id: 'action-new-backup',
+        title: 'Run a backup',
+        category: 'Actions',
+        action: () => navigate('/backup-restore'),
+        icon: <DatabaseBackup size={16} />,
+      },
+      {
+        id: 'action-new-ticket',
+        title: 'Create support ticket',
+        category: 'Actions',
+        action: () => navigate('/support-tickets'),
+        icon: <Plus size={16} />,
+      },
+      ...tenants.map((t) => ({
+        id: `tenant-${t.id}`,
+        title: t.name,
+        description: `@${t.slug}`,
+        category: 'Tenants',
+        action: () => navigate(`/superadmin/tenants/${t.id}`),
+        icon: <Building2 size={16} />,
       })),
-    [groups, navigate]
-  );
+    ];
+  }, [groups, navigate, isSuperadmin, tenants]);
 
   const sidebar = (
     <aside
@@ -135,6 +203,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
               >
                 <item.icon size={18} className={styles.navIcon} aria-hidden="true" />
                 {(!collapsed || isMobile) && <span className={styles.navLabel}>{item.label}</span>}
+                {navBadges[item.path] > 0 && (
+                  <span className={styles.navBadge} aria-label={`${navBadges[item.path]} pending`}>
+                    {navBadges[item.path]}
+                  </span>
+                )}
               </NavLink>
             ))}
           </div>

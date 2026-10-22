@@ -14,7 +14,7 @@ import {
   PageHeader, Panel, Skeleton, StatCard, StatusBadge, TextInput,
 } from '../components/ui';
 
-const formatMoney = (n: number) => `₦${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+import { formatMoney } from '../lib/money';
 
 const statusTone = (s: string) =>
   s === 'active' ? 'success' : s === 'trial' ? 'info' : s === 'suspended' ? 'danger' : 'neutral';
