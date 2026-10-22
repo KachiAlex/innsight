@@ -33,11 +33,15 @@ export default function ConfirmDialog({
   loading,
 }: ConfirmDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !loading) onClose();
+      if (e.key === 'Escape' && !loadingRef.current) onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
@@ -47,7 +51,7 @@ export default function ConfirmDialog({
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [open, onClose, loading]);
+  }, [open]);
 
   if (!open) return null;
 
