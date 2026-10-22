@@ -81,6 +81,9 @@ export default function TenantsPageNew() {
   const [resetTenant, setResetTenant] = useState<Tenant | null>(null);
   const [resetPassword, setResetPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [adminTenant, setAdminTenant] = useState<Tenant | null>(null);
+  const [adminForm, setAdminForm] = useState({ email: '', firstName: '', lastName: '', password: '' });
+  const [adminLoading, setAdminLoading] = useState(false);
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -229,6 +232,30 @@ export default function TenantsPageNew() {
     }
   };
 
+  const handleCreateAdmin = async () => {
+    if (!adminTenant) return;
+    if (!adminForm.email.trim() || !adminForm.firstName.trim() || !adminForm.lastName.trim()) {
+      toast.error('Email, first name, and last name are required');
+      return;
+    }
+    if (adminForm.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    try {
+      setAdminLoading(true);
+      await api.post(`/tenants/${adminTenant.id}/admin`, adminForm);
+      toast.success(`Admin account created for ${adminTenant.name}`);
+      setAdminTenant(null);
+      setAdminForm({ email: '', firstName: '', lastName: '', password: '' });
+      fetchTenants();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to create admin');
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
   const filteredTenants = tenants.filter(
     (t) =>
       t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -297,16 +324,27 @@ export default function TenantsPageNew() {
           { key: 'actions', header: '', align: 'right', render: (t: Tenant) => (
             <div className="row" style={{ gap: 'var(--space-1)', justifyContent: 'flex-end' }}>
               <Button variant="ghost" size="sm" icon={<Edit size={14} />} onClick={() => handleEditTenant(t)}>Edit</Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<KeyRound size={14} />}
-                onClick={() => { setResetTenant(t); setResetPassword(''); }}
-                disabled={!t.admin}
-                title={t.admin ? `Reset password for ${t.admin.email}` : 'This tenant has no admin account'}
-              >
-                Reset password
-              </Button>
+              {t.admin ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<KeyRound size={14} />}
+                  onClick={() => { setResetTenant(t); setResetPassword(''); }}
+                  title={`Reset password for ${t.admin.email}`}
+                >
+                  Reset password
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Plus size={14} />}
+                  onClick={() => { setAdminTenant(t); setAdminForm({ email: '', firstName: '', lastName: '', password: '' }); }}
+                  title="Create an admin account for this tenant"
+                >
+                  Create admin
+                </Button>
+              )}
             </div>
           ) },
         ]}
@@ -447,6 +485,79 @@ export default function TenantsPageNew() {
           </Field>
           <Field label="Address">
             <Textarea rows={2} value={editFormData.address} onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })} />
+          </Field>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 'var(--space-3)' }}>
+            <p className="text-xs muted" style={{ margin: '0 0 var(--space-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Admin account</p>
+            {editingTenant?.admin ? (
+              <div className="row-between">
+                <span className="text-sm">
+                  {editingTenant.admin.email}
+                  <span className="text-xs muted"> · {editingTenant.admin.role.replace(/_/g, ' ')}</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<KeyRound size={14} />}
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setResetTenant(editingTenant);
+                    setResetPassword('');
+                  }}
+                >
+                  Reset password
+                </Button>
+              </div>
+            ) : (
+              <div className="row-between">
+                <span className="text-sm muted">No admin account for this tenant</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Plus size={14} />}
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setAdminTenant(editingTenant);
+                    setAdminForm({ email: '', firstName: '', lastName: '', password: '' });
+                  }}
+                >
+                  Create admin
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!adminTenant}
+        onClose={() => setAdminTenant(null)}
+        title={`Create admin — ${adminTenant?.name || ''}`}
+        width="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAdminTenant(null)}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateAdmin} loading={adminLoading}>Create admin</Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: 'var(--space-3)' }}>
+          <p className="text-sm muted" style={{ margin: 0 }}>
+            Creates an <strong>owner</strong> account that can sign in and manage this tenant. They are not notified automatically — share the credentials securely.
+          </p>
+          <Field label="Email" required>
+            <TextInput type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} placeholder="admin@hotel.com" />
+          </Field>
+          <div className="grid2">
+            <Field label="First name" required>
+              <TextInput value={adminForm.firstName} onChange={(e) => setAdminForm({ ...adminForm, firstName: e.target.value })} />
+            </Field>
+            <Field label="Last name" required>
+              <TextInput value={adminForm.lastName} onChange={(e) => setAdminForm({ ...adminForm, lastName: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Password" required hint="Minimum 6 characters">
+            <TextInput type="password" value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} autoComplete="new-password" />
           </Field>
         </div>
       </Modal>

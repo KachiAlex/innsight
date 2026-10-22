@@ -8,6 +8,14 @@ import { createAuditLog } from '../utils/audit';
 
 export const tenantAdminRouter = Router();
 
+const createTenantAdminSchema = z.object({
+  email: z.string().email(),
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  password: z.string().min(6),
+  phone: z.string().optional(),
+});
+
 const updateTenantAdminSchema = z.object({
   email: z.string().email().optional(),
   firstName: z.string().min(1).optional(),
@@ -33,6 +41,92 @@ const findTenantAdmin = async (tenantId: string) => {
     orderBy: { createdAt: 'asc' },
   });
 };
+
+// POST /api/tenants/:id/admin - Create an owner account for a tenant that has
+// no admin (IITECH admin only). Refuses if the tenant already has one.
+tenantAdminRouter.post('/:id/admin', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {
+  try {
+    const tenantId = req.params.id;
+    const data = createTenantAdminSchema.parse(req.body);
+
+    const tenant = await prisma?.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      throw new AppError('Tenant not found', 404);
+    }
+
+    const existingAdmin = await findTenantAdmin(tenantId);
+    if (existingAdmin) {
+      throw new AppError('Tenant already has an admin account', 409);
+    }
+
+    const emailTaken = await prisma?.user.findFirst({
+      where: { email: data.email },
+    });
+    if (emailTaken) {
+      throw new AppError('Email is already registered', 400);
+    }
+
+    const admin = await prisma?.user.create({
+      data: {
+        tenantId,
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone || null,
+        passwordHash: await hashPassword(data.password),
+        role: 'owner',
+        isActive: true,
+      },
+    });
+
+    if (!admin) {
+      throw new AppError('Failed to create tenant admin', 500);
+    }
+
+    try {
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'create_tenant_admin',
+        entityType: 'user',
+        entityId: admin.id,
+        afterState: {
+          email: admin.email,
+          firstName: admin.firstName,
+          lastName: admin.lastName,
+          role: admin.role,
+        },
+      });
+    } catch (auditError) {
+      console.error('Failed to create audit log:', auditError);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: admin.id,
+        email: admin.email,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        role: admin.role,
+        isActive: admin.isActive,
+      },
+      message: 'Tenant admin created successfully',
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (error instanceof z.ZodError) {
+      throw new AppError(error.errors[0]?.message || 'Invalid request', 400);
+    }
+    console.error('Error creating tenant admin:', error);
+    throw new AppError(`Failed to create tenant admin: ${error.message}`, 500);
+  }
+});
 
 // GET /api/tenants/:id/admin - Get tenant admin details (IITECH admin only)
 tenantAdminRouter.get('/:id/admin', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {

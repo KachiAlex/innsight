@@ -6,7 +6,7 @@ import Layout from '../components/Layout';
 import {
   ArrowLeft, Ban, CheckCircle, KeyRound, Edit, RefreshCw,
   Building2, Users, DoorOpen, Calendar, DollarSign, ShieldCheck,
-  Gauge, LifeBuoy, ScrollText, User,
+  Gauge, LifeBuoy, ScrollText, User, Plus,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -55,6 +55,8 @@ export default function TenantDetailPage() {
   const [statusConfirm, setStatusConfirm] = useState<'active' | 'suspended' | null>(null);
   const [showResetModal, setShowResetModal] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminForm, setAdminForm] = useState({ email: '', firstName: '', lastName: '', password: '' });
 
   const fetchAll = useCallback(async () => {
     try {
@@ -122,11 +124,34 @@ export default function TenantDetailPage() {
     try {
       setActionLoading(true);
       await api.post(`/tenants/${tenantId}/admin/reset-password`, { newPassword });
-      toast.success('Owner password reset');
+      toast.success('Admin password reset');
       setShowResetModal(false);
       setNewPassword('');
     } catch (err: any) {
       toast.error(err.response?.data?.error?.message || 'Reset failed');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCreateAdmin = async () => {
+    if (!adminForm.email.trim() || !adminForm.firstName.trim() || !adminForm.lastName.trim()) {
+      toast.error('Email, first name, and last name are required');
+      return;
+    }
+    if (adminForm.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    try {
+      setActionLoading(true);
+      await api.post(`/tenants/${tenantId}/admin`, adminForm);
+      toast.success('Tenant admin created');
+      setShowAdminModal(false);
+      setAdminForm({ email: '', firstName: '', lastName: '', password: '' });
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to create admin');
     } finally {
       setActionLoading(false);
     }
@@ -147,8 +172,10 @@ export default function TenantDetailPage() {
             {tenant && (
               <>
                 <Button variant="secondary" icon={<Edit size={15} />} onClick={() => navigate('/tenants')}>Edit</Button>
-                {admin && (
+                {admin ? (
                   <Button variant="secondary" icon={<KeyRound size={15} />} onClick={() => setShowResetModal(true)}>Reset admin password</Button>
+                ) : (
+                  <Button variant="secondary" icon={<Plus size={15} />} onClick={() => setShowAdminModal(true)}>Create admin</Button>
                 )}
                 {suspended ? (
                   <Button variant="primary" icon={<CheckCircle size={15} />} onClick={() => setStatusConfirm('active')}>Activate</Button>
@@ -199,7 +226,10 @@ export default function TenantDetailPage() {
                     </div>
                   </>
                 ) : (
-                  <p className="text-sm muted" style={{ margin: 0 }}><User size={13} style={{ verticalAlign: -2 }} /> No admin account found for this tenant</p>
+                  <div className="row-between">
+                    <span className="text-sm muted"><User size={13} style={{ verticalAlign: -2 }} /> No admin account for this tenant</span>
+                    <Button variant="ghost" size="sm" icon={<Plus size={14} />} onClick={() => setShowAdminModal(true)}>Create admin</Button>
+                  </div>
                 )}
               </div>
             </Panel>
@@ -312,6 +342,39 @@ export default function TenantDetailPage() {
           </p>
           <Field label="New password" required hint="Minimum 6 characters">
             <TextInput type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showAdminModal}
+        onClose={() => setShowAdminModal(false)}
+        title="Create tenant admin"
+        width="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowAdminModal(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreateAdmin} loading={actionLoading}>Create admin</Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: 'var(--space-3)' }}>
+          <p className="text-sm muted" style={{ margin: 0 }}>
+            Creates an <strong>owner</strong> account for <strong>{tenant?.name}</strong>. They are not notified automatically — share the credentials securely.
+          </p>
+          <Field label="Email" required>
+            <TextInput type="email" value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} placeholder="admin@hotel.com" />
+          </Field>
+          <div className="grid2">
+            <Field label="First name" required>
+              <TextInput value={adminForm.firstName} onChange={(e) => setAdminForm({ ...adminForm, firstName: e.target.value })} />
+            </Field>
+            <Field label="Last name" required>
+              <TextInput value={adminForm.lastName} onChange={(e) => setAdminForm({ ...adminForm, lastName: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Password" required hint="Minimum 6 characters">
+            <TextInput type="password" value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} autoComplete="new-password" />
           </Field>
         </div>
       </Modal>
