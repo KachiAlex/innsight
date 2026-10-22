@@ -191,6 +191,7 @@ export default function TenantDetailPage() {
                     <div className="grid2">
                       <span className="text-sm muted">Name</span><span className="text-sm">{admin.firstName} {admin.lastName}</span>
                       <span className="text-sm muted">Email</span><span className="text-sm">{admin.email}</span>
+                      <span className="text-sm muted">Role</span><span className="text-sm" style={{ textTransform: 'capitalize' }}>{admin.role?.replace(/_/g, ' ')}</span>
                       <span className="text-sm muted">Active</span><span className="text-sm">{admin.isActive ? 'Yes' : 'No'}</span>
                       <span className="text-sm muted">Last login</span><span className="text-sm">{admin.lastLogin ? new Date(admin.lastLogin).toLocaleString() : 'Never'}</span>
                     </div>

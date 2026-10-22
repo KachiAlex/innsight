@@ -17,6 +17,28 @@ const updateTenantAdminSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+// Resolve the user who administers a tenant: owner first, then a manager,
+// then the earliest active user, then any user (e.g. the platform tenant
+// only has an iitech_admin). Callers are iitech_admin-gated already.
+const findTenantAdmin = async (tenantId: string) => {
+  for (const role of ['owner', 'general_manager']) {
+    const admin = await prisma?.user.findFirst({
+      where: { tenantId, role, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (admin) return admin;
+  }
+  const staffAdmin = await prisma?.user.findFirst({
+    where: { tenantId, isActive: true, role: { not: 'iitech_admin' } },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (staffAdmin) return staffAdmin;
+  return prisma?.user.findFirst({
+    where: { tenantId },
+    orderBy: { createdAt: 'asc' },
+  });
+};
+
 // GET /api/tenants/:id/admin - Get tenant admin details (IITECH admin only)
 tenantAdminRouter.get('/:id/admin', authenticate, requireRole('iitech_admin'), async (req: AuthRequest, res) => {
   try {
@@ -31,13 +53,7 @@ tenantAdminRouter.get('/:id/admin', authenticate, requireRole('iitech_admin'), a
       throw new AppError('Tenant not found', 404);
     }
 
-    // Find tenant admin (owner role)
-    const admin = await prisma?.user.findFirst({
-      where: {
-        tenantId,
-        role: 'owner',
-      },
-    });
+    const admin = await findTenantAdmin(tenantId);
 
     if (!admin) {
       throw new AppError('Tenant admin not found', 404);
@@ -84,13 +100,7 @@ tenantAdminRouter.patch('/:id/admin', authenticate, requireRole('iitech_admin'),
       throw new AppError('Tenant not found', 404);
     }
 
-    // Find tenant admin (owner role)
-    const admin = await prisma?.user.findFirst({
-      where: {
-        tenantId,
-        role: 'owner',
-      },
-    });
+    const admin = await findTenantAdmin(tenantId);
 
     if (!admin) {
       throw new AppError('Tenant admin not found', 404);
@@ -209,13 +219,7 @@ tenantAdminRouter.post('/:id/admin/reset-password', authenticate, requireRole('i
       throw new AppError('Tenant not found', 404);
     }
 
-    // Find tenant admin (owner role)
-    const admin = await prisma?.user.findFirst({
-      where: {
-        tenantId,
-        role: 'owner',
-      },
-    });
+    const admin = await findTenantAdmin(tenantId);
 
     if (!admin) {
       throw new AppError('Tenant admin not found', 404);
