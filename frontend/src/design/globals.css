@@ -142,6 +142,22 @@ svg {
   gap: var(--space-5);
 }
 
+/* KPI/stat card row — auto-fits StatCards */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.kpi-value {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
 .grow {
   flex: 1;
   min-width: 0;

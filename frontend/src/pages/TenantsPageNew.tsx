@@ -1,11 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Building2, Plus, Users, DoorOpen, Search, Edit, Trash2, ChevronRight, CheckCircle, AlertCircle, Loader } from 'lucide-react';
-import { DashboardSkeleton } from '../components/LoadingSkeleton';
+import { Building2, Plus, Users, DoorOpen, Search, Edit, CheckCircle, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import {
+  Button,
+  DataTable,
+  ErrorState,
+  Field,
+  FilterBar,
+  Modal,
+  PageHeader,
+  StatCard,
+  StatusBadge,
+  Stepper,
+  TextInput,
+  Textarea,
+} from '../components/ui';
 
 interface Tenant {
   id: string;
@@ -16,10 +29,7 @@ interface Tenant {
   address?: string;
   subscriptionStatus: string;
   createdAt: string;
-  _count?: {
-    users: number;
-    rooms: number;
-  };
+  _count?: { users: number; rooms: number };
 }
 
 interface ValidationState {
@@ -32,100 +42,82 @@ interface ValidationState {
   ownerLastName?: string;
 }
 
+const emptyForm = {
+  name: '', slug: '', email: '', phone: '', address: '',
+  ownerEmail: '', ownerPassword: '', ownerFirstName: '', ownerLastName: '',
+};
+
+const STEPS = [
+  { key: 'details', label: 'Details' },
+  { key: 'owner', label: 'Owner' },
+  { key: 'review', label: 'Review' },
+  { key: 'done', label: 'Done' },
+];
+
 export default function TenantsPageNew() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAuthenticated = useIsAuthenticated();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
-  const [createStep, setCreateStep] = useState(1); // 1: Details, 2: Owner, 3: Review, 4: Success
+  const [createStep, setCreateStep] = useState(0);
   const [createError, setCreateError] = useState('');
   const [createLoading, setCreateLoading] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationState>({});
   const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
   const [checkingSlug, setCheckingSlug] = useState(false);
   const [createdTenant, setCreatedTenant] = useState<any>(null);
+  const [formData, setFormData] = useState(emptyForm);
+  const [editFormData, setEditFormData] = useState({ name: '', slug: '', email: '', phone: '', address: '' });
 
-  const [formData, setFormData] = useState({
-    name: '',
-    slug: '',
-    email: '',
-    phone: '',
-    address: '',
-    ownerEmail: '',
-    ownerPassword: '',
-    ownerFirstName: '',
-    ownerLastName: '',
-  });
-
-  const [editFormData, setEditFormData] = useState({
-    name: '',
-    slug: '',
-    email: '',
-    phone: '',
-    address: '',
-  });
+  const fetchTenants = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await api.get('/tenants');
+      setTenants(response.data?.data || []);
+    } catch (err: any) {
+      setError(new Error(err.response?.data?.error?.message || 'Failed to fetch tenants'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { replace: true });
       return;
     }
-
     if (user?.role !== 'iitech_admin') {
-      toast.error('Access denied. Admin privileges required.');
       navigate('/dashboard', { replace: true });
       return;
     }
-
     fetchTenants();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAuthenticated, navigate]);
 
-  const fetchTenants = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/tenants');
-      setTenants(response.data?.data || []);
-    } catch (error: any) {
-      console.error('Failed to fetch tenants:', error);
-      const errorMessage = error.response?.data?.error?.message || error.message || 'Failed to fetch tenants';
-      toast.error(errorMessage);
-      setTenants([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Check slug availability with debounce
   const checkSlugAvailability = async (slug: string) => {
     if (!slug || slug.length < 2) {
       setSlugAvailable(null);
       return;
     }
-
     setCheckingSlug(true);
     try {
       const response = await api.get(`/tenants/check-slug/${slug}`);
       setSlugAvailable(response.data.available);
-      if (!response.data.available) {
-        setValidationErrors(prev => ({
-          ...prev,
-          slug: `Slug "${slug}" is already taken. Try "${slug}-2" or similar.`
-        }));
-      } else {
-        setValidationErrors(prev => {
-          const { slug: _, ...rest } = prev;
-          return rest;
-        });
-      }
-    } catch (error: any) {
-      console.error('Error checking slug:', error);
-      // If endpoint doesn't exist yet, we'll rely on backend validation
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        if (!response.data.available) next.slug = `Slug "${slug}" is already taken`;
+        else delete next.slug;
+        return next;
+      });
+    } catch {
       setSlugAvailable(null);
     } finally {
       setCheckingSlug(false);
@@ -134,80 +126,55 @@ export default function TenantsPageNew() {
 
   const validateStep = (step: number): boolean => {
     const errors: ValidationState = {};
-
-    if (step === 1) {
+    if (step === 0) {
       if (!formData.name.trim()) errors.name = 'Tenant name is required';
       if (!formData.slug.trim()) errors.slug = 'Slug is required';
       if (!formData.email.trim()) errors.email = 'Email is required';
       if (slugAvailable === false) errors.slug = 'This slug is already taken';
-    } else if (step === 2) {
+    } else if (step === 1) {
       if (!formData.ownerEmail.trim()) errors.ownerEmail = 'Owner email is required';
       if (!formData.ownerFirstName.trim()) errors.ownerFirstName = 'First name is required';
       if (!formData.ownerLastName.trim()) errors.ownerLastName = 'Last name is required';
       if (!formData.ownerPassword.trim()) errors.password = 'Password is required';
-      if (formData.ownerPassword.length < 6) errors.password = 'Password must be at least 6 characters';
+      else if (formData.ownerPassword.length < 6) errors.password = 'Password must be at least 6 characters';
     }
-
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const handleNextStep = () => {
-    if (validateStep(createStep)) {
-      setCreateStep(createStep + 1);
-    }
+    if (validateStep(createStep)) setCreateStep(createStep + 1);
   };
 
-  const handlePrevStep = () => {
-    setCreateStep(Math.max(1, createStep - 1));
-  };
-
-  const handleCreateTenant = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validateStep(2)) return;
-
+  const handleCreateTenant = async () => {
+    if (!validateStep(1)) return;
     setCreateError('');
     setCreateLoading(true);
     try {
       const response = await api.post('/tenants', formData);
       setCreatedTenant(response.data.data);
-      setCreateStep(4); // Success step
-      toast.success('Tenant created successfully!');
-    } catch (error: any) {
-      console.error('Failed to create tenant:', error);
-      const errorMessage = error.response?.data?.error?.message || error.message || 'Failed to create tenant';
-      setCreateError(errorMessage);
-      toast.error(errorMessage);
-      // Stay on current step to allow retry
+      setCreateStep(3);
+      toast.success('Tenant created');
+      fetchTenants();
+    } catch (err: any) {
+      setCreateError(err.response?.data?.error?.message || 'Failed to create tenant');
     } finally {
       setCreateLoading(false);
     }
   };
 
   const handleResetForm = () => {
-    setFormData({
-      name: '',
-      slug: '',
-      email: '',
-      phone: '',
-      address: '',
-      ownerEmail: '',
-      ownerPassword: '',
-      ownerFirstName: '',
-      ownerLastName: '',
-    });
+    setFormData(emptyForm);
     setValidationErrors({});
     setSlugAvailable(null);
-    setCreateStep(1);
+    setCreateStep(0);
     setCreateError('');
     setCreatedTenant(null);
   };
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
-    setTimeout(() => {
-      handleResetForm();
-    }, 300);
+    setTimeout(handleResetForm, 300);
   };
 
   const handleEditTenant = (tenant: Tenant) => {
@@ -222,1117 +189,226 @@ export default function TenantsPageNew() {
     setShowEditModal(true);
   };
 
-  const handleUpdateTenant = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleUpdateTenant = async () => {
     if (!editingTenant) return;
-
     try {
+      setEditLoading(true);
       await api.patch(`/tenants/${editingTenant.id}`, editFormData);
-      toast.success('Tenant updated successfully');
+      toast.success('Tenant updated');
       setShowEditModal(false);
       setEditingTenant(null);
       fetchTenants();
-    } catch (error: any) {
-      console.error('Failed to update tenant:', error);
-      const errorMessage = error.response?.data?.error?.message || error.response?.data?.message || error.message || 'Failed to update tenant';
-      toast.error(errorMessage);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to update tenant');
+    } finally {
+      setEditLoading(false);
     }
   };
 
-  const handleFetchTenants = () => {
-    fetchTenants();
-    handleCloseCreateModal();
-  };
-
   const filteredTenants = tenants.filter(
-    (tenant) =>
-      tenant.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tenant.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      tenant.slug.toLowerCase().includes(searchTerm.toLowerCase())
+    (t) =>
+      t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.slug.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  if (!isAuthenticated || user?.role !== 'iitech_admin') {
-    return (
-      <Layout>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh', padding: '3rem' }}>
-          <DashboardSkeleton />
-        </div>
-      </Layout>
-    );
-  }
-
-  if (loading) {
-    return (
-      <Layout>
-        <div style={{ padding: '2rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
-            <DashboardSkeleton />
-          </div>
-        </div>
-      </Layout>
-    );
-  }
+  const totalUsers = tenants.reduce((s, t) => s + (t._count?.users || 0), 0);
+  const totalRooms = tenants.reduce((s, t) => s + (t._count?.rooms || 0), 0);
 
   return (
     <Layout>
-      <div style={{ padding: '2rem' }}>
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-          <h1 style={{ margin: 0, color: '#1e293b', fontSize: '2rem', fontWeight: '700' }}>Tenants Management</h1>
-          <button
-            onClick={() => {
-              handleResetForm();
-              setShowCreateModal(true);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.75rem 1.5rem',
-              background: '#000',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: '600',
-              fontSize: '0.875rem',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#333';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#000';
-            }}
-          >
-            <Plus size={20} />
-            Create Tenant
-          </button>
-        </div>
+      <PageHeader
+        title="Provision tenants"
+        subtitle="Create and configure hotels on the platform"
+        actions={
+          <>
+            <Button variant="ghost" icon={<RefreshCw size={15} />} onClick={fetchTenants} loading={loading}>Refresh</Button>
+            <Button variant="primary" icon={<Plus size={15} />} onClick={() => { handleResetForm(); setShowCreateModal(true); }}>
+              Create tenant
+            </Button>
+          </>
+        }
+      />
 
-        {/* Search */}
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div style={{ position: 'relative', maxWidth: '400px' }}>
-            <Search
-              size={20}
-              style={{
-                position: 'absolute',
-                left: '12px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: '#94a3b8',
-              }}
-            />
-            <input
-              type="text"
-              placeholder="Search tenants..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '0.75rem 1rem 0.75rem 2.5rem',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px',
-                fontSize: '0.875rem',
-                outline: 'none',
-              }}
-              onFocus={(e) => {
-                e.currentTarget.style.borderColor = '#000';
-              }}
-              onBlur={(e) => {
-                e.currentTarget.style.borderColor = '#e2e8f0';
-              }}
-            />
+      <div className="stats-grid">
+        <StatCard label="Total tenants" value={tenants.length} icon={<Building2 size={18} />} />
+        <StatCard label="Total users" value={totalUsers} icon={<Users size={18} />} />
+        <StatCard label="Total rooms" value={totalRooms} icon={<DoorOpen size={18} />} />
+        <StatCard label="Active" value={tenants.filter((t) => t.subscriptionStatus === 'active').length} tone="good" />
+      </div>
+
+      <FilterBar>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+            <TextInput placeholder="Search tenants…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} style={{ paddingLeft: 32 }} />
           </div>
         </div>
+      </FilterBar>
 
-        {/* Stats Cards */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '1rem',
-            marginBottom: '2rem',
-          }}
-        >
-          <div
-            style={{
-              background: 'white',
-              padding: '1.5rem',
-              borderRadius: '8px',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-              border: '1px solid #e2e8f0',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <Building2 size={24} color="#000" />
-              <div style={{ color: '#64748b', fontSize: '0.875rem' }}>Total Tenants</div>
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#000' }}>{tenants.length}</div>
-          </div>
-          <div
-            style={{
-              background: 'white',
-              padding: '1.5rem',
-              borderRadius: '8px',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-              border: '1px solid #e2e8f0',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <Users size={24} color="#000" />
-              <div style={{ color: '#64748b', fontSize: '0.875rem' }}>Total Users</div>
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#000' }}>
-              {tenants.reduce((sum, t) => sum + (t._count?.users || 0), 0)}
-            </div>
-          </div>
-          <div
-            style={{
-              background: 'white',
-              padding: '1.5rem',
-              borderRadius: '8px',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-              border: '1px solid #e2e8f0',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <DoorOpen size={24} color="#000" />
-              <div style={{ color: '#64748b', fontSize: '0.875rem' }}>Total Rooms</div>
-            </div>
-            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#000' }}>
-              {tenants.reduce((sum, t) => sum + (t._count?.rooms || 0), 0)}
-            </div>
-          </div>
-        </div>
+      <DataTable
+        data={filteredTenants}
+        rowKey={(row) => row.id}
+        loading={loading}
+        error={error}
+        onRetry={fetchTenants}
+        empty={{
+          title: 'No tenants',
+          description: 'Create the first tenant to get started.',
+          action: <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreateModal(true)}>Create tenant</Button>,
+        }}
+        columns={[
+          { key: 'name', header: 'Name', render: (t: Tenant) => <span style={{ fontWeight: 600 }}>{t.name}</span> },
+          { key: 'slug', header: 'Slug', render: (t: Tenant) => <code className="text-xs muted" style={{ fontFamily: 'monospace' }}>{t.slug}</code> },
+          { key: 'email', header: 'Email', render: (t: Tenant) => <span className="text-sm muted">{t.email}</span> },
+          { key: 'subscriptionStatus', header: 'Status', render: (t: Tenant) => <StatusBadge status={t.subscriptionStatus} dot={false}>{t.subscriptionStatus}</StatusBadge> },
+          { key: 'users', header: 'Users', align: 'center', render: (t: Tenant) => t._count?.users || 0 },
+          { key: 'rooms', header: 'Rooms', align: 'center', render: (t: Tenant) => t._count?.rooms || 0 },
+          { key: 'createdAt', header: 'Created', render: (t: Tenant) => <span className="text-sm muted">{new Date(t.createdAt).toLocaleDateString()}</span> },
+          { key: 'actions', header: '', align: 'right', render: (t: Tenant) => (
+            <Button variant="ghost" size="sm" icon={<Edit size={14} />} onClick={() => handleEditTenant(t)}>Edit</Button>
+          ) },
+        ]}
+      />
 
-        {/* Tenants Table */}
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '8px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            overflow: 'hidden',
-            border: '1px solid #e2e8f0',
-          }}
-        >
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Name</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Slug</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Email</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Status</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Users</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Rooms</th>
-                <th style={{ padding: '1rem', textAlign: 'left', fontWeight: '600', color: '#000' }}>Created</th>
-                <th style={{ padding: '1rem', textAlign: 'right', fontWeight: '600', color: '#000' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTenants.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={{ padding: '3rem', textAlign: 'center', color: '#94a3b8' }}>
-                    {tenants.length === 0 ? 'No tenants found. Create your first tenant to get started.' : 'No tenants match your search.'}
-                  </td>
-                </tr>
-              ) : (
-                filteredTenants.map((tenant) => (
-                  <tr key={tenant.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                    <td style={{ padding: '1rem', color: '#000', fontWeight: '500' }}>{tenant.name}</td>
-                    <td style={{ padding: '1rem', color: '#64748b', fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                      {tenant.slug}
-                    </td>
-                    <td style={{ padding: '1rem', color: '#64748b' }}>{tenant.email}</td>
-                    <td style={{ padding: '1rem' }}>
-                      <span
-                        style={{
-                          padding: '0.25rem 0.75rem',
-                          borderRadius: '12px',
-                          fontSize: '0.75rem',
-                          fontWeight: '600',
-                          background: tenant.subscriptionStatus === 'active' ? '#d1fae5' : '#fee2e2',
-                          color: tenant.subscriptionStatus === 'active' ? '#065f46' : '#991b1b',
-                        }}
-                      >
-                        {tenant.subscriptionStatus}
-                      </span>
-                    </td>
-                    <td style={{ padding: '1rem', color: '#64748b' }}>{tenant._count?.users || 0}</td>
-                    <td style={{ padding: '1rem', color: '#64748b' }}>{tenant._count?.rooms || 0}</td>
-                    <td style={{ padding: '1rem', color: '#64748b', fontSize: '0.875rem' }}>
-                      {new Date(tenant.createdAt).toLocaleDateString()}
-                    </td>
-                    <td style={{ padding: '1rem', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleEditTenant(tenant)}
-                          style={{
-                            padding: '0.5rem',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: '#64748b',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                          title="Edit Tenant"
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = '#000';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = '#64748b';
-                          }}
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button
-                          style={{
-                            padding: '0.5rem',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: '#ef4444',
-                          }}
-                          title="Delete"
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = '#dc2626';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = '#ef4444';
-                          }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      <Modal open={showCreateModal} onClose={handleCloseCreateModal} title="Create tenant" width="lg">
+        <Stepper steps={STEPS} current={createStep} />
 
-        {/* Create Tenant Modal - Multi-Step Wizard */}
-        {showCreateModal && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 1000,
-            }}
-            onClick={handleCloseCreateModal}
-          >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '2rem',
-                maxWidth: '600px',
-                width: '90%',
-                maxHeight: '90vh',
-                overflow: 'auto',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Progress Indicator */}
-              <div style={{ marginBottom: '2rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                  {[1, 2, 3, 4].map((step) => (
-                    <div
-                      key={step}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        background: step <= createStep ? '#000' : '#e2e8f0',
-                        color: step <= createStep ? 'white' : '#94a3b8',
-                        fontSize: '0.875rem',
-                        fontWeight: '600',
-                      }}
-                    >
-                      {step < createStep ? <CheckCircle size={20} /> : step}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#94a3b8' }}>
-                  <span>Details</span>
-                  <span>Owner</span>
-                  <span>Review</span>
-                  <span>Success</span>
+        <div style={{ marginTop: 'var(--space-4)' }}>
+          {createError && <ErrorState message={createError} />}
+
+          {createStep === 0 && (
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <Field label="Tenant name" required error={validationErrors.name}>
+                <TextInput value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="Grand Hotel" />
+              </Field>
+              <Field
+                label="Slug"
+                required
+                error={validationErrors.slug}
+                hint={checkingSlug ? 'Checking availability…' : slugAvailable === true ? 'Available' : undefined}
+              >
+                <TextInput
+                  value={formData.slug}
+                  onChange={(e) => {
+                    const v = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                    setFormData({ ...formData, slug: v });
+                    checkSlugAvailability(v);
+                  }}
+                  placeholder="e.g. grand-hotel"
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Field>
+              <Field label="Email" required error={validationErrors.email}>
+                <TextInput type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+              </Field>
+              <Field label="Phone">
+                <TextInput type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+              </Field>
+              <Field label="Address">
+                <Textarea rows={2} value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+              </Field>
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                <Button variant="ghost" onClick={handleCloseCreateModal}>Cancel</Button>
+                <Button variant="primary" onClick={handleNextStep}>Next</Button>
+              </div>
+            </div>
+          )}
+
+          {createStep === 1 && (
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <Field label="Owner email" required error={validationErrors.ownerEmail}>
+                <TextInput type="email" value={formData.ownerEmail} onChange={(e) => setFormData({ ...formData, ownerEmail: e.target.value })} />
+              </Field>
+              <div className="grid2">
+                <Field label="First name" required error={validationErrors.ownerFirstName}>
+                  <TextInput value={formData.ownerFirstName} onChange={(e) => setFormData({ ...formData, ownerFirstName: e.target.value })} />
+                </Field>
+                <Field label="Last name" required error={validationErrors.ownerLastName}>
+                  <TextInput value={formData.ownerLastName} onChange={(e) => setFormData({ ...formData, ownerLastName: e.target.value })} />
+                </Field>
+              </div>
+              <Field
+                label="Password"
+                required
+                error={validationErrors.password}
+                hint={`Strength: ${formData.ownerPassword.length === 0 ? 'none' : formData.ownerPassword.length < 6 ? 'weak' : formData.ownerPassword.length < 12 ? 'medium' : 'strong'}`}
+              >
+                <TextInput type="password" value={formData.ownerPassword} onChange={(e) => setFormData({ ...formData, ownerPassword: e.target.value })} autoComplete="new-password" />
+              </Field>
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                <Button variant="ghost" onClick={() => setCreateStep(0)}>Back</Button>
+                <Button variant="primary" onClick={handleNextStep}>Review</Button>
+              </div>
+            </div>
+          )}
+
+          {createStep === 2 && (
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <div style={{ background: 'var(--surface-sunken)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)' }} className="stack">
+                <div className="grid2">
+                  <span className="text-sm muted">Tenant</span><span className="text-sm" style={{ fontWeight: 600 }}>{formData.name}</span>
+                  <span className="text-sm muted">Slug</span><code className="text-sm" style={{ fontFamily: 'monospace' }}>{formData.slug}</code>
+                  <span className="text-sm muted">Email</span><span className="text-sm">{formData.email}</span>
+                  <span className="text-sm muted">Owner</span><span className="text-sm">{formData.ownerFirstName} {formData.ownerLastName}</span>
+                  <span className="text-sm muted">Owner email</span><span className="text-sm">{formData.ownerEmail}</span>
                 </div>
               </div>
-
-              {createError && (
-                <div
-                  style={{
-                    padding: '1rem',
-                    background: '#fee2e2',
-                    border: '1px solid #fecaca',
-                    borderRadius: '6px',
-                    marginBottom: '1rem',
-                    display: 'flex',
-                    gap: '0.5rem',
-                    color: '#991b1b',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                  <span>{createError}</span>
-                </div>
-              )}
-
-              {createStep === 1 && (
-                <div>
-                  <h2 style={{ marginTop: 0, marginBottom: '1.5rem', color: '#000', fontSize: '1.5rem', fontWeight: '700' }}>
-                    Tenant Details
-                  </h2>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      handleNextStep();
-                    }}
-                  >
-                    <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Tenant Name *
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.name}
-                          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                        {validationErrors.name && (
-                          <div style={{ color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                            {validationErrors.name}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Slug * {checkingSlug && <Loader size={14} style={{ display: 'inline', animation: 'spin 1s linear infinite' }} />}
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.slug}
-                          onChange={(e) => {
-                            const value = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
-                            setFormData({ ...formData, slug: value });
-                            checkSlugAvailability(value);
-                          }}
-                          placeholder="e.g., grand-hotel"
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: `1px solid ${slugAvailable === false ? '#ef4444' : slugAvailable === true ? '#10b981' : '#e2e8f0'}`,
-                            borderRadius: '6px',
-                            fontFamily: 'monospace',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                        {slugAvailable === true && (
-                          <div style={{ color: '#10b981', fontSize: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                            <CheckCircle size={12} /> Available
-                          </div>
-                        )}
-                        {validationErrors.slug && (
-                          <div style={{ color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                            {validationErrors.slug}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Email *
-                        </label>
-                        <input
-                          type="email"
-                          required
-                          value={formData.email}
-                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                        {validationErrors.email && (
-                          <div style={{ color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                            {validationErrors.email}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Phone (Optional)
-                        </label>
-                        <input
-                          type="tel"
-                          value={formData.phone}
-                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Address (Optional)
-                        </label>
-                        <textarea
-                          value={formData.address}
-                          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            resize: 'vertical',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          rows={3}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                      <button
-                        type="button"
-                        onClick={handleCloseCreateModal}
-                        style={{
-                          padding: '0.75rem 1.5rem',
-                          background: '#f1f5f9',
-                          color: '#1e293b',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontWeight: '500',
-                        }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        style={{
-                          padding: '0.75rem 1.5rem',
-                          background: '#000',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontWeight: '600',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#333';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#000';
-                        }}
-                      >
-                        Next <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {createStep === 2 && (
-                <div>
-                  <h2 style={{ marginTop: 0, marginBottom: '1.5rem', color: '#000', fontSize: '1.5rem', fontWeight: '700' }}>
-                    Owner Account
-                  </h2>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      handleNextStep();
-                    }}
-                  >
-                    <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Owner Email *
-                        </label>
-                        <input
-                          type="email"
-                          required
-                          value={formData.ownerEmail}
-                          onChange={(e) => setFormData({ ...formData, ownerEmail: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                            First Name *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={formData.ownerFirstName}
-                            onChange={(e) => setFormData({ ...formData, ownerFirstName: e.target.value })}
-                            style={{
-                              width: '100%',
-                              padding: '0.75rem',
-                              border: '1px solid #e2e8f0',
-                              borderRadius: '6px',
-                              fontSize: '0.875rem',
-                              outline: 'none',
-                            }}
-                            onFocus={(e) => {
-                              e.currentTarget.style.borderColor = '#000';
-                            }}
-                            onBlur={(e) => {
-                              e.currentTarget.style.borderColor = '#e2e8f0';
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                            Last Name *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={formData.ownerLastName}
-                            onChange={(e) => setFormData({ ...formData, ownerLastName: e.target.value })}
-                            style={{
-                              width: '100%',
-                              padding: '0.75rem',
-                              border: '1px solid #e2e8f0',
-                              borderRadius: '6px',
-                              fontSize: '0.875rem',
-                              outline: 'none',
-                            }}
-                            onFocus={(e) => {
-                              e.currentTarget.style.borderColor = '#000';
-                            }}
-                            onBlur={(e) => {
-                              e.currentTarget.style.borderColor = '#e2e8f0';
-                            }}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                          Password * (minimum 6 characters)
-                        </label>
-                        <input
-                          type="password"
-                          required
-                          minLength={6}
-                          value={formData.ownerPassword}
-                          onChange={(e) => setFormData({ ...formData, ownerPassword: e.target.value })}
-                          style={{
-                            width: '100%',
-                            padding: '0.75rem',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '6px',
-                            fontSize: '0.875rem',
-                            outline: 'none',
-                          }}
-                          onFocus={(e) => {
-                            e.currentTarget.style.borderColor = '#000';
-                          }}
-                          onBlur={(e) => {
-                            e.currentTarget.style.borderColor = '#e2e8f0';
-                          }}
-                        />
-                        {validationErrors.password && (
-                          <div style={{ color: '#ef4444', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                            {validationErrors.password}
-                          </div>
-                        )}
-                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.5rem' }}>
-                          Password strength: {formData.ownerPassword.length === 0 ? 'None' : formData.ownerPassword.length < 6 ? 'Weak' : formData.ownerPassword.length < 12 ? 'Medium' : 'Strong'}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                      <button
-                        type="button"
-                        onClick={handlePrevStep}
-                        style={{
-                          padding: '0.75rem 1.5rem',
-                          background: '#f1f5f9',
-                          color: '#1e293b',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontWeight: '500',
-                        }}
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="submit"
-                        style={{
-                          padding: '0.75rem 1.5rem',
-                          background: '#000',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontWeight: '600',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#333';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#000';
-                        }}
-                      >
-                        Review <ChevronRight size={16} />
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {createStep === 3 && (
-                <div>
-                  <h2 style={{ marginTop: 0, marginBottom: '1.5rem', color: '#000', fontSize: '1.5rem', fontWeight: '700' }}>
-                    Review & Confirm
-                  </h2>
-                  <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '6px', marginBottom: '1.5rem' }}>
-                    <div style={{ display: 'grid', gap: '1rem' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr' }}>
-                        <span style={{ color: '#64748b', fontWeight: '500' }}>Tenant Name:</span>
-                        <span style={{ color: '#000' }}>{formData.name}</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr' }}>
-                        <span style={{ color: '#64748b', fontWeight: '500' }}>Slug:</span>
-                        <span style={{ color: '#000', fontFamily: 'monospace' }}>{formData.slug}</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr' }}>
-                        <span style={{ color: '#64748b', fontWeight: '500' }}>Email:</span>
-                        <span style={{ color: '#000' }}>{formData.email}</span>
-                      </div>
-                      {formData.phone && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr' }}>
-                          <span style={{ color: '#64748b', fontWeight: '500' }}>Phone:</span>
-                          <span style={{ color: '#000' }}>{formData.phone}</span>
-                        </div>
-                      )}
-                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '1rem', marginTop: '1rem' }}>
-                        <div style={{ marginBottom: '0.5rem', color: '#64748b', fontWeight: '500', fontSize: '0.875rem' }}>Owner Account:</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
-                          <span style={{ color: '#64748b' }}>Email:</span>
-                          <span style={{ color: '#000' }}>{formData.ownerEmail}</span>
-                          <span style={{ color: '#64748b' }}>Name:</span>
-                          <span style={{ color: '#000' }}>{formData.ownerFirstName} {formData.ownerLastName}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={handlePrevStep}
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        background: '#f1f5f9',
-                        color: '#1e293b',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontWeight: '500',
-                      }}
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCreateTenant}
-                      disabled={createLoading}
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        background: createLoading ? '#cbd5e1' : '#000',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: createLoading ? 'not-allowed' : 'pointer',
-                        fontWeight: '600',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        opacity: createLoading ? 0.7 : 1,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!createLoading) {
-                          e.currentTarget.style.background = '#333';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!createLoading) {
-                          e.currentTarget.style.background = '#000';
-                        }
-                      }}
-                    >
-                      {createLoading ? (
-                        <>
-                          <Loader size={16} style={{ animation: 'spin 1s linear infinite' }} /> Creating...
-                        </>
-                      ) : (
-                        'Create Tenant'
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {createStep === 4 && createdTenant && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ marginBottom: '2rem' }}>
-                    <CheckCircle size={64} color="#10b981" style={{ margin: '0 auto', marginBottom: '1rem' }} />
-                    <h2 style={{ marginTop: 0, marginBottom: '0.5rem', color: '#065f46', fontSize: '1.5rem', fontWeight: '700' }}>
-                      Tenant Created Successfully!
-                    </h2>
-                    <p style={{ color: '#64748b', marginBottom: '1rem' }}>
-                      The tenant &quot;{createdTenant.tenant.name}&quot; has been created and is ready to use.
-                    </p>
-                  </div>
-
-                  <div style={{ background: '#f0fdf4', padding: '1.5rem', borderRadius: '6px', marginBottom: '1.5rem', textAlign: 'left' }}>
-                    <h3 style={{ marginTop: 0, marginBottom: '1rem', color: '#000', fontSize: '0.875rem', fontWeight: '600' }}>
-                      Next Steps:
-                    </h3>
-                    <ol style={{ margin: 0, paddingLeft: '1.5rem', color: '#000', fontSize: '0.875rem', lineHeight: '1.8' }}>
-                      <li>Share the owner login with: <strong>{createdTenant.owner.email}</strong></li>
-                      <li>Owner should log in and complete the onboarding wizard</li>
-                      <li>Add initial room categories and rate plans</li>
-                      <li>Invite staff members to the tenant</li>
-                      <li>Configure payment settings and integrations</li>
-                    </ol>
-                  </div>
-
-                  <div style={{ background: '#eff6ff', padding: '1rem', borderRadius: '6px', marginBottom: '1.5rem', textAlign: 'left' }}>
-                    <p style={{ margin: 0, color: '#1e40af', fontSize: '0.875rem' }}>
-                      <strong>Tenant Slug:</strong> <code style={{ background: '#dbeafe', padding: '0.25rem 0.5rem', borderRadius: '3px' }}>{createdTenant.tenant.slug}</code>
-                    </p>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={handleFetchTenants}
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        background: '#000',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontWeight: '600',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = '#333';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = '#000';
-                      }}
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              )}
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                <Button variant="ghost" onClick={() => setCreateStep(1)}>Back</Button>
+                <Button variant="primary" onClick={handleCreateTenant} loading={createLoading}>Create tenant</Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Edit Tenant Modal */}
-        {showEditModal && editingTenant && (
-          <div
-            style={{
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(0,0,0,0.5)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 1000,
-            }}
-            onClick={() => {
-              setShowEditModal(false);
-              setEditingTenant(null);
-            }}
-          >
-            <div
-              style={{
-                background: 'white',
-                borderRadius: '8px',
-                padding: '2rem',
-                width: '90%',
-                maxWidth: '600px',
-                maxHeight: '90vh',
-                overflow: 'auto',
-                boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h2 style={{ marginTop: 0, marginBottom: '1.5rem', color: '#000', fontSize: '1.5rem', fontWeight: '700' }}>
-                Edit Tenant
-              </h2>
-              <form onSubmit={handleUpdateTenant}>
-                <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                      Tenant Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={editFormData.name}
-                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '0.875rem',
-                        outline: 'none',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#000';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                      Slug *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={editFormData.slug}
-                      onChange={(e) =>
-                        setEditFormData({ ...editFormData, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })
-                      }
-                      placeholder="e.g., grand-hotel"
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontFamily: 'monospace',
-                        fontSize: '0.875rem',
-                        outline: 'none',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#000';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                      Email *
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={editFormData.email}
-                      onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '0.875rem',
-                        outline: 'none',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#000';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                      Phone
-                    </label>
-                    <input
-                      type="tel"
-                      value={editFormData.phone}
-                      onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        fontSize: '0.875rem',
-                        outline: 'none',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#000';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#000', fontWeight: '500' }}>
-                      Address
-                    </label>
-                    <textarea
-                      value={editFormData.address}
-                      onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        resize: 'vertical',
-                        fontSize: '0.875rem',
-                        outline: 'none',
-                      }}
-                      rows={3}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#000';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                      }}
-                    />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEditModal(false);
-                      setEditingTenant(null);
-                    }}
-                    style={{
-                      padding: '0.75rem 1.5rem',
-                      background: '#f1f5f9',
-                      color: '#1e293b',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontWeight: '500',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    style={{
-                      padding: '0.75rem 1.5rem',
-                      background: '#000',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontWeight: '600',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#333';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = '#000';
-                    }}
-                  >
-                    Update Tenant
-                  </button>
-                </div>
-              </form>
+          {createStep === 3 && (
+            <div className="stack" style={{ gap: 'var(--space-4)', textAlign: 'center' }}>
+              <CheckCircle size={48} style={{ color: 'var(--success)', margin: '0 auto' }} />
+              <div>
+                <h3 style={{ margin: '0 0 var(--space-1)' }}>Tenant created</h3>
+                <p className="text-sm muted" style={{ margin: 0 }}>
+                  <strong>{createdTenant?.name || formData.name}</strong> is live at <code>{formData.slug}</code>
+                </p>
+              </div>
+              <div className="row" style={{ justifyContent: 'center' }}>
+                <Button variant="secondary" onClick={handleResetForm}>Create another</Button>
+                <Button variant="primary" onClick={handleCloseCreateModal}>Done</Button>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        title={`Edit ${editingTenant?.name || 'tenant'}`}
+        width="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowEditModal(false)}>Cancel</Button>
+            <Button variant="primary" onClick={handleUpdateTenant} loading={editLoading}>Save changes</Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: 'var(--space-3)' }}>
+          <Field label="Tenant name" required>
+            <TextInput value={editFormData.name} onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })} />
+          </Field>
+          <Field label="Slug" hint="Changing the slug changes the public URL">
+            <TextInput value={editFormData.slug} onChange={(e) => setEditFormData({ ...editFormData, slug: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })} style={{ fontFamily: 'monospace' }} />
+          </Field>
+          <Field label="Email" required>
+            <TextInput type="email" value={editFormData.email} onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })} />
+          </Field>
+          <Field label="Phone">
+            <TextInput type="tel" value={editFormData.phone} onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })} />
+          </Field>
+          <Field label="Address">
+            <Textarea rows={2} value={editFormData.address} onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })} />
+          </Field>
+        </div>
+      </Modal>
     </Layout>
   );
 }

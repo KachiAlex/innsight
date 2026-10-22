@@ -3,138 +3,198 @@ import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Building2 } from 'lucide-react';
+import {
+  Building2,
+  Users,
+  DoorOpen,
+  Calendar,
+  DollarSign,
+  Activity,
+  ArrowRight,
+  RefreshCcw,
+} from 'lucide-react';
+import {
+  Button,
+  DataTable,
+  ErrorState,
+  PageHeader,
+  Panel,
+  Skeleton,
+  StatCard,
+  StatusBadge,
+} from '../components/ui';
 
-interface SimpleMetrics {
-  totalTenants: number;
-  totalUsers: number;
-  totalRooms: number;
-  totalReservations: number;
+interface DashboardData {
+  totalStats: {
+    totalTenants: number;
+    activeTenants: number;
+    totalUsers: number;
+    totalRooms: number;
+    totalReservations: number;
+  };
+  revenueMetrics: {
+    totalRevenue: number;
+    averageRevenuePerTenant: number;
+  };
+  occupancyMetrics: {
+    averageADR: number;
+    averageREVPAR: number;
+  };
+  tenantMetrics: {
+    newTenantsThisMonth: number;
+    activeSubscriptions: Record<'active' | 'suspended' | 'trial' | 'inactive', number>;
+  };
+  userMetrics: { averageUsersPerTenant: number };
+}
+
+interface TopTenant {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug?: string;
   totalRevenue: number;
 }
+
+const formatMoney = (n: number) =>
+  `₦${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 export default function SuperadminDashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAuthenticated = useIsAuthenticated();
-  const [metrics, setMetrics] = useState<SimpleMetrics | null>(null);
+  const [metrics, setMetrics] = useState<DashboardData | null>(null);
+  const [topTenants, setTopTenants] = useState<TopTenant[]>([]);
+  const [health, setHealth] = useState<{ status: string; uptime: number } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    console.log('[SuperadminDashboard] Page mounted');
-    console.log('[SuperadminDashboard] isAuthenticated:', isAuthenticated);
-    console.log('[SuperadminDashboard] user:', user);
-    console.log('[SuperadminDashboard] user role:', user?.role);
-
-    if (!isAuthenticated) {
-      console.log('[SuperadminDashboard] Not authenticated, redirecting to login');
-      navigate('/login', { replace: true });
-      return;
-    }
-
-    if (user?.role !== 'iitech_admin') {
-      console.log('[SuperadminDashboard] Not iitech_admin, redirecting to dashboard');
-      navigate('/dashboard', { replace: true });
-      return;
-    }
-
-    console.log('[SuperadminDashboard] Auth check passed, fetching metrics');
-    fetchMetrics();
-  }, [user, isAuthenticated, navigate]);
-
-  const fetchMetrics = async () => {
+  const fetchAll = async () => {
     try {
       setLoading(true);
       setError(null);
-      console.log('[SuperadminDashboard] Fetching metrics from API...');
-      const response = await api.get('/superadmin/dashboard');
-      console.log('[SuperadminDashboard] API response:', response.data);
-      
-      const data = response.data.data;
-      setMetrics({
-        totalTenants: data.totalStats?.totalTenants || 0,
-        totalUsers: data.totalStats?.totalUsers || 0,
-        totalRooms: data.totalStats?.totalRooms || 0,
-        totalReservations: data.totalStats?.totalReservations || 0,
-        totalRevenue: data.revenueMetrics?.totalRevenue || 0,
-      });
+      const [dash, top, hlth] = await Promise.all([
+        api.get('/superadmin/dashboard'),
+        api.get('/superadmin/top-tenants?limit=5'),
+        api.get('/superadmin/health'),
+      ]);
+      setMetrics(dash.data.data);
+      setTopTenants(top.data.data || []);
+      setHealth(hlth.data.data);
     } catch (err: any) {
-      console.error('[SuperadminDashboard] Error fetching metrics:', err);
-      setError(err.response?.data?.error?.message || 'Failed to load metrics');
+      setError(new Error(err.response?.data?.error?.message || 'Failed to load platform metrics'));
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    if (user?.role !== 'iitech_admin') {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, isAuthenticated, navigate]);
+
+  const subscriptions = metrics?.tenantMetrics.activeSubscriptions;
+
   return (
     <Layout>
-      <div className="p-8">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Superadmin Dashboard</h1>
-          <button
-            onClick={() => navigate('/superadmin/tenants')}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <Building2 className="h-4 w-4" />
-            Manage Tenants
-          </button>
-        </div>
-        
-        {/* User Info */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm mb-6">
-          <p className="text-lg text-gray-900 font-medium">Welcome, Superadmin!</p>
-          <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded">
-            <p className="text-sm text-blue-900">
-              <strong className="text-blue-950">User:</strong> {user?.email || 'N/A'}<br/>
-              <strong className="text-blue-950">Role:</strong> {user?.role || 'N/A'}<br/>
-              <strong className="text-blue-950">Tenant ID:</strong> {user?.tenantId || 'N/A'}
-            </p>
-          </div>
-        </div>
+      <PageHeader
+        title="Platform overview"
+        subtitle="Across every tenant on InnSight"
+        actions={
+          <>
+            <Button variant="ghost" icon={<RefreshCcw size={15} />} onClick={fetchAll} loading={loading}>
+              Refresh
+            </Button>
+            <Button variant="primary" icon={<Building2 size={15} />} onClick={() => navigate('/superadmin/tenants')}>
+              Manage tenants
+            </Button>
+          </>
+        }
+      />
 
-        {/* Metrics */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Platform Metrics</h2>
-          
-          {loading && (
-            <p className="text-gray-600">Loading metrics...</p>
-          )}
-          
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded">
-              <p className="text-red-800">Error: {error}</p>
-            </div>
-          )}
-          
-          {metrics && !loading && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-900 font-medium">Total Tenants</p>
-                <p className="text-2xl font-bold text-blue-950 mt-2">{metrics.totalTenants}</p>
-              </div>
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-sm text-green-900 font-medium">Total Users</p>
-                <p className="text-2xl font-bold text-green-950 mt-2">{metrics.totalUsers}</p>
-              </div>
-              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-                <p className="text-sm text-purple-900 font-medium">Total Rooms</p>
-                <p className="text-2xl font-bold text-purple-950 mt-2">{metrics.totalRooms}</p>
-              </div>
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                <p className="text-sm text-orange-900 font-medium">Total Revenue</p>
-                <p className="text-2xl font-bold text-orange-950 mt-2">
-                  ${(metrics.totalRevenue / 1000).toFixed(1)}k
-                </p>
-              </div>
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <p className="text-sm text-gray-900 font-medium">Total Reservations</p>
-                <p className="text-2xl font-bold text-gray-950 mt-2">{metrics.totalReservations}</p>
-              </div>
-            </div>
-          )}
+      {loading && !metrics && (
+        <div className="stats-grid">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} height="110px" />
+          ))}
         </div>
-      </div>
+      )}
+
+      {error && <ErrorState message={error.message} onRetry={fetchAll} />}
+
+      {metrics && !loading && (
+        <>
+          <div className="stats-grid">
+            <StatCard label="Total tenants" value={metrics.totalStats.totalTenants} icon={<Building2 size={18} />} delta={`${metrics.tenantMetrics.newTenantsThisMonth} new this month`} />
+            <StatCard label="Active subscriptions" value={metrics.totalStats.activeTenants} tone="good" icon={<Activity size={18} />} delta={subscriptions ? `${subscriptions.suspended} suspended · ${subscriptions.trial} trial` : undefined} />
+            <StatCard label="Platform users" value={metrics.totalStats.totalUsers} icon={<Users size={18} />} delta={`${metrics.userMetrics.averageUsersPerTenant.toFixed(1)} avg per tenant`} />
+            <StatCard label="Rooms" value={metrics.totalStats.totalRooms} icon={<DoorOpen size={18} />} />
+            <StatCard label="Reservations" value={metrics.totalStats.totalReservations} icon={<Calendar size={18} />} />
+          </div>
+
+          <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <StatCard label="Total revenue" value={formatMoney(metrics.revenueMetrics.totalRevenue)} icon={<DollarSign size={18} />} delta={`${formatMoney(metrics.revenueMetrics.averageRevenuePerTenant)} avg per tenant`} />
+            <StatCard label="Avg daily rate" value={formatMoney(metrics.occupancyMetrics.averageADR)} icon={<DollarSign size={18} />} />
+            <StatCard label="RevPAR" value={formatMoney(metrics.occupancyMetrics.averageREVPAR)} icon={<DollarSign size={18} />} />
+            <StatCard
+              label="API health"
+              value={health?.status === 'healthy' ? 'Healthy' : 'Unknown'}
+              tone={health?.status === 'healthy' ? 'good' : 'warning'}
+              icon={<Activity size={18} />}
+              delta={health ? `Uptime ${Math.floor(health.uptime / 3600)}h ${Math.floor((health.uptime % 3600) / 60)}m` : undefined}
+            />
+          </div>
+
+          <div className="grid2" style={{ alignItems: 'start' }}>
+            <Panel title="Top tenants by revenue" subtitle="Lifetime reservation revenue">
+              <DataTable
+                data={topTenants}
+                rowKey={(row) => row.tenantId}
+                columns={[
+                  { key: 'tenantName', header: 'Tenant' },
+                  { key: 'tenantSlug', header: 'Slug' },
+                  {
+                    key: 'totalRevenue',
+                    header: 'Revenue',
+                    align: 'right',
+                    render: (row: TopTenant) => formatMoney(row.totalRevenue),
+                  },
+                ]}
+                empty={{ title: 'No revenue yet', description: 'Revenue appears once tenants take paid reservations.' }}
+              />
+            </Panel>
+
+            <Panel title="Subscription status" subtitle="Tenant subscription breakdown">
+              {subscriptions && (
+                <div className="stack" style={{ gap: 'var(--space-3)' }}>
+                  {(['active', 'trial', 'suspended', 'inactive'] as const).map((status) => (
+                    <div key={status} className="row-between" style={{ textTransform: 'capitalize' }}>
+                      <span className="row">
+                        <StatusBadge status={status} dot={false}>{status}</StatusBadge>
+                      </span>
+                      <strong>{subscriptions[status] ?? 0}</strong>
+                    </div>
+                  ))}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate('/billing')}
+                    icon={<ArrowRight size={14} />}
+                  >
+                    Manage subscriptions
+                  </Button>
+                </div>
+              )}
+            </Panel>
+          </div>
+        </>
+      )}
     </Layout>
   );
 }

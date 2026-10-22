@@ -1,18 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import {
-  Users,
-  Plus,
-  Edit2,
-  Check,
-  X,
-  Mail,
-  Phone,
-} from 'lucide-react';
+import { Plus, Edit2, UserX, UserCheck, Mail, Phone } from 'lucide-react';
 import toast from 'react-hot-toast';
+import {
+  Button,
+  ConfirmDialog,
+  DataTable,
+  Field,
+  Modal,
+  PageHeader,
+  StatusBadge,
+  TextInput,
+} from '../components/ui';
 
 interface SuperadminUser {
   id: string;
@@ -21,9 +23,11 @@ interface SuperadminUser {
   lastName: string;
   phone?: string;
   isActive: boolean;
-  lastLogin?: Date;
-  createdAt: Date;
+  lastLogin?: string;
+  createdAt: string;
 }
+
+const emptyForm = { email: '', password: '', firstName: '', lastName: '', phone: '' };
 
 export default function SuperadminUsersPage() {
   const navigate = useNavigate();
@@ -32,78 +36,51 @@ export default function SuperadminUsersPage() {
 
   const [users, setUsers] = useState<SuperadminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
+  const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [editingUser, setEditingUser] = useState<SuperadminUser | null>(null);
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    firstName: '',
-    lastName: '',
-    phone: '',
-  });
+  const [confirm, setConfirm] = useState<{ user: SuperadminUser; action: 'deactivate' | 'reactivate' } | null>(null);
+  const [formData, setFormData] = useState(emptyForm);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await api.get('/superadmin/users');
+      setUsers(response.data.data);
+    } catch (err: any) {
+      setError(new Error(err.response?.data?.error?.message || 'Failed to load users'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { replace: true });
       return;
     }
-
     if (user?.role !== 'iitech_admin') {
-      toast.error('Access denied.');
-      navigate('/superadmin-dashboard', { replace: true });
+      navigate('/dashboard', { replace: true });
       return;
     }
-
     fetchUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAuthenticated, navigate]);
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/superadmin/users');
-      setUsers(response.data.data);
-    } catch (error: any) {
-      console.error('Failed to fetch users:', error);
-      toast.error('Failed to load users');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleCreate = async () => {
     try {
       setSaving(true);
       await api.post('/superadmin/users', formData);
-      toast.success('Superadmin user created successfully');
-      setShowCreateModal(false);
-      setFormData({ email: '', password: '', firstName: '', lastName: '', phone: '' });
+      toast.success('Superadmin user created');
+      setModal(null);
+      setFormData(emptyForm);
       fetchUsers();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to create user');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to create user');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleDeactivate = async (userId: string) => {
-    try {
-      await api.post(`/superadmin/users/${userId}/deactivate`);
-      toast.success('User deactivated');
-      fetchUsers();
-    } catch (error: any) {
-      toast.error('Failed to deactivate user');
-    }
-  };
-
-  const handleReactivate = async (userId: string) => {
-    try {
-      await api.post(`/superadmin/users/${userId}/reactivate`);
-      toast.success('User reactivated');
-      fetchUsers();
-    } catch (error: any) {
-      toast.error('Failed to reactivate user');
     }
   };
 
@@ -114,254 +91,193 @@ export default function SuperadminUsersPage() {
       const updateData: any = {};
       if (formData.firstName !== editingUser.firstName) updateData.firstName = formData.firstName;
       if (formData.lastName !== editingUser.lastName) updateData.lastName = formData.lastName;
-      if (formData.phone !== editingUser.phone) updateData.phone = formData.phone;
+      if (formData.phone !== (editingUser.phone || '')) updateData.phone = formData.phone;
       if (formData.password) updateData.password = formData.password;
 
       await api.patch(`/superadmin/users/${editingUser.id}`, updateData);
-      toast.success('User updated successfully');
-      setShowEditModal(false);
+      toast.success('User updated');
+      setModal(null);
       setEditingUser(null);
-      setFormData({ email: '', password: '', firstName: '', lastName: '', phone: '' });
+      setFormData(emptyForm);
       fetchUsers();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to update user');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to update user');
     } finally {
       setSaving(false);
     }
   };
 
-  const openEditModal = (u: SuperadminUser) => {
-    setEditingUser(u);
-    setFormData({
-      email: u.email,
-      password: '',
-      firstName: u.firstName,
-      lastName: u.lastName,
-      phone: u.phone || '',
-    });
-    setShowEditModal(true);
+  const handleToggleActive = async () => {
+    if (!confirm) return;
+    try {
+      setSaving(true);
+      await api.post(`/superadmin/users/${confirm.user.id}/${confirm.action}`);
+      toast.success(confirm.action === 'deactivate' ? 'User deactivated' : 'User reactivated');
+      setConfirm(null);
+      fetchUsers();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Action failed');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) {
-    return (
-      <Layout>
-        <div className="text-center py-12">Loading users...</div>
-      </Layout>
-    );
-  }
+  const openEdit = (u: SuperadminUser) => {
+    setEditingUser(u);
+    setFormData({ email: u.email, password: '', firstName: u.firstName, lastName: u.lastName, phone: u.phone || '' });
+    setModal('edit');
+  };
+
+  const userForm = (
+    <div className="stack" style={{ gap: 'var(--space-3)' }}>
+      {modal === 'create' && (
+        <>
+          <Field label="Email" required>
+            <TextInput type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} required />
+          </Field>
+          <Field label="Password" required>
+            <TextInput type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} required autoComplete="new-password" />
+          </Field>
+        </>
+      )}
+      <div className="grid2">
+        <Field label="First name" required>
+          <TextInput value={formData.firstName} onChange={(e) => setFormData({ ...formData, firstName: e.target.value })} required />
+        </Field>
+        <Field label="Last name" required>
+          <TextInput value={formData.lastName} onChange={(e) => setFormData({ ...formData, lastName: e.target.value })} required />
+        </Field>
+      </div>
+      <Field label="Phone">
+        <TextInput type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+      </Field>
+      {modal === 'edit' && (
+        <Field label="New password" hint="Leave blank to keep the current password">
+          <TextInput type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} autoComplete="new-password" />
+        </Field>
+      )}
+    </div>
+  );
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <Users className="h-8 w-8 text-blue-600" />
-            <h1 className="text-3xl font-bold text-gray-900">Superadmin Users</h1>
-          </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4" />
-            Create User
-          </button>
-        </div>
+      <PageHeader
+        title="Platform users"
+        subtitle="Superadmin accounts with platform-wide access"
+        actions={
+          <Button variant="primary" icon={<Plus size={15} />} onClick={() => { setFormData(emptyForm); setModal('create'); }}>
+            Create user
+          </Button>
+        }
+      />
 
-        {/* Users Table */}
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Name</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Email</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Phone</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Status</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Last Login</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-gray-50 transition">
-                  <td className="px-6 py-4 text-sm text-gray-900">
-                    {u.firstName} {u.lastName}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-gray-400" />
-                      {u.email}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {u.phone && (
-                      <div className="flex items-center gap-2">
-                        <Phone className="h-4 w-4 text-gray-400" />
-                        {u.phone}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-sm">
-                    <span
-                      className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${
-                        u.isActive
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {u.isActive ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-                      {u.isActive ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
-                    {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}
-                  </td>
-                  <td className="px-6 py-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openEditModal(u)}
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                      >
-                        <Edit2 className="h-4 w-4" />
-                      </button>
-                      {u.isActive ? (
-                        <button
-                          onClick={() => handleDeactivate(u.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleReactivate(u.id)}
-                          className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
-                        >
-                          <Check className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Create Modal */}
-        {showCreateModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full space-y-4">
-              <h2 className="text-2xl font-bold text-gray-900">Create Superadmin User</h2>
-              
-              <input
-                type="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={(e) => setFormData({...formData, email: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={(e) => setFormData({...formData, password: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="text"
-                placeholder="First Name"
-                value={formData.firstName}
-                onChange={(e) => setFormData({...formData, firstName: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="text"
-                placeholder="Last Name"
-                value={formData.lastName}
-                onChange={(e) => setFormData({...formData, lastName: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="tel"
-                placeholder="Phone (optional)"
-                value={formData.phone}
-                onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleCreate}
-                  disabled={saving}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Create
-                </button>
+      <DataTable
+        data={users}
+        rowKey={(row) => row.id}
+        loading={loading}
+        error={error}
+        onRetry={fetchUsers}
+        empty={{ title: 'No users', description: 'Create the first superadmin account.' }}
+        columns={[
+          {
+            key: 'name',
+            header: 'Name',
+            render: (u: SuperadminUser) => (
+              <div>
+                <div style={{ fontWeight: 600 }}>{u.firstName} {u.lastName}</div>
+                <div className="text-xs muted row"><Mail size={12} /> {u.email}</div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Modal */}
-        {showEditModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full space-y-4">
-              <h2 className="text-2xl font-bold text-gray-900">Edit User</h2>
-              
-              <input
-                type="text"
-                placeholder="First Name"
-                value={formData.firstName}
-                onChange={(e) => setFormData({...formData, firstName: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="text"
-                placeholder="Last Name"
-                value={formData.lastName}
-                onChange={(e) => setFormData({...formData, lastName: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="tel"
-                placeholder="Phone (optional)"
-                value={formData.phone}
-                onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-              <input
-                type="password"
-                placeholder="New Password (optional)"
-                value={formData.password}
-                onChange={(e) => setFormData({...formData, password: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              />
-
-              <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleEdit}
-                  disabled={saving}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Update
-                </button>
+            ),
+          },
+          {
+            key: 'phone',
+            header: 'Phone',
+            render: (u: SuperadminUser) =>
+              u.phone ? <span className="text-sm muted row"><Phone size={13} /> {u.phone}</span> : <span className="muted">—</span>,
+          },
+          {
+            key: 'isActive',
+            header: 'Status',
+            render: (u: SuperadminUser) => (
+              <StatusBadge status={u.isActive ? 'active' : 'inactive'} dot={false}>
+                {u.isActive ? 'Active' : 'Inactive'}
+              </StatusBadge>
+            ),
+          },
+          {
+            key: 'lastLogin',
+            header: 'Last sign-in',
+            render: (u: SuperadminUser) => (
+              <span className="text-sm muted">{u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}</span>
+            ),
+          },
+          {
+            key: 'actions',
+            header: '',
+            align: 'right',
+            render: (u: SuperadminUser) => (
+              <div className="row" style={{ justifyContent: 'flex-end' }}>
+                <Button variant="ghost" size="sm" icon={<Edit2 size={14} />} onClick={() => openEdit(u)}>Edit</Button>
+                {u.isActive ? (
+                  <Button variant="ghost" size="sm" icon={<UserX size={14} />} onClick={() => setConfirm({ user: u, action: 'deactivate' })}>Deactivate</Button>
+                ) : (
+                  <Button variant="ghost" size="sm" icon={<UserCheck size={14} />} onClick={() => setConfirm({ user: u, action: 'reactivate' })}>Reactivate</Button>
+                )}
               </div>
-            </div>
-          </div>
+            ),
+          },
+        ]}
+      />
+
+      <Modal
+        open={modal === 'create'}
+        onClose={() => setModal(null)}
+        title="Create superadmin user"
+        width="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)}>Cancel</Button>
+            <Button variant="primary" onClick={handleCreate} loading={saving} disabled={!formData.email || !formData.password || !formData.firstName}>
+              Create
+            </Button>
+          </>
+        }
+      >
+        {userForm}
+      </Modal>
+
+      <Modal
+        open={modal === 'edit'}
+        onClose={() => setModal(null)}
+        title={`Edit ${editingUser?.firstName} ${editingUser?.lastName}`}
+        width="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setModal(null)}>Cancel</Button>
+            <Button variant="primary" onClick={handleEdit} loading={saving}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        {userForm}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!confirm}
+        title={confirm?.action === 'deactivate' ? 'Deactivate user?' : 'Reactivate user?'}
+        destructive={confirm?.action === 'deactivate'}
+        confirmLabel={confirm?.action === 'deactivate' ? 'Deactivate' : 'Reactivate'}
+        loading={saving}
+        onConfirm={handleToggleActive}
+        onClose={() => setConfirm(null)}
+      >
+        {confirm?.action === 'deactivate' ? (
+          <p><strong>{confirm.user.firstName} {confirm.user.lastName}</strong> will lose platform access immediately.</p>
+        ) : (
+          <p>Restore platform access for <strong>{confirm?.user.firstName} {confirm?.user.lastName}</strong>?</p>
         )}
-      </div>
+      </ConfirmDialog>
     </Layout>
   );
 }

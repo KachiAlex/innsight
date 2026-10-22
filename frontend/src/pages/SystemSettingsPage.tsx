@@ -1,16 +1,21 @@
-import { useEffect, useState } from 'react';
-import { useAuthStore, useIsAuthenticated } from '../store/authStore';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import {
-  Settings,
-  Mail,
-  Shield,
-  AlertCircle,
-  Save,
-} from 'lucide-react';
+import { Mail, Shield, Save, RefreshCw, Palette, Gauge } from 'lucide-react';
 import toast from 'react-hot-toast';
+import {
+  Button,
+  ErrorState,
+  Field,
+  PageHeader,
+  Panel,
+  Select,
+  SkeletonCard,
+  StatusBadge,
+  TextInput,
+} from '../components/ui';
 
 interface SystemSettings {
   emailConfig: {
@@ -32,66 +37,61 @@ interface SystemSettings {
   };
 }
 
+type Tab = 'email' | 'features' | 'branding' | 'rate-limit';
+
+const TABS: Array<{ id: Tab; label: string; icon: typeof Mail }> = [
+  { id: 'email', label: 'Email', icon: Mail },
+  { id: 'features', label: 'Feature flags', icon: Shield },
+  { id: 'branding', label: 'Branding', icon: Palette },
+  { id: 'rate-limit', label: 'Rate limits', icon: Gauge },
+];
+
 export default function SystemSettingsPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAuthenticated = useIsAuthenticated();
-
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('email');
 
-  const [activeTab, setActiveTab] = useState<'email' | 'features' | 'branding' | 'rate-limit'>('email');
+  const fetchSettings = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await api.get('/superadmin/settings');
+      setSettings(response.data.data);
+    } catch (err: any) {
+      setError(new Error(err.response?.data?.error?.message || 'Failed to load settings'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { replace: true });
       return;
     }
-
     if (user?.role !== 'iitech_admin') {
-      toast.error('Access denied. Admin privileges required.');
       navigate('/superadmin-dashboard', { replace: true });
       return;
     }
-
     fetchSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAuthenticated, navigate]);
 
-  const fetchSettings = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/superadmin/settings');
-      setSettings(response.data.data);
-    } catch (error: any) {
-      console.error('Failed to fetch settings:', error);
-      toast.error('Failed to load settings');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const update = <K extends keyof SystemSettings>(key: K, patch: Partial<SystemSettings[K]>) =>
+    setSettings((prev) => (prev ? { ...prev, [key]: { ...prev[key], ...patch } } : null));
 
-  const handleSaveEmail = async () => {
-    if (!settings?.emailConfig) return;
+  const save = async (path: string, payload: unknown, success: string) => {
     try {
       setSaving(true);
-      await api.patch('/superadmin/settings/email', settings.emailConfig);
-      toast.success('Email configuration saved');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSaveBranding = async () => {
-    if (!settings?.branding) return;
-    try {
-      setSaving(true);
-      await api.patch('/superadmin/settings/branding', settings.branding);
-      toast.success('Branding updated');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to save');
+      await api.patch(path, payload);
+      toast.success(success);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -101,292 +101,146 @@ export default function SystemSettingsPage() {
     try {
       setSaving(true);
       await api.patch('/superadmin/settings/feature-flags', { [flagName]: enabled });
-      setSettings(prev => prev ? {
-        ...prev,
-        featureFlags: { ...prev.featureFlags, [flagName]: enabled }
-      } : null);
+      setSettings((prev) =>
+        prev ? { ...prev, featureFlags: { ...prev.featureFlags, [flagName]: enabled } } : null
+      );
       toast.success(`Feature ${enabled ? 'enabled' : 'disabled'}`);
-    } catch (error: any) {
+    } catch {
       toast.error('Failed to update feature');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSaveRateLimits = async () => {
-    if (!settings?.rateLimit) return;
-    try {
-      setSaving(true);
-      await api.patch('/superadmin/settings/rate-limit', settings.rateLimit);
-      toast.success('Rate limits updated');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (loading || !settings) {
-    return (
-      <Layout>
-        <div className="text-center py-12">Loading settings...</div>
-      </Layout>
-    );
-  }
-
   return (
     <Layout>
-      <div className="max-w-4xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <Settings className="h-8 w-8 text-blue-600" />
-          <h1 className="text-3xl font-bold text-gray-900">System Settings</h1>
-        </div>
+      <PageHeader
+        title="System settings"
+        subtitle="Platform-wide email, features, branding, and limits"
+        actions={
+          <Button variant="ghost" icon={<RefreshCw size={15} />} onClick={fetchSettings} loading={loading}>
+            Refresh
+          </Button>
+        }
+      />
 
-        {/* Tabs */}
-        <div className="flex gap-2 border-b border-gray-200">
-          {['email', 'features', 'branding', 'rate-limit'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`px-4 py-2 font-medium border-b-2 transition ${
-                activeTab === tab
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {tab === 'email' && <Mail className="inline h-4 w-4 mr-2" />}
-              {tab === 'features' && <Shield className="inline h-4 w-4 mr-2" />}
-              {tab === 'branding' && <Settings className="inline h-4 w-4 mr-2" />}
-              {tab === 'rate-limit' && <AlertCircle className="inline h-4 w-4 mr-2" />}
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        {/* Email Configuration */}
-        {activeTab === 'email' && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-            <h2 className="text-xl font-semibold text-gray-900">Email Configuration</h2>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Sender Email
-              </label>
-              <input
-                type="email"
-                value={settings.emailConfig.senderEmail}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  emailConfig: { ...prev.emailConfig, senderEmail: e.target.value }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Sender Name
-              </label>
-              <input
-                type="text"
-                value={settings.emailConfig.senderName}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  emailConfig: { ...prev.emailConfig, senderName: e.target.value }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Email Provider
-              </label>
-              <select
-                value={settings.emailConfig.provider}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  emailConfig: { ...prev.emailConfig, provider: e.target.value as any }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="smtp">SMTP</option>
-                <option value="sendgrid">SendGrid</option>
-                <option value="aws-ses">AWS SES</option>
-              </select>
-            </div>
-
-            <button
-              onClick={handleSaveEmail}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              Save Email Configuration
-            </button>
-          </div>
-        )}
-
-        {/* Feature Flags */}
-        {activeTab === 'features' && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-            <h2 className="text-xl font-semibold text-gray-900">Feature Flags</h2>
-            
-            {Object.entries(settings.featureFlags).map(([flag, enabled]) => (
-              <div key={flag} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-900">{flag.replace(/_/g, ' ')}</p>
-                  <p className="text-sm text-gray-600">Status: {enabled ? 'Enabled' : 'Disabled'}</p>
-                </div>
-                <button
-                  onClick={() => handleToggleFeature(flag, !enabled)}
-                  className={`px-4 py-2 rounded-lg font-medium transition ${
-                    enabled
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {enabled ? 'Disable' : 'Enable'}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Branding */}
-        {activeTab === 'branding' && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-            <h2 className="text-xl font-semibold text-gray-900">Branding</h2>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Platform Name
-              </label>
-              <input
-                type="text"
-                value={settings.branding.platformName}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  branding: { ...prev.branding, platformName: e.target.value }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Primary Color
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={settings.branding.primaryColor}
-                  onChange={(e) => setSettings(prev => prev ? {
-                    ...prev,
-                    branding: { ...prev.branding, primaryColor: e.target.value }
-                  } : null)}
-                  className="h-10 w-20 border border-gray-300 rounded-lg cursor-pointer"
-                />
-                <input
-                  type="text"
-                  value={settings.branding.primaryColor}
-                  onChange={(e) => setSettings(prev => prev ? {
-                    ...prev,
-                    branding: { ...prev.branding, primaryColor: e.target.value }
-                  } : null)}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Support Email
-              </label>
-              <input
-                type="email"
-                value={settings.branding.supportEmail}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  branding: { ...prev.branding, supportEmail: e.target.value }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <button
-              onClick={handleSaveBranding}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              Save Branding
-            </button>
-          </div>
-        )}
-
-        {/* Rate Limiting */}
-        {activeTab === 'rate-limit' && (
-          <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-            <h2 className="text-xl font-semibold text-gray-900">Rate Limiting</h2>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                API Calls Per Minute
-              </label>
-              <input
-                type="number"
-                value={settings.rateLimit.apiCallsPerMinute}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  rateLimit: { ...prev.rateLimit, apiCallsPerMinute: parseInt(e.target.value) }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Login Attempts Per Hour
-              </label>
-              <input
-                type="number"
-                value={settings.rateLimit.loginAttemptsPerHour}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  rateLimit: { ...prev.rateLimit, loginAttemptsPerHour: parseInt(e.target.value) }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Request Timeout (Seconds)
-              </label>
-              <input
-                type="number"
-                value={settings.rateLimit.requestTimeoutSeconds}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  rateLimit: { ...prev.rateLimit, requestTimeoutSeconds: parseInt(e.target.value) }
-                } : null)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <button
-              onClick={handleSaveRateLimits}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              Save Rate Limits
-            </button>
-          </div>
-        )}
+      <div className="tabs">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button key={id} className={`tab ${activeTab === id ? 'active' : ''}`} onClick={() => setActiveTab(id)}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
       </div>
+
+      {loading ? (
+        <SkeletonCard />
+      ) : error || !settings ? (
+        <ErrorState title="Couldn't load settings" message={error?.message || 'Settings unavailable'} onRetry={fetchSettings} />
+      ) : (
+        <>
+          {activeTab === 'email' && (
+            <Panel title="Email configuration" subtitle="How transactional mail is sent">
+              <div className="stack" style={{ gap: 'var(--space-4)' }}>
+                <div className="grid2">
+                  <Field label="Sender email" required>
+                    <TextInput type="email" value={settings.emailConfig.senderEmail} onChange={(e) => update('emailConfig', { senderEmail: e.target.value })} />
+                  </Field>
+                  <Field label="Sender name" required>
+                    <TextInput value={settings.emailConfig.senderName} onChange={(e) => update('emailConfig', { senderName: e.target.value })} />
+                  </Field>
+                </div>
+                <Field label="Provider">
+                  <Select value={settings.emailConfig.provider} onChange={(e) => update('emailConfig', { provider: e.target.value as SystemSettings['emailConfig']['provider'] })}>
+                    <option value="smtp">SMTP</option>
+                    <option value="sendgrid">SendGrid</option>
+                    <option value="aws-ses">AWS SES</option>
+                  </Select>
+                </Field>
+                <div>
+                  <Button variant="primary" icon={<Save size={15} />} onClick={() => save('/superadmin/settings/email', settings.emailConfig, 'Email configuration saved')} loading={saving}>
+                    Save email settings
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
+
+          {activeTab === 'features' && (
+            <Panel title="Feature flags" subtitle="Toggle platform capabilities">
+              <div className="stack" style={{ gap: 'var(--space-2)' }}>
+                {Object.entries(settings.featureFlags).map(([flag, enabled]) => (
+                  <div key={flag} className="row-between" style={{ padding: 'var(--space-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+                    <div>
+                      <p className="text-sm" style={{ margin: 0, fontWeight: 600, textTransform: 'capitalize' }}>{flag.replace(/_/g, ' ')}</p>
+                      <StatusBadge status={enabled ? 'enabled' : 'disabled'} tone={enabled ? 'success' : 'neutral'} dot={false} />
+                    </div>
+                    <Button variant={enabled ? 'secondary' : 'primary'} size="sm" onClick={() => handleToggleFeature(flag, !enabled)} loading={saving}>
+                      {enabled ? 'Disable' : 'Enable'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {activeTab === 'branding' && (
+            <Panel title="Branding" subtitle="Platform identity shown to tenants and guests">
+              <div className="stack" style={{ gap: 'var(--space-4)' }}>
+                <Field label="Platform name">
+                  <TextInput value={settings.branding.platformName} onChange={(e) => update('branding', { platformName: e.target.value })} />
+                </Field>
+                <Field label="Primary color">
+                  <div className="row">
+                    <input
+                      type="color"
+                      value={settings.branding.primaryColor}
+                      onChange={(e) => update('branding', { primaryColor: e.target.value })}
+                      style={{ height: 38, width: 64, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', cursor: 'pointer', padding: 2 }}
+                    />
+                    <TextInput value={settings.branding.primaryColor} onChange={(e) => update('branding', { primaryColor: e.target.value })} style={{ flex: 1, fontFamily: 'monospace' }} />
+                  </div>
+                </Field>
+                <div className="grid2">
+                  <Field label="Support email">
+                    <TextInput type="email" value={settings.branding.supportEmail} onChange={(e) => update('branding', { supportEmail: e.target.value })} />
+                  </Field>
+                  <Field label="Support phone">
+                    <TextInput value={settings.branding.supportPhone || ''} onChange={(e) => update('branding', { supportPhone: e.target.value })} />
+                  </Field>
+                </div>
+                <div>
+                  <Button variant="primary" icon={<Save size={15} />} onClick={() => save('/superadmin/settings/branding', settings.branding, 'Branding updated')} loading={saving}>
+                    Save branding
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
+
+          {activeTab === 'rate-limit' && (
+            <Panel title="Rate limiting" subtitle="Platform request thresholds">
+              <div className="stack" style={{ gap: 'var(--space-4)' }}>
+                <div className="grid2">
+                  <Field label="API calls / minute">
+                    <TextInput type="number" min={1} value={settings.rateLimit.apiCallsPerMinute} onChange={(e) => update('rateLimit', { apiCallsPerMinute: parseInt(e.target.value, 10) })} />
+                  </Field>
+                  <Field label="Login attempts / hour">
+                    <TextInput type="number" min={1} value={settings.rateLimit.loginAttemptsPerHour} onChange={(e) => update('rateLimit', { loginAttemptsPerHour: parseInt(e.target.value, 10) })} />
+                  </Field>
+                </div>
+                <Field label="Request timeout (seconds)">
+                  <TextInput type="number" min={1} value={settings.rateLimit.requestTimeoutSeconds} onChange={(e) => update('rateLimit', { requestTimeoutSeconds: parseInt(e.target.value, 10) })} />
+                </Field>
+                <div>
+                  <Button variant="primary" icon={<Save size={15} />} onClick={() => save('/superadmin/settings/rate-limit', settings.rateLimit, 'Rate limits updated')} loading={saving}>
+                    Save rate limits
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
+        </>
+      )}
     </Layout>
   );
 }

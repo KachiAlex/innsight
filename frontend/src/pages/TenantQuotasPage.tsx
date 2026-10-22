@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { BarChart3, Edit2, Save, X, RefreshCw } from 'lucide-react';
+import { BarChart3, Edit2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import {
+  Button,
+  EmptyState,
+  Field,
+  PageHeader,
+  Panel,
+  Skeleton,
+  TextInput,
+} from '../components/ui';
 
 interface Tenant {
   id: string;
@@ -30,57 +39,70 @@ interface ResourceUsage {
   apiCallsUsedToday: number;
 }
 
+const QUOTA_FIELDS: { key: keyof Omit<ResourceQuota, 'id' | 'tenantId'>; label: string }[] = [
+  { key: 'maxRooms', label: 'Max rooms' },
+  { key: 'maxUsers', label: 'Max users' },
+  { key: 'maxReservations', label: 'Max reservations' },
+  { key: 'maxStorageGB', label: 'Max storage (GB)' },
+  { key: 'maxApiCallsPerDay', label: 'Max API calls/day' },
+];
+
+const usageTone = (pct: number) =>
+  pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--warning, #d97706)' : 'var(--success, #2f8f5b)';
+
 export default function TenantQuotasPage() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAuthenticated = useIsAuthenticated();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
-  const [quotes, setQuotas] = useState<ResourceQuota | null>(null);
+  const [quotas, setQuotas] = useState<ResourceQuota | null>(null);
   const [usage, setUsage] = useState<ResourceUsage | null>(null);
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<ResourceQuota>>({});
+
+  const fetchTenants = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/tenants');
+      setTenants(response.data?.data || []);
+    } catch {
+      toast.error('Failed to load tenants');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login', { replace: true });
       return;
     }
-
     if (user?.role !== 'iitech_admin') {
-      toast.error('Access denied. Admin privileges required.');
       navigate('/dashboard', { replace: true });
       return;
     }
-
     fetchTenants();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isAuthenticated, navigate]);
-
-  const fetchTenants = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get('/tenants');
-      setTenants(response.data?.data || []);
-    } catch (error: any) {
-      toast.error('Failed to load tenants');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchTenantQuotas = async (tenantId: string) => {
     try {
+      setDetailLoading(true);
       const [quotasRes, usageRes] = await Promise.all([
         api.get(`/superadmin/tenant-quotas/${tenantId}`),
         api.get(`/superadmin/tenant-quotas/${tenantId}/usage`),
       ]);
-
       setQuotas(quotasRes.data?.data);
       setUsage(usageRes.data?.data);
       setFormData(quotasRes.data?.data || {});
-    } catch (error: any) {
+    } catch {
       toast.error('Failed to load quotas');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -92,174 +114,161 @@ export default function TenantQuotasPage() {
 
   const handleSaveQuotas = async () => {
     if (!selectedTenant) return;
-
     try {
+      setSaving(true);
       await api.patch(`/superadmin/tenant-quotas/${selectedTenant.id}`, formData);
-      toast.success('Quotas updated successfully');
+      toast.success('Quotas updated');
       setEditing(false);
       fetchTenantQuotas(selectedTenant.id);
-    } catch (error: any) {
+    } catch {
       toast.error('Failed to update quotas');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const getUsagePercentage = (used: number, quota: number) => {
-    return Math.round((used / quota) * 100);
-  };
-
-  const getUsageColor = (percentage: number) => {
-    if (percentage >= 90) return 'text-red-600 bg-red-100';
-    if (percentage >= 70) return 'text-yellow-600 bg-yellow-100';
-    return 'text-green-600 bg-green-100';
-  };
-
-  if (loading) {
-    return (
-      <Layout>
-        <div className="flex items-center justify-center h-screen">
-          <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
-        </div>
-      </Layout>
-    );
-  }
+  const usageRows = quotas && usage ? [
+    { label: 'Rooms', used: usage.roomsUsed, max: quotas.maxRooms },
+    { label: 'Users', used: usage.usersUsed, max: quotas.maxUsers },
+    { label: 'Reservations', used: usage.reservationsUsed, max: quotas.maxReservations },
+    { label: 'Storage (GB)', used: usage.storageUsedGB, max: quotas.maxStorageGB },
+    { label: 'API calls today', used: usage.apiCallsUsedToday, max: quotas.maxApiCallsPerDay },
+  ] : [];
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <h1 className="text-3xl font-bold text-gray-900">Tenant Resource Quotas</h1>
+      <PageHeader
+        title="Resource quotas"
+        subtitle="Per-tenant limits and current usage"
+        actions={
+          <Button variant="ghost" icon={<RefreshCw size={15} />} onClick={fetchTenants} loading={loading}>
+            Refresh
+          </Button>
+        }
+      />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Tenant List */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Tenants</h2>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+      <div className="grid2" style={{ gridTemplateColumns: 'minmax(260px, 340px) 1fr', alignItems: 'start' }}>
+        <Panel title="Tenants" flush>
+          {loading ? (
+            <div style={{ padding: 'var(--space-4)' }}><Skeleton height="200px" /></div>
+          ) : (
+            <div className="stack" style={{ gap: 'var(--space-1)', maxHeight: 480, overflowY: 'auto', padding: 'var(--space-2)' }}>
               {tenants.map((tenant) => (
                 <button
                   key={tenant.id}
                   onClick={() => handleSelectTenant(tenant)}
-                  className={`w-full text-left px-4 py-2 rounded-lg transition ${
-                    selectedTenant?.id === tenant.id
-                      ? 'bg-blue-100 text-blue-900'
-                      : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
+                  style={{
+                    textAlign: 'left',
+                    padding: 'var(--space-3)',
+                    borderRadius: 'var(--radius-md)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: selectedTenant?.id === tenant.id ? 'var(--teal-100)' : 'transparent',
+                  }}
                 >
-                  <p className="font-medium">{tenant.name}</p>
-                  <p className="text-sm text-gray-600">{tenant.email}</p>
+                  <div style={{ fontWeight: 600, color: 'var(--text)' }}>{tenant.name}</div>
+                  <div className="text-xs muted">{tenant.email}</div>
                 </button>
               ))}
             </div>
-          </div>
-
-          {/* Quota Details */}
-          {selectedTenant && quotes && usage && (
-            <div className="lg:col-span-2 space-y-6">
-              {/* Quotas */}
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-semibold">Resource Quotas</h2>
-                  {!editing && (
-                    <button
-                      onClick={() => setEditing(true)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-
-                {editing ? (
-                  <div className="space-y-3">
-                    {[
-                      { key: 'maxRooms', label: 'Max Rooms' },
-                      { key: 'maxUsers', label: 'Max Users' },
-                      { key: 'maxReservations', label: 'Max Reservations' },
-                      { key: 'maxStorageGB', label: 'Max Storage (GB)' },
-                      { key: 'maxApiCallsPerDay', label: 'Max API Calls/Day' },
-                    ].map((field) => (
-                      <input
-                        key={field.key}
-                        type="number"
-                        value={formData[field.key as keyof ResourceQuota] || ''}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            [field.key]: parseInt(e.target.value),
-                          })
-                        }
-                        placeholder={field.label}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      />
-                    ))}
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={handleSaveQuotas}
-                        className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 flex items-center justify-center"
-                      >
-                        <Save className="h-4 w-4 mr-2" /> Save
-                      </button>
-                      <button
-                        onClick={() => setEditing(false)}
-                        className="flex-1 bg-gray-300 text-gray-900 px-4 py-2 rounded-md hover:bg-gray-400 flex items-center justify-center"
-                      >
-                        <X className="h-4 w-4 mr-2" /> Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p>Rooms: <span className="font-bold">{quotes.maxRooms}</span></p>
-                    <p>Users: <span className="font-bold">{quotes.maxUsers}</span></p>
-                    <p>Reservations: <span className="font-bold">{quotes.maxReservations}</span></p>
-                    <p>Storage: <span className="font-bold">{quotes.maxStorageGB} GB</span></p>
-                    <p>API Calls/Day: <span className="font-bold">{quotes.maxApiCallsPerDay}</span></p>
-                  </div>
-                )}
-              </div>
-
-              {/* Usage */}
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-lg font-semibold mb-4 flex items-center">
-                  <BarChart3 className="h-5 w-5 mr-2" /> Current Usage
-                </h2>
-                <div className="space-y-4">
-                  {[
-                    { label: 'Rooms', used: usage.roomsUsed, max: quotes.maxRooms },
-                    { label: 'Users', used: usage.usersUsed, max: quotes.maxUsers },
-                    { label: 'Reservations', used: usage.reservationsUsed, max: quotes.maxReservations },
-                    { label: 'Storage (GB)', used: usage.storageUsedGB, max: quotes.maxStorageGB },
-                  ].map((item) => {
-                    const percentage = getUsagePercentage(item.used, item.max);
-                    return (
-                      <div key={item.label}>
-                        <div className="flex justify-between mb-1">
-                          <span className="text-sm font-medium">{item.label}</span>
-                          <span className={`text-sm font-bold px-2 py-1 rounded ${getUsageColor(percentage)}`}>
-                            {percentage}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div
-                            className={`h-2 rounded-full transition ${
-                              percentage >= 90
-                                ? 'bg-red-600'
-                                : percentage >= 70
-                                ? 'bg-yellow-600'
-                                : 'bg-green-600'
-                            }`}
-                            style={{ width: `${Math.min(percentage, 100)}%` }}
-                          />
-                        </div>
-                        <p className="text-xs text-gray-600 mt-1">
-                          {item.used} / {item.max}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
           )}
-        </div>
+        </Panel>
+
+        {!selectedTenant ? (
+          <Panel>
+            <EmptyState
+              icon={<BarChart3 size={28} strokeWidth={1.6} />}
+              title="Select a tenant"
+              description="Choose a tenant to view and edit its resource quotas."
+            />
+          </Panel>
+        ) : detailLoading ? (
+          <Skeleton height="320px" />
+        ) : quotas && usage ? (
+          <div className="stack">
+            <Panel
+              title={`Quotas — ${selectedTenant.name}`}
+              actions={
+                !editing && (
+                  <Button variant="ghost" size="sm" icon={<Edit2 size={14} />} onClick={() => setEditing(true)}>
+                    Edit
+                  </Button>
+                )
+              }
+            >
+              {editing ? (
+                <>
+                  <div className="grid2">
+                    {QUOTA_FIELDS.map((field) => (
+                      <Field key={field.key} label={field.label}>
+                        <TextInput
+                          type="number"
+                          min={0}
+                          value={formData[field.key] ?? ''}
+                          onChange={(e) =>
+                            setFormData({ ...formData, [field.key]: parseInt(e.target.value, 10) })
+                          }
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                  <div className="row" style={{ marginTop: 'var(--space-4)' }}>
+                    <Button variant="primary" onClick={handleSaveQuotas} loading={saving}>
+                      Save quotas
+                    </Button>
+                    <Button variant="ghost" onClick={() => { setEditing(false); setFormData(quotas); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="grid2">
+                  {QUOTA_FIELDS.map((field) => (
+                    <div key={field.key}>
+                      <p className="text-sm muted" style={{ margin: 0 }}>{field.label}</p>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: '1.1rem' }}>
+                        {quotas[field.key].toLocaleString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Current usage">
+              <div className="stack" style={{ gap: 'var(--space-4)' }}>
+                {usageRows.map((item) => {
+                  const pct = item.max > 0 ? Math.round((item.used / item.max) * 100) : 0;
+                  return (
+                    <div key={item.label}>
+                      <div className="row-between" style={{ marginBottom: 4 }}>
+                        <span className="text-sm" style={{ fontWeight: 500 }}>{item.label}</span>
+                        <span className="text-sm" style={{ fontWeight: 700, color: usageTone(pct) }}>
+                          {item.used.toLocaleString()} / {item.max.toLocaleString()} ({pct}%)
+                        </span>
+                      </div>
+                      <div style={{ width: '100%', background: 'var(--line)', borderRadius: 99, height: 8 }}>
+                        <div
+                          style={{
+                            width: `${Math.min(pct, 100)}%`,
+                            height: '100%',
+                            borderRadius: 99,
+                            background: usageTone(pct),
+                            transition: 'width 0.3s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+          </div>
+        ) : (
+          <Panel>
+            <EmptyState title="No quota data" description="This tenant has no quota record yet." />
+          </Panel>
+        )}
       </div>
     </Layout>
   );
