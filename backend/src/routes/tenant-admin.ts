@@ -18,8 +18,8 @@ const updateTenantAdminSchema = z.object({
 });
 
 // Resolve the user who administers a tenant: owner first, then a manager,
-// then the earliest active user, then any user (e.g. the platform tenant
-// only has an iitech_admin). Callers are iitech_admin-gated already.
+// then the earliest active staff user. Never resolves platform accounts —
+// iitech_admin password changes go through /auth/change-password instead.
 const findTenantAdmin = async (tenantId: string) => {
   for (const role of ['owner', 'general_manager']) {
     const admin = await prisma?.user.findFirst({
@@ -28,13 +28,8 @@ const findTenantAdmin = async (tenantId: string) => {
     });
     if (admin) return admin;
   }
-  const staffAdmin = await prisma?.user.findFirst({
-    where: { tenantId, isActive: true, role: { not: 'iitech_admin' } },
-    orderBy: { createdAt: 'asc' },
-  });
-  if (staffAdmin) return staffAdmin;
   return prisma?.user.findFirst({
-    where: { tenantId },
+    where: { tenantId, isActive: true, role: { not: 'iitech_admin' } },
     orderBy: { createdAt: 'asc' },
   });
 };

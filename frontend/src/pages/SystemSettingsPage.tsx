@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Mail, Shield, Save, RefreshCw, Palette, Gauge } from 'lucide-react';
+import { Mail, Shield, Save, RefreshCw, Palette, Gauge, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   Button,
@@ -37,13 +37,14 @@ interface SystemSettings {
   };
 }
 
-type Tab = 'email' | 'features' | 'branding' | 'rate-limit';
+type Tab = 'email' | 'features' | 'branding' | 'rate-limit' | 'security';
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Mail }> = [
   { id: 'email', label: 'Email', icon: Mail },
   { id: 'features', label: 'Feature flags', icon: Shield },
   { id: 'branding', label: 'Branding', icon: Palette },
   { id: 'rate-limit', label: 'Rate limits', icon: Gauge },
+  { id: 'security', label: 'Security', icon: KeyRound },
 ];
 
 export default function SystemSettingsPage() {
@@ -55,6 +56,7 @@ export default function SystemSettingsPage() {
   const [error, setError] = useState<Error | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('email');
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -92,6 +94,30 @@ export default function SystemSettingsPage() {
       toast.success(success);
     } catch (err: any) {
       toast.error(err.response?.data?.error?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (pwForm.next.length < 6) {
+      toast.error('New password must be at least 6 characters');
+      return;
+    }
+    if (pwForm.next !== pwForm.confirm) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    try {
+      setSaving(true);
+      await api.post('/auth/change-password', {
+        currentPassword: pwForm.current,
+        newPassword: pwForm.next,
+      });
+      toast.success('Password updated');
+      setPwForm({ current: '', next: '', confirm: '' });
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to change password');
     } finally {
       setSaving(false);
     }
@@ -211,6 +237,37 @@ export default function SystemSettingsPage() {
                 <div>
                   <Button variant="primary" icon={<Save size={15} />} onClick={() => save('/superadmin/settings/branding', settings.branding, 'Branding updated')} loading={saving}>
                     Save branding
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
+
+          {activeTab === 'security' && (
+            <Panel title="Change your password" subtitle={`Signed in as ${user?.email || 'platform admin'}`}>
+              <div className="stack" style={{ gap: 'var(--space-4)', maxWidth: 400 }}>
+                <Field label="Current password" required>
+                  <TextInput type="password" value={pwForm.current} onChange={(e) => setPwForm({ ...pwForm, current: e.target.value })} autoComplete="current-password" />
+                </Field>
+                <Field label="New password" required hint="Minimum 6 characters">
+                  <TextInput type="password" value={pwForm.next} onChange={(e) => setPwForm({ ...pwForm, next: e.target.value })} autoComplete="new-password" />
+                </Field>
+                <Field
+                  label="Confirm new password"
+                  required
+                  error={pwForm.confirm && pwForm.next !== pwForm.confirm ? 'Passwords do not match' : undefined}
+                >
+                  <TextInput type="password" value={pwForm.confirm} onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })} autoComplete="new-password" />
+                </Field>
+                <div>
+                  <Button
+                    variant="primary"
+                    icon={<KeyRound size={15} />}
+                    onClick={handleChangePassword}
+                    loading={saving}
+                    disabled={!pwForm.current || pwForm.next.length < 6 || pwForm.next !== pwForm.confirm}
+                  >
+                    Change password
                   </Button>
                 </div>
               </div>

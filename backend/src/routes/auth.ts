@@ -424,3 +424,49 @@ authRouter.post('/create-admin', async (req, res) => {
     throw new AppError(`Failed to create admin account: ${error.message}`, 500);
   }
 });
+
+// POST /api/auth/change-password - Change the authenticated user's own password
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+
+authRouter.post('/change-password', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+    });
+
+    if (!user || !(await comparePassword(currentPassword, user.passwordHash))) {
+      throw new AppError('Current password is incorrect', 400);
+    }
+
+    if (currentPassword === newPassword) {
+      throw new AppError('New password must differ from the current password', 400);
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await hashPassword(newPassword),
+        updatedAt: new Date(),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully',
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (error instanceof z.ZodError) {
+      throw new AppError(error.errors[0]?.message || 'Invalid request', 400);
+    }
+    console.error('Error changing password:', error);
+    throw new AppError('Failed to change password', 500);
+  }
+});

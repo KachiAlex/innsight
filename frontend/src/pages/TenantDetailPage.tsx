@@ -147,7 +147,9 @@ export default function TenantDetailPage() {
             {tenant && (
               <>
                 <Button variant="secondary" icon={<Edit size={15} />} onClick={() => navigate('/tenants')}>Edit</Button>
-                <Button variant="secondary" icon={<KeyRound size={15} />} onClick={() => setShowResetModal(true)}>Reset owner password</Button>
+                {admin && (
+                  <Button variant="secondary" icon={<KeyRound size={15} />} onClick={() => setShowResetModal(true)}>Reset admin password</Button>
+                )}
                 {suspended ? (
                   <Button variant="primary" icon={<CheckCircle size={15} />} onClick={() => setStatusConfirm('active')}>Activate</Button>
                 ) : (
@@ -187,7 +189,7 @@ export default function TenantDetailPage() {
                 </div>
                 {admin ? (
                   <>
-                    <p className="text-xs muted" style={{ margin: 'var(--space-2) 0 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Owner account</p>
+                    <p className="text-xs muted" style={{ margin: 'var(--space-2) 0 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Admin account</p>
                     <div className="grid2">
                       <span className="text-sm muted">Name</span><span className="text-sm">{admin.firstName} {admin.lastName}</span>
                       <span className="text-sm muted">Email</span><span className="text-sm">{admin.email}</span>
@@ -197,7 +199,7 @@ export default function TenantDetailPage() {
                     </div>
                   </>
                 ) : (
-                  <p className="text-sm muted" style={{ margin: 0 }}><User size={13} style={{ verticalAlign: -2 }} /> No owner account found</p>
+                  <p className="text-sm muted" style={{ margin: 0 }}><User size={13} style={{ verticalAlign: -2 }} /> No admin account found for this tenant</p>
                 )}
               </div>
             </Panel>
@@ -293,7 +295,7 @@ export default function TenantDetailPage() {
       <Modal
         open={showResetModal}
         onClose={() => setShowResetModal(false)}
-        title="Reset owner password"
+        title="Reset tenant admin password"
         width="sm"
         footer={
           <>
@@ -306,7 +308,7 @@ export default function TenantDetailPage() {
       >
         <div className="stack" style={{ gap: 'var(--space-3)' }}>
           <p className="text-sm muted" style={{ margin: 0 }}>
-            Sets a new password for <strong>{admin?.email || 'the tenant owner'}</strong>. The owner is not notified automatically — share it securely.
+            Sets a new password for <strong>{admin?.email || 'the tenant admin'}</strong>. They are not notified automatically — share it securely.
           </p>
           <Field label="New password" required hint="Minimum 6 characters">
             <TextInput type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
