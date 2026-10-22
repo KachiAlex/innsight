@@ -39,3 +39,4 @@ backend/serviceAccount*.json
 backend/uploads/
 frontend/dist/
 frontend/api/prisma/schema.prisma
+.vercel
