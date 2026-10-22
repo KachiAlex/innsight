@@ -390,20 +390,51 @@ tenantRouter.get('/', authenticate, requireRole('iitech_admin'), async (req, res
       },
     });
 
+    // Resolve each tenant's admin (owner -> general_manager -> earliest staff).
+    // Platform iitech_admin accounts never qualify.
+    const adminCandidates = await prisma.user.findMany({
+      where: {
+        tenantId: { in: tenants.map((t) => t.id) },
+        isActive: true,
+        role: { not: 'iitech_admin' },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const adminRank = (role: string) => (role === 'owner' ? 0 : role === 'general_manager' ? 1 : 2);
+    const adminByTenant = new Map<string, (typeof adminCandidates)[number]>();
+    for (const u of adminCandidates) {
+      const current = adminByTenant.get(u.tenantId);
+      if (!current || adminRank(u.role) < adminRank(current.role)) {
+        adminByTenant.set(u.tenantId, u);
+      }
+    }
+
     // Format the response
-    const tenantsWithCounts = tenants.map((tenant) => ({
-      id: tenant.id,
-      name: tenant.name,
-      slug: tenant.slug,
-      email: tenant.email,
-      phone: tenant.phone,
-      address: tenant.address,
-      subscriptionStatus: tenant.subscriptionStatus,
-      createdAt: tenant.createdAt,
-      updatedAt: tenant.updatedAt,
-      userCount: tenant._count.users,
-      roomsCount: tenant._count.rooms,
-    }));
+    const tenantsWithCounts = tenants.map((tenant) => {
+      const admin = adminByTenant.get(tenant.id);
+      return {
+        id: tenant.id,
+        name: tenant.name,
+        slug: tenant.slug,
+        email: tenant.email,
+        phone: tenant.phone,
+        address: tenant.address,
+        subscriptionStatus: tenant.subscriptionStatus,
+        createdAt: tenant.createdAt,
+        updatedAt: tenant.updatedAt,
+        userCount: tenant._count.users,
+        roomsCount: tenant._count.rooms,
+        admin: admin
+          ? {
+              id: admin.id,
+              email: admin.email,
+              firstName: admin.firstName,
+              lastName: admin.lastName,
+              role: admin.role,
+            }
+          : null,
+      };
+    });
 
     res.json({
       success: true,

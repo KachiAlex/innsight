@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore, useIsAuthenticated } from '../store/authStore';
 import { api } from '../lib/api';
 import Layout from '../components/Layout';
-import { Building2, Plus, Users, DoorOpen, Search, Edit, CheckCircle, RefreshCw } from 'lucide-react';
+import { Building2, Plus, Users, DoorOpen, Search, Edit, CheckCircle, RefreshCw, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   Button,
@@ -29,6 +29,9 @@ interface Tenant {
   address?: string;
   subscriptionStatus: string;
   createdAt: string;
+  userCount?: number;
+  roomsCount?: number;
+  admin?: { id: string; email: string; firstName?: string; lastName?: string; role: string } | null;
   _count?: { users: number; rooms: number };
 }
 
@@ -75,6 +78,9 @@ export default function TenantsPageNew() {
   const [createdTenant, setCreatedTenant] = useState<any>(null);
   const [formData, setFormData] = useState(emptyForm);
   const [editFormData, setEditFormData] = useState({ name: '', slug: '', email: '', phone: '', address: '' });
+  const [resetTenant, setResetTenant] = useState<Tenant | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   const fetchTenants = useCallback(async () => {
     try {
@@ -205,6 +211,24 @@ export default function TenantsPageNew() {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!resetTenant || resetPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    try {
+      setResetLoading(true);
+      await api.post(`/tenants/${resetTenant.id}/admin/reset-password`, { newPassword: resetPassword });
+      toast.success(`Password updated for ${resetTenant.admin?.email}`);
+      setResetTenant(null);
+      setResetPassword('');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error?.message || 'Failed to reset password');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   const filteredTenants = tenants.filter(
     (t) =>
       t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -212,8 +236,8 @@ export default function TenantsPageNew() {
       t.slug.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const totalUsers = tenants.reduce((s, t) => s + (t._count?.users || 0), 0);
-  const totalRooms = tenants.reduce((s, t) => s + (t._count?.rooms || 0), 0);
+  const totalUsers = tenants.reduce((s, t) => s + (t.userCount ?? t._count?.users ?? 0), 0);
+  const totalRooms = tenants.reduce((s, t) => s + (t.roomsCount ?? t._count?.rooms ?? 0), 0);
 
   return (
     <Layout>
@@ -260,13 +284,30 @@ export default function TenantsPageNew() {
         columns={[
           { key: 'name', header: 'Name', render: (t: Tenant) => <span style={{ fontWeight: 600 }}>{t.name}</span> },
           { key: 'slug', header: 'Slug', render: (t: Tenant) => <code className="text-xs muted" style={{ fontFamily: 'monospace' }}>{t.slug}</code> },
-          { key: 'email', header: 'Email', render: (t: Tenant) => <span className="text-sm muted">{t.email}</span> },
+          { key: 'email', header: 'Contact', render: (t: Tenant) => <span className="text-sm muted">{t.email}</span> },
+          { key: 'admin', header: 'Admin', render: (t: Tenant) => (
+            t.admin
+              ? <span className="text-sm">{t.admin.email}<span className="text-xs muted"> · {t.admin.role.replace(/_/g, ' ')}</span></span>
+              : <span className="text-sm muted">No admin</span>
+          ) },
           { key: 'subscriptionStatus', header: 'Status', render: (t: Tenant) => <StatusBadge status={t.subscriptionStatus} dot={false}>{t.subscriptionStatus}</StatusBadge> },
-          { key: 'users', header: 'Users', align: 'center', render: (t: Tenant) => t._count?.users || 0 },
-          { key: 'rooms', header: 'Rooms', align: 'center', render: (t: Tenant) => t._count?.rooms || 0 },
+          { key: 'users', header: 'Users', align: 'center', render: (t: Tenant) => t.userCount ?? t._count?.users ?? 0 },
+          { key: 'rooms', header: 'Rooms', align: 'center', render: (t: Tenant) => t.roomsCount ?? t._count?.rooms ?? 0 },
           { key: 'createdAt', header: 'Created', render: (t: Tenant) => <span className="text-sm muted">{new Date(t.createdAt).toLocaleDateString()}</span> },
           { key: 'actions', header: '', align: 'right', render: (t: Tenant) => (
-            <Button variant="ghost" size="sm" icon={<Edit size={14} />} onClick={() => handleEditTenant(t)}>Edit</Button>
+            <div className="row" style={{ gap: 'var(--space-1)', justifyContent: 'flex-end' }}>
+              <Button variant="ghost" size="sm" icon={<Edit size={14} />} onClick={() => handleEditTenant(t)}>Edit</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<KeyRound size={14} />}
+                onClick={() => { setResetTenant(t); setResetPassword(''); }}
+                disabled={!t.admin}
+                title={t.admin ? `Reset password for ${t.admin.email}` : 'This tenant has no admin account'}
+              >
+                Reset password
+              </Button>
+            </div>
           ) },
         ]}
       />
@@ -406,6 +447,36 @@ export default function TenantsPageNew() {
           </Field>
           <Field label="Address">
             <Textarea rows={2} value={editFormData.address} onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })} />
+          </Field>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!resetTenant}
+        onClose={() => setResetTenant(null)}
+        title="Reset tenant admin password"
+        width="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setResetTenant(null)}>Cancel</Button>
+            <Button variant="primary" onClick={handleResetPassword} loading={resetLoading} disabled={resetPassword.length < 6}>
+              Reset password
+            </Button>
+          </>
+        }
+      >
+        <div className="stack" style={{ gap: 'var(--space-3)' }}>
+          <p className="text-sm muted" style={{ margin: 0 }}>
+            Sets a new password for <strong>{resetTenant?.admin?.email}</strong>. They are not notified automatically — share it securely.
+          </p>
+          <Field label="New password" required hint="Minimum 6 characters">
+            <TextInput
+              type="password"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Enter new password"
+            />
           </Field>
         </div>
       </Modal>
