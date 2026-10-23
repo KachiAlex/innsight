@@ -51,7 +51,7 @@ wagePlanRouter.get(
 
       // Attach assigned staff counts/names via permissions wagePlanId marker
       const users = await prisma.user.findMany({
-        where: { tenantId, isActive: true },
+        where: { tenantId, isActive: true, role: { not: 'iitech_admin' } },
         select: { id: true, firstName: true, lastName: true, permissions: true, role: true },
       });
 
@@ -229,7 +229,7 @@ wagePlanRouter.post(
       if (!plan) throw new AppError('Wage plan not found or inactive', 404);
 
       const user = await prisma.user.findFirst({
-        where: { id: req.params.userId, tenantId },
+        where: { id: req.params.userId, tenantId, role: { not: 'iitech_admin' } },
       });
       if (!user) throw new AppError('Staff member not found', 404);
 

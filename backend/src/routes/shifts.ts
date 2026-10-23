@@ -69,6 +69,13 @@ shiftRouter.post(
     const tenantId = req.params.tenantId;
     const data = createShiftSchema.parse(req.body);
 
+    const assignee = await prisma.user.findFirst({
+      where: { id: data.userId, tenantId, isActive: true, role: { not: 'iitech_admin' } },
+    });
+    if (!assignee) {
+      throw new AppError('Staff member not found', 404);
+    }
+
     const shift = await prisma.shift.create({
       data: {
         tenantId,

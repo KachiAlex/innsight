@@ -72,7 +72,7 @@ staffRouter.get(
       const { role, isActive, search } = req.query;
       const { skip, take, page, limit } = getPaginationParams(req);
 
-      const where: any = { tenantId };
+      const where: any = { tenantId, NOT: { role: 'iitech_admin' } };
       if (role) where.role = role;
       if (isActive !== undefined) where.isActive = isActive === 'true';
       if (search) {
@@ -109,7 +109,7 @@ staffRouter.get(
   async (req: AuthRequest, res) => {
     try {
       const user = await prisma.user.findFirst({
-        where: { id: req.params.id, tenantId: req.params.tenantId },
+        where: { id: req.params.id, tenantId: req.params.tenantId, role: { not: 'iitech_admin' } },
         select: {
           ...staffSelect,
           shifts: {
@@ -194,7 +194,7 @@ staffRouter.patch(
       requireManager(req);
 
       const user = await prisma.user.findFirst({
-        where: { id: req.params.id, tenantId },
+        where: { id: req.params.id, tenantId, role: { not: 'iitech_admin' } },
       });
       if (!user) throw new AppError('Staff member not found', 404);
 
@@ -264,7 +264,7 @@ staffRouter.delete(
       requireManager(req);
 
       const user = await prisma.user.findFirst({
-        where: { id: req.params.id, tenantId },
+        where: { id: req.params.id, tenantId, role: { not: 'iitech_admin' } },
       });
       if (!user) throw new AppError('Staff member not found', 404);
       if (user.id === req.user!.id) {
