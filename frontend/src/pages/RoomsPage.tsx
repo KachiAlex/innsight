@@ -534,6 +534,7 @@ export default function RoomsPage() {
   const [ratePlans, setRatePlans] = useState<Array<{ id: string; name: string; baseRate: number | null }>>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [rateEditRoom, setRateEditRoom] = useState<Room | null>(null);
+  const [editRoom, setEditRoom] = useState<Room | null>(null);
   const [editingCategory, setEditingCategory] = useState<RoomCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
@@ -1474,6 +1475,9 @@ export default function RoomsPage() {
                 )}
               </div>
               <div className={styles.roomActions}>
+                <Button size="sm" variant="secondary" icon={<Edit size={14} />} onClick={() => setEditRoom(room)}>
+                  Edit
+                </Button>
                 <Button size="sm" variant="secondary" onClick={() => setRateEditRoom(room)}>
                   Edit rate
                 </Button>
@@ -1537,6 +1541,17 @@ export default function RoomsPage() {
               fetchRooms(pagination.page);
             }}
             ratePlans={ratePlans}
+          />
+        )}
+
+        {editRoom && (
+          <EditRoomModal
+            room={editRoom}
+            onClose={() => setEditRoom(null)}
+            onSuccess={() => {
+              setEditRoom(null);
+              fetchRooms(pagination.page);
+            }}
           />
         )}
 
@@ -2847,6 +2862,123 @@ function RoomActivityModal({
             />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function EditRoomModal({
+  room,
+  onClose,
+  onSuccess,
+}: {
+  room: Room;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const { user } = useAuthStore();
+  const [formData, setFormData] = useState({
+    roomNumber: room.roomNumber,
+    roomType: room.roomType,
+    floor: room.floor != null ? String(room.floor) : '',
+    maxOccupancy: String(room.maxOccupancy),
+    description: room.description || '',
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.roomNumber.trim()) {
+      toast.error('Room number is required');
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.patch(`/tenants/${user?.tenantId}/rooms/${room.id}`, {
+        roomNumber: formData.roomNumber.trim(),
+        roomType: formData.roomType,
+        floor: formData.floor === '' ? null : Number(formData.floor),
+        maxOccupancy: Number(formData.maxOccupancy),
+        description: formData.description || null,
+      });
+      toast.success(`Room ${formData.roomNumber} updated`);
+      onSuccess();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to update room');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalPanel} style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+        <h2 style={{ marginBottom: '0.5rem', color: 'var(--text)' }}>Edit Room {room.roomNumber}</h2>
+        <form onSubmit={handleSubmit} style={{ marginTop: '1.5rem', display: 'grid', gap: '1rem' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontWeight: '500' }}>
+              Room Number
+            </label>
+            <TextInput
+              value={formData.roomNumber}
+              onChange={(e) => setFormData({ ...formData, roomNumber: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontWeight: '500' }}>
+              Room Type
+            </label>
+            <Select value={formData.roomType} onChange={(e) => setFormData({ ...formData, roomType: e.target.value })}>
+              <option value="single">Single</option>
+              <option value="double">Double</option>
+              <option value="twin">Twin</option>
+              <option value="suite">Suite</option>
+              <option value="deluxe">Deluxe</option>
+            </Select>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontWeight: '500' }}>
+                Floor
+              </label>
+              <TextInput
+                type="number"
+                value={formData.floor}
+                onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontWeight: '500' }}>
+                Max Occupancy
+              </label>
+              <TextInput
+                type="number"
+                min={1}
+                value={formData.maxOccupancy}
+                onChange={(e) => setFormData({ ...formData, maxOccupancy: e.target.value })}
+                required
+              />
+            </div>
+          </div>
+          <div>
+            <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--muted)', fontWeight: '500' }}>
+              Description
+            </label>
+            <TextInput
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={loading}>
+              Save changes
+            </Button>
+          </div>
+        </form>
       </div>
     </div>
   );
