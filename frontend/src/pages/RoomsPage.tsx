@@ -1645,7 +1645,16 @@ function CreateRoomModal({
   onSuccess: () => void;
 }) {
   const { user } = useAuthStore();
-  const [mode, setMode] = useState<'single' | 'bulk'>('single');
+  const [mode, setMode] = useState<'single' | 'bulk' | 'generate'>('single');
+  const [genConfig, setGenConfig] = useState({
+    startFloor: '1',
+    endFloor: '10',
+    single: '4',
+    double: '3',
+    twin: '1',
+    deluxe: '1',
+    suite: '1',
+  });
   const [formData, setFormData] = useState({
     roomNumber: '',
     roomNumberRange: '',
@@ -1724,12 +1733,90 @@ function CreateRoomModal({
     return null;
   };
 
+  // Build generation plan: for each floor, positions are assigned in
+  // single -> double -> twin -> deluxe -> suite order, numbered floor*100+pos.
+  const genPlan = useMemo(() => {
+    const startFloor = parseInt(genConfig.startFloor, 10);
+    const endFloor = parseInt(genConfig.endFloor, 10);
+    if (isNaN(startFloor) || isNaN(endFloor) || startFloor < 1 || endFloor < startFloor) {
+      return { groups: [] as Array<{ roomType: string; maxOccupancy: number; numbers: string[] }>, total: 0, floors: 0 };
+    }
+    const counts: Array<[string, number, number]> = [
+      ['single', parseInt(genConfig.single, 10) || 0, 1],
+      ['double', parseInt(genConfig.double, 10) || 0, 2],
+      ['twin', parseInt(genConfig.twin, 10) || 0, 2],
+      ['deluxe', parseInt(genConfig.deluxe, 10) || 0, 3],
+      ['suite', parseInt(genConfig.suite, 10) || 0, 4],
+    ];
+    const groups = counts
+      .filter(([, count]) => count > 0)
+      .map(([roomType, count, maxOccupancy]) => {
+        const numbers: string[] = [];
+        for (let f = startFloor; f <= endFloor; f++) {
+          // position on the floor = offset of this type within the ordered mix
+          const offset = counts.slice(0, counts.findIndex(([t]) => t === roomType)).reduce((s, [, c]) => s + c, 0);
+          for (let pos = offset + 1; pos <= offset + count; pos++) {
+            numbers.push(String(f * 100 + pos));
+          }
+        }
+        return { roomType, maxOccupancy, numbers };
+      });
+    const floors = endFloor - startFloor + 1;
+    const total = floors * counts.reduce((s, [, c]) => s + c, 0);
+    return { groups, total, floors };
+  }, [genConfig]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setCreationProgress(null);
 
     try {
+      if (mode === 'generate') {
+        if (genPlan.total === 0) {
+          toast.error('Configure at least one room to generate');
+          setLoading(false);
+          return;
+        }
+        if (genPlan.total > 500) {
+          toast.error('Generation is limited to 500 rooms at a time');
+          setLoading(false);
+          return;
+        }
+        setCreationProgress({ total: genPlan.total, created: 0, failed: 0 });
+        let created = 0;
+        let skipped = 0;
+        let failed = false;
+        for (const group of genPlan.groups) {
+          try {
+            const response = await api.post(`/tenants/${user?.tenantId}/rooms/bulk`, {
+              roomNumbers: group.numbers,
+              roomType: group.roomType,
+              floor: null,
+              maxOccupancy: group.maxOccupancy,
+              ratePlanId: formData.ratePlanId || null,
+              categoryId: formData.categoryId || null,
+              description: formData.overrideDescription ? formData.description : null,
+              customRate: formData.customRate ? Number(formData.customRate) : null,
+            });
+            created += response.data.data?.created || 0;
+            skipped += response.data.data?.skipped || 0;
+            setCreationProgress({ total: genPlan.total, created, failed: 0 });
+          } catch {
+            failed = true;
+          }
+        }
+        onSuccess();
+        if (failed) {
+          toast.error('Some room types failed to generate — check the list and retry');
+        } else {
+          toast.success(`Created ${created} room(s)${skipped ? `, skipped ${skipped} existing` : ''}`);
+        }
+        setTimeout(() => onClose(), 1200);
+        setLoading(false);
+        return;
+      }
+
       if (mode === 'single') {
         // Single room creation
         const floorValue = formData.floor 
@@ -1805,7 +1892,7 @@ function CreateRoomModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>
-          {mode === 'single' ? 'Add New Room' : 'Bulk Create Rooms'}
+          {mode === 'single' ? 'Add New Room' : mode === 'bulk' ? 'Bulk Create Rooms' : 'Generate Rooms'}
         </h2>
 
         {/* Mode Toggle */}
@@ -1850,12 +1937,93 @@ function CreateRoomModal({
           >
             Bulk Create
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('generate');
+              setFormData(prev => ({ ...prev, roomNumber: '', roomNumberRange: '', overrideDescription: false }));
+            }}
+            style={{
+              flex: 1,
+              padding: '0.5rem 1rem',
+              background: mode === 'generate' ? '#3b82f6' : 'transparent',
+              color: mode === 'generate' ? 'white' : '#64748b',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '0.875rem',
+            }}
+          >
+            Generate
+          </button>
         </div>
 
         <form onSubmit={handleSubmit}>
           <div style={{ display: 'grid', gap: '1rem' }}>
             {/* Room Number Input - Different for each mode */}
-            {mode === 'single' ? (
+            {mode === 'generate' ? (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                      Start floor *
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={genConfig.startFloor}
+                      onChange={(e) => setGenConfig({ ...genConfig, startFloor: e.target.value })}
+                      required
+                      style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                      End floor *
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={genConfig.endFloor}
+                      onChange={(e) => setGenConfig({ ...genConfig, endFloor: e.target.value })}
+                      required
+                      style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                    Rooms per floor by type
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem' }}>
+                    {(['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => (
+                      <div key={t}>
+                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b', marginBottom: '0.25rem', textTransform: 'capitalize' }}>
+                          {t}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          value={genConfig[t]}
+                          onChange={(e) => setGenConfig({ ...genConfig, [t]: e.target.value })}
+                          style={{ width: '100%', padding: '0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {genPlan.total > 0 && (
+                  <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '6px', fontSize: '0.875rem', color: '#0369a1' }}>
+                    <strong>{genPlan.total}</strong> rooms across <strong>{genPlan.floors}</strong> floor{genPlan.floors !== 1 ? 's' : ''}
+                    <div style={{ marginTop: '0.25rem', color: '#64748b' }}>
+                      {genPlan.groups.map((g) => `${g.numbers.length} ${g.roomType}`).join(' · ')} — numbered floor × 100 + position
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : mode === 'single' ? (
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
                   Room Number *
@@ -1915,6 +2083,8 @@ function CreateRoomModal({
               </div>
             )}
 
+            {mode !== 'generate' && (
+            <>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
@@ -1983,6 +2153,8 @@ function CreateRoomModal({
                 }}
               />
             </div>
+            </>
+            )}
 
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
@@ -2151,21 +2323,23 @@ function CreateRoomModal({
               </button>
               <button
                 type="submit"
-                disabled={loading || (mode === 'bulk' && parsedRoomNumbers.length === 0)}
+                disabled={loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0)}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) ? 'not-allowed' : 'pointer',
-                  opacity: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) ? 0.6 : 1,
+                  cursor: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0) ? 'not-allowed' : 'pointer',
+                  opacity: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0) ? 0.6 : 1,
                 }}
               >
                 {loading
                   ? 'Creating...'
                   : mode === 'single'
                   ? 'Create Room'
+                  : mode === 'generate'
+                  ? `Generate ${genPlan.total} Room${genPlan.total !== 1 ? 's' : ''}`
                   : `Create ${parsedRoomNumbers.length || 0} Room${parsedRoomNumbers.length !== 1 ? 's' : ''}`}
               </button>
             </div>

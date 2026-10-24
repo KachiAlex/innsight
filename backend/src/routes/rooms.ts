@@ -211,12 +211,20 @@ roomRouter.post(
       const existingNumbers = new Set(existing.map((r) => r.roomNumber));
       const toCreate = data.roomNumbers.filter((n) => !existingNumbers.has(n));
 
+      // When no explicit floor is given, derive it from 3+-digit room numbers
+      // (e.g. 101 -> 1, 1001 -> 10) so generated rooms stay on the floor board.
+      const floorFor = (roomNumber: string) => {
+        if (data.floor !== null && data.floor !== undefined) return data.floor;
+        const num = parseInt(roomNumber, 10);
+        return !isNaN(num) && num >= 100 ? Math.floor(num / 100) : null;
+      };
+
       const result = await prisma.room.createMany({
         data: toCreate.map((roomNumber) => ({
           tenantId,
           roomNumber,
           roomType: data.roomType,
-          floor: data.floor ?? null,
+          floor: floorFor(roomNumber),
           status: 'available',
           maxOccupancy: data.maxOccupancy,
           ratePlanId: data.ratePlanId ?? null,
