@@ -6,75 +6,31 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Create IITECH tenant
-  const iitechTenant = await prisma.tenant.upsert({
-    where: { slug: 'iitech' },
-    update: {},
-    create: {
-      name: 'IITECH Platform',
-      slug: 'iitech',
-      email: 'admin@iitech.com',
-      phone: '+2341234567890',
-      subscriptionStatus: 'active',
-    },
-  });
-
-  console.log('✅ Created IITECH tenant');
-
-  // Create IITECH admin user (admin@iitech.com)
+  // Platform superadmins carry no tenant — they only operate the superadmin portal
   const adminPasswordHash = await bcrypt.hash('admin123', 12);
-  const adminUser = await prisma.user.upsert({
-    where: {
-      tenantId_email: {
-        tenantId: iitechTenant.id,
-        email: 'admin@iitech.com',
-      },
-    },
-    update: {},
-    create: {
-      tenantId: iitechTenant.id,
-      email: 'admin@iitech.com',
-      passwordHash: adminPasswordHash,
-      firstName: 'IITECH',
-      lastName: 'Admin',
-      role: 'iitech_admin',
-    },
-  });
-
-  console.log('✅ Created IITECH admin user');
-  console.log('   Email: admin@iitech.com');
-  console.log('   Password: admin123');
-
-  // Create admin@insight.com user
-  const insightAdminPasswordHash = await bcrypt.hash('admin123', 12);
-  const insightAdminUser = await prisma.user.upsert({
-    where: {
-      tenantId_email: {
-        tenantId: iitechTenant.id,
-        email: 'admin@insight.com',
-      },
-    },
-    update: {
-      passwordHash: insightAdminPasswordHash,
-      firstName: 'Admin',
-      lastName: 'User',
-      role: 'iitech_admin',
-      isActive: true,
-    },
-    create: {
-      tenantId: iitechTenant.id,
-      email: 'admin@insight.com',
-      passwordHash: insightAdminPasswordHash,
-      firstName: 'Admin',
-      lastName: 'User',
-      role: 'iitech_admin',
-      isActive: true,
-    },
-  });
-
-  console.log('✅ Created admin@insight.com user');
-  console.log('   Email: admin@insight.com');
-  console.log('   Password: admin123');
+  for (const [email, firstName] of [
+    ['admin@iitech.com', 'IITECH'],
+    ['admin@insight.com', 'Admin'],
+  ] as const) {
+    const existing = await prisma.user.findFirst({ where: { email } });
+    if (existing) {
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { role: 'iitech_admin', tenantId: null, isActive: true },
+      });
+    } else {
+      await prisma.user.create({
+        data: {
+          tenantId: null,
+          email,
+          passwordHash: adminPasswordHash,
+          firstName,
+          lastName: 'Admin',
+          role: 'iitech_admin',
+        },
+      });
+    }
+  }
 
   // Create sample tenant (Grand Hotel)
   const grandHotel = await prisma.tenant.upsert({

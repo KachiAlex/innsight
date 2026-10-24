@@ -5,7 +5,7 @@ import { AppError } from './errorHandler';
 export interface AuthRequest extends Request {
   user?: {
     id: string;
-    tenantId: string;
+    tenantId: string | null;
     email: string;
     role: string;
   };
@@ -32,7 +32,7 @@ export const authenticate = (
 
     const decoded = jwt.verify(token, secret) as {
       id: string;
-      tenantId: string;
+      tenantId: string | null;
       email: string;
       role: string;
     };
@@ -71,10 +71,15 @@ export const requireTenantAccess = (
   }
 
   const tenantId = req.params.tenantId || req.body.tenantId;
-  
-  // IITECH admins can access any tenant (for support)
+
+  // Platform superadmins carry no tenant and are confined to iitech_admin
+  // routes — they never act inside a tenant's workspace.
   if (req.user.role === 'iitech_admin') {
-    return next();
+    throw new AppError('Platform admins manage tenants from the superadmin portal', 403);
+  }
+
+  if (!req.user.tenantId) {
+    throw new AppError('No tenant associated with this account', 403);
   }
 
   // Regular users can only access their own tenant

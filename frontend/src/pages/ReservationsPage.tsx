@@ -559,7 +559,7 @@ export default function ReservationsPage() {
 
       <ReservationDetailDrawer
         reservationId={detailId}
-        tenantId={user?.tenantId}
+        tenantId={user?.tenantId ?? undefined}
         currency={currency}
         onClose={() => setDetailId(null)}
         onCheckIn={handleCheckIn}

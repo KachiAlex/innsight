@@ -7,12 +7,12 @@ interface User {
   firstName: string;
   lastName: string;
   role: string;
-  tenantId: string;
+  tenantId: string | null;
   tenant: {
     id: string;
     name: string;
     slug: string;
-  };
+  } | null;
 }
 
 interface AuthState {

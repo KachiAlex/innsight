@@ -294,7 +294,7 @@ export default function GuestRequestsPage() {
 
       <RequestDetailDrawer
         requestId={selectedId}
-        tenantId={user?.tenantId}
+        tenantId={user?.tenantId ?? undefined}
         onClose={() => setSelectedId(null)}
         onChanged={() => {
           loadRequests();

@@ -79,7 +79,7 @@ model Tenant {
 
 model User {
   id                         String              @id @default(uuid())
-  tenantId                   String
+  tenantId                   String?
   email                      String
   passwordHash               String
   firstName                  String
@@ -116,7 +116,7 @@ model User {
   shifts                     Shift[]
   createdSmartAlerts         SmartAlert[]
   resolvedSmartAlerts        SmartAlert[]        @relation("AlertResolver")
-  tenant                     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant                     Tenant?             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdWorkflowRules       WorkflowRule[]
 
   @@unique([tenantId, email])

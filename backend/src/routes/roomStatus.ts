@@ -31,7 +31,9 @@ const resolveTenantId = (req: AuthRequest): string => {
   if (requested && requested !== req.user!.tenantId) {
     throw new AppError('Access denied to this tenant', 403);
   }
-  return req.user!.tenantId;
+  const tenantId = req.user!.tenantId;
+  if (!tenantId) throw new AppError('No tenant associated with this account', 403);
+  return tenantId;
 };
 
 const assertRoomInTenant = async (roomId: string, tenantId: string) => {

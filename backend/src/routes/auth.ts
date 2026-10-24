@@ -103,11 +103,13 @@ authRouter.post('/login', async (req, res) => {
           lastName: user.lastName,
           role: user.role,
           tenantId: user.tenantId,
-          tenant: {
-            id: user.tenant.id,
-            name: user.tenant.name,
-            slug: user.tenant.slug,
-          },
+          tenant: user.tenant
+            ? {
+                id: user.tenant.id,
+                name: user.tenant.name,
+                slug: user.tenant.slug,
+              }
+            : null,
         },
       },
     });
@@ -211,12 +213,14 @@ authRouter.get('/me', authenticate, async (req: AuthRequest, res) => {
         role: user.role,
         permissions: user.permissions || null,
         tenantId: user.tenantId,
-        tenant: {
-          id: user.tenant.id,
-          name: user.tenant.name,
-          slug: user.tenant.slug,
-          branding: user.tenant.branding || null,
-        },
+        tenant: user.tenant
+          ? {
+              id: user.tenant.id,
+              name: user.tenant.name,
+              slug: user.tenant.slug,
+              branding: user.tenant.branding || null,
+            }
+          : null,
       },
     });
   } catch (error: any) {
@@ -349,31 +353,12 @@ authRouter.post('/create-admin', async (req, res) => {
       throw new AppError('An admin account already exists', 403);
     }
 
-    // Find or create IITECH tenant
-    let iitechTenant = await prisma.tenant.findUnique({
-      where: { slug: 'iitech' },
-    });
-
-    if (!iitechTenant) {
-      iitechTenant = await prisma.tenant.create({
-        data: {
-          name: 'IITECH Platform',
-          slug: 'iitech',
-          email: 'admin@iitech.com',
-          phone: '+2341234567890',
-          subscriptionStatus: 'active',
-        },
-      });
-    }
-
-    // Create or update admin user
+    // Platform superadmins carry no tenant — they only operate the
+    // superadmin portal.
     const passwordHash = await hashPassword('admin123');
-    
+
     const existingUser = await prisma.user.findFirst({
-      where: {
-        tenantId: iitechTenant.id,
-        email: 'admin@insight.com',
-      },
+      where: { email: 'admin@insight.com' },
     });
 
     let adminUser;
@@ -386,6 +371,7 @@ authRouter.post('/create-admin', async (req, res) => {
           firstName: 'Admin',
           lastName: 'User',
           role: 'iitech_admin',
+          tenantId: null,
           isActive: true,
         },
       });
@@ -393,7 +379,7 @@ authRouter.post('/create-admin', async (req, res) => {
       // Create new user
       adminUser = await prisma.user.create({
         data: {
-          tenantId: iitechTenant.id,
+          tenantId: null,
           email: 'admin@insight.com',
           passwordHash,
           firstName: 'Admin',
@@ -413,7 +399,7 @@ authRouter.post('/create-admin', async (req, res) => {
         firstName: adminUser.firstName,
         lastName: adminUser.lastName,
         role: adminUser.role,
-        tenantId: iitechTenant.id,
+        tenantId: null,
       },
     });
   } catch (error: any) {
