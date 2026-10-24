@@ -272,6 +272,15 @@ roomRouter.patch(
       if (!room) throw new AppError('Room not found', 404);
 
       const data = roomUpdateSchema.parse(req.body);
+
+      if (data.roomNumber !== undefined && data.roomNumber !== room.roomNumber) {
+        const duplicate = await prisma.room.findFirst({
+          where: { tenantId, roomNumber: data.roomNumber, id: { not: room.id } },
+          select: { id: true },
+        });
+        if (duplicate) throw new AppError(`Room number ${data.roomNumber} is already in use`, 409);
+      }
+
       const updated = await prisma.room.update({
         where: { id: room.id },
         data: {
@@ -315,7 +324,7 @@ roomRouter.patch(
 
       res.json({ success: true, data: serializeRoom(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error instanceof z.ZodError) throw error;
       throw new AppError(`Failed to update room: ${error.message}`, 500);
     }
   }
