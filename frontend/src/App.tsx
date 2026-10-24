@@ -93,6 +93,7 @@ const TenantQuotasPage = lazy(() => import('./pages/TenantQuotasPage'));
 const DataRetentionPage = lazy(() => import('./pages/DataRetentionPage'));
 const IntegrationManagementPage = lazy(() => import('./pages/IntegrationManagementPage'));
 const SLADashboardPage = lazy(() => import('./pages/SLADashboardPage'));
+const OnboardingPage = lazy(() => import('./pages/OnboardingPage'));
 
 function App() {
   const PageLoader = () => (
@@ -546,6 +547,16 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <StaffPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <OnboardingPage />
                   </Suspense>
                 </ProtectedRoute>
               }

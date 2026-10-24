@@ -31,6 +31,7 @@ import {
   Mail,
   SlidersHorizontal,
   TrendingUp,
+  Wand2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -58,6 +59,7 @@ export const STAFF_NAV: NavGroup[] = [
     label: 'Overview',
     items: [
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { path: '/onboarding', label: 'Setup Wizard', icon: Wand2, roles: MANAGERS },
       { path: '/calendar', label: 'Calendar', icon: CalendarDays, roles: [...DESK, ...OPS] },
       { path: '/reservations', label: 'Reservations', icon: Calendar, roles: DESK },
     ],

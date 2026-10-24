@@ -244,6 +244,24 @@ export default function DashboardPage() {
         }
       />
 
+      {/* Onboarding banner — shown to managers until setup is marked complete */}
+      {['owner', 'general_manager'].includes(user?.role ?? '') &&
+        !(settings.otherSettings as { onboarding?: { completed?: boolean } } | undefined)?.onboarding
+          ?.completed && (
+          <Panel
+            title="Finish setting up your hotel"
+            subtitle="Configure room types, generate your room inventory, and add facilities with the guided setup wizard."
+            actions={
+              <Button variant="primary" onClick={() => navigate('/onboarding')}>
+                Open setup wizard
+              </Button>
+            }
+            style={{ marginBottom: 'var(--space-6)' }}
+          >
+            {null}
+          </Panel>
+        )}
+
       {/* KPI cards */}
       <div className="grid4" style={{ marginBottom: 'var(--space-6)' }}>
         <StatCard
