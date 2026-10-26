@@ -42,6 +42,7 @@ import { meetingHallRouter } from './routes/halls';
 import { publicPortalRouter } from './routes/public-portal';
 import { publicPaymentsRouter } from './routes/public-payments';
 import { publicTrackingRouter } from './routes/public-tracking';
+import { icalPublicRouter, icalRouter } from './routes/ical';
 import { superadminRouter } from './routes/superadmin';
 import { settingsRouter as settingsAdminRouter } from './routes/settings-admin';
 import { superadminUsersRouter } from './routes/superadmin-users';
@@ -158,6 +159,8 @@ export const createApp = () => {
   app.use('/api/tenants/:tenantId/rooms/:roomId/occupancy', iotRouter);
   app.use('/api/public/portal', publicPortalRouter);
   app.use('/api/public/track', publicTrackingRouter);
+  app.use('/api/public/ical', icalPublicRouter);
+  app.use('/api/tenants/:tenantId/ical-feeds', icalRouter);
   app.use('/api/superadmin', superadminRouter);
   app.use('/api/superadmin/users', superadminUsersRouter);
   app.use('/api/superadmin/settings', settingsAdminRouter);

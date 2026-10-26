@@ -76,6 +76,7 @@ interface Room {
   roomNumber: string;
   roomType: string;
   floor: number;
+  icalToken?: string;
   status: string;
   maxOccupancy: number;
   description?: string;
@@ -3734,6 +3735,7 @@ function EditRoomModal({
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             />
           </div>
+          <RoomIcalSection room={room} />
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -3744,6 +3746,240 @@ function EditRoomModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+interface IcalFeed {
+  id: string;
+  roomId: string;
+  name: string | null;
+  importUrl: string | null;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  lastSummary: string | null;
+  isActive: boolean;
+}
+
+function RoomIcalSection({ room }: { room: Room }) {
+  const { user } = useAuthStore();
+  const [open, setOpen] = useState(false);
+  const [feeds, setFeeds] = useState<IcalFeed[]>([]);
+  const [loadingFeeds, setLoadingFeeds] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const exportUrl = room.icalToken
+    ? `${window.location.origin}/api/public/ical/rooms/${room.icalToken}.ics`
+    : null;
+
+  const load = async () => {
+    if (!user?.tenantId) return;
+    setLoadingFeeds(true);
+    try {
+      const res = await api.get(`/tenants/${user.tenantId}/ical-feeds`, {
+        params: { roomId: room.id },
+      });
+      setFeeds(res.data.data?.feeds || []);
+    } catch {
+      // surfaced via toast only on actions; list stays empty
+    } finally {
+      setLoadingFeeds(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, room.id]);
+
+  const addFeed = async () => {
+    if (!newUrl.trim()) {
+      toast.error('Paste the external calendar URL first');
+      return;
+    }
+    setAdding(true);
+    try {
+      await api.post(`/tenants/${user?.tenantId}/ical-feeds`, {
+        roomId: room.id,
+        name: newName.trim() || null,
+        importUrl: newUrl.trim(),
+      });
+      setNewName('');
+      setNewUrl('');
+      toast.success('Calendar feed added — it will sync within 15 minutes');
+      await load();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to add feed');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeFeed = async (feedId: string) => {
+    try {
+      await api.delete(`/tenants/${user?.tenantId}/ical-feeds/${feedId}`);
+      toast.success('Feed removed — imported blocks were cancelled');
+      await load();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to remove feed');
+    }
+  };
+
+  const syncNow = async (feedId: string) => {
+    setSyncing(feedId);
+    try {
+      const res = await api.post(`/tenants/${user?.tenantId}/ical-feeds/${feedId}/sync`);
+      const r = res.data.data?.result;
+      toast.success(`Synced: ${r?.imported ?? 0} imported, ${r?.cancelled ?? 0} cancelled`);
+      await load();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Sync failed');
+    } finally {
+      setSyncing(null);
+    }
+  };
+
+  const copyExport = async () => {
+    if (!exportUrl) return;
+    try {
+      await navigator.clipboard.writeText(exportUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Could not copy — copy the URL manually');
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border, #e2e8f0)', paddingTop: '0.75rem' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          color: 'var(--muted)',
+          fontWeight: 600,
+          fontSize: '0.9rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+        }}
+      >
+        <span style={{ display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▸</span>
+        Calendar sync (iCal)
+      </button>
+
+      {open && (
+        <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
+          <div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.35rem' }}>
+              Export URL — paste this into Airbnb / Booking.com to publish InnSight availability
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                readOnly
+                value={exportUrl || 'Token pending — save the room first'}
+                onFocus={(e) => e.target.select()}
+                style={{
+                  flex: 1,
+                  padding: '0.5rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  color: '#475569',
+                  background: '#f8fafc',
+                }}
+              />
+              <Button type="button" variant="secondary" onClick={copyExport} disabled={!exportUrl}>
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.35rem' }}>
+              Import feeds — external calendars pull in as blocked reservations
+            </div>
+            {loadingFeeds ? (
+              <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Loading feeds…</div>
+            ) : feeds.length === 0 ? (
+              <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No import feeds configured.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.4rem' }}>
+                {feeds.map((feed) => (
+                  <div
+                    key={feed.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.5rem 0.6rem',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{feed.name || 'External calendar'}</div>
+                      {feed.lastError ? (
+                        <div style={{ color: '#b91c1c' }}>{feed.lastError}</div>
+                      ) : (
+                        <div style={{ color: '#64748b' }}>
+                          {feed.lastSyncedAt
+                            ? `Synced ${new Date(feed.lastSyncedAt).toLocaleString()}${feed.lastSummary ? ` — ${feed.lastSummary}` : ''}`
+                            : 'Not synced yet'}
+                        </div>
+                      )}
+                    </div>
+                    {feed.importUrl && (
+                      <button
+                        type="button"
+                        onClick={() => syncNow(feed.id)}
+                        disabled={syncing === feed.id}
+                        style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.78rem', padding: 0, whiteSpace: 'nowrap' }}
+                      >
+                        {syncing === feed.id ? 'Syncing…' : 'Sync now'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeFeed(feed.id)}
+                      style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: '0.78rem', padding: 0 }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr auto', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <input
+                placeholder="Name (e.g. Airbnb)"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                style={{ padding: '0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem' }}
+              />
+              <input
+                placeholder="https://…/calendar.ics"
+                value={newUrl}
+                onChange={(e) => setNewUrl(e.target.value)}
+                style={{ padding: '0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem' }}
+              />
+              <Button type="button" variant="secondary" onClick={addFeed} loading={adding}>
+                Add
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

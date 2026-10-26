@@ -40,6 +40,7 @@ model Tenant {
   guestAccounts         GuestAccount[]
   guestSessions         GuestSession[]
   housekeepingTasks     HousekeepingTask[]
+  icalFeeds             IcalFeed[]
   integrations          Integration[]
   inventoryAnalytics    InventoryAnalytics[]
   iotEvents             IoTEvent[]
@@ -145,8 +146,10 @@ model Room {
   customRate            Decimal?            @db.Decimal(10, 2)
   lastStatusUpdate      DateTime?
   lastStatusUpdateBy    String?
+  icalToken             String              @default(uuid()) @unique
   folios                Folio[]
   housekeepingTasks     HousekeepingTask[]
+  icalFeeds             IcalFeed[]
   iotEvents             IoTEvent[]
   iotSensors            IoTSensor[]
   maintenanceTickets    MaintenanceTicket[]
@@ -160,6 +163,26 @@ model Room {
   @@index([tenantId, status])
   @@index([tenantId, categoryId])
   @@map("rooms")
+}
+
+model IcalFeed {
+  id           String    @id @default(uuid())
+  tenantId     String
+  roomId       String
+  name         String?
+  importUrl    String?
+  lastSyncedAt DateTime?
+  lastError    String?
+  lastSummary  String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  room         Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([roomId])
+  @@map("ical_feeds")
 }
 
 model RatePlan {

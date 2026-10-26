@@ -32,6 +32,12 @@ interface TenantSettings {
   smsNotifications: boolean;
   autoCheckout: boolean;
   autoCheckoutTime: string;
+  digest?: {
+    enabled?: boolean;
+    hour?: number;
+    recipients?: string;
+    lastSentDate?: string;
+  };
   otherSettings: Record<string, any>;
   branding: {
     primaryColor: string;
@@ -213,6 +219,7 @@ export default function SettingsPage() {
     smsNotifications: false,
     autoCheckout: false,
     autoCheckoutTime: '11:00',
+    digest: { enabled: false, hour: 7, recipients: '' },
     otherSettings: {},
     branding: {
       primaryColor: '#0f172a',
@@ -749,6 +756,61 @@ export default function SettingsPage() {
                     onChange={(e) => set('autoCheckoutTime', e.target.value)}
                   />
                 </Field>
+              )}
+            </div>
+          </Panel>
+
+          <Panel
+            title="Daily digest"
+            subtitle="A morning email to managers with occupancy, arrivals/departures, revenue, and open tasks"
+          >
+            <div className="stack" style={{ gap: 'var(--space-3)' }}>
+              <label className="row text-sm" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={settings.digest?.enabled ?? false}
+                  onChange={(e) =>
+                    set('digest', { ...settings.digest, enabled: e.target.checked })
+                  }
+                />
+                Send a daily digest email
+              </label>
+              {settings.digest?.enabled && (
+                <div className="grid2">
+                  <Field label="Send at (UTC hour)">
+                    <Select
+                      style={inputStyle}
+                      value={String(settings.digest?.hour ?? 7)}
+                      onChange={(e) =>
+                        set('digest', { ...settings.digest, hour: Number(e.target.value) })
+                      }
+                    >
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>
+                          {String(h).padStart(2, '0')}:00 UTC
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field
+                    label="Recipients"
+                    hint="Comma-separated emails — defaults to all owners & general managers"
+                  >
+                    <TextInput
+                      style={inputStyle}
+                      value={settings.digest?.recipients || ''}
+                      onChange={(e) =>
+                        set('digest', { ...settings.digest, recipients: e.target.value })
+                      }
+                      placeholder="manager@hotel.com, owner@hotel.com"
+                    />
+                  </Field>
+                </div>
+              )}
+              {settings.digest?.lastSentDate && (
+                <p className="text-sm muted" style={{ margin: 0 }}>
+                  Last sent {new Date(settings.digest.lastSentDate).toLocaleString()}
+                </p>
               )}
             </div>
           </Panel>

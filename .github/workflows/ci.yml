@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: innsight
+          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_DB: innsight_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U innsight -d innsight_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Run Jest suite
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql://innsight:ci-test-password@localhost:5432/innsight_test
+          REQUIRE_DB_SETUP: 'true'
+          NODE_ENV: test
+        run: npx jest --runInBand --forceExit
+
+  frontend-build:
+    name: Frontend typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  deploy:
+    name: Deploy to VPS
+    needs: [backend-test, frontend-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The deploy is skipped (not failed) when the VPS key secret isn't configured,
+      # so PRs from forks and unconfigured repos stay green.
+      - name: Check deploy secret
+        id: secret-check
+        env:
+          SSH_KEY_VALUE: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          if [ -z "$SSH_KEY_VALUE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::VPS_SSH_KEY secret not configured — skipping deploy"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install SSH key
+        if: steps.secret-check.outputs.skip == 'false'
+        env:
+          SSH_KEY_VALUE: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY_VALUE" > ~/.ssh/innsight_vps
+          chmod 600 ~/.ssh/innsight_vps
+          ssh-keyscan -H "${VPS_HOST:-67.211.210.8}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy via deploy-vps.sh
+        if: steps.secret-check.outputs.skip == 'false'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SSH_KEY: ~/.ssh/innsight_vps
+        run: bash deploy-vps.sh
