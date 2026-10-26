@@ -32,6 +32,14 @@ interface RoomCategory {
   maxPrice?: number | null;
 }
 
+type RatePlanLite = {
+  id: string;
+  name: string;
+  baseRate: number | null;
+  categoryId?: string | null;
+  isActive?: boolean;
+};
+
 interface InventoryItem {
   id?: string;
   name: string;
@@ -532,7 +540,7 @@ export default function RoomsPage() {
   const [iotAlerts, setIotAlerts] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [ratePlans, setRatePlans] = useState<Array<{ id: string; name: string; baseRate: number | null }>>([]);
+  const [ratePlans, setRatePlans] = useState<RatePlanLite[]>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [rateEditRoom, setRateEditRoom] = useState<Room | null>(null);
   const [editRoom, setEditRoom] = useState<Room | null>(null);
@@ -778,6 +786,8 @@ export default function RoomsPage() {
           id: plan.id,
           name: plan.name,
           baseRate: plan.baseRate !== undefined && plan.baseRate !== null ? Number(plan.baseRate) : null,
+          categoryId: plan.categoryId ?? null,
+          isActive: plan.isActive !== false,
         }))
       );
     } catch (error) {
@@ -1669,7 +1679,7 @@ export default function RoomsPage() {
 interface EditRoomModalProps {
   room: Room;
   categories: RoomCategory[];
-  ratePlans: Array<{ id: string; name: string; baseRate: number | null }>;
+  ratePlans: RatePlanLite[];
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -1681,12 +1691,13 @@ function CreateRoomModal({
   onSuccess,
 }: {
   categories: RoomCategory[];
-  ratePlans: Array<{ id: string; name: string; baseRate: number | null }>;
+  ratePlans: RatePlanLite[];
   onClose: () => void;
   onSuccess: () => void;
 }) {
   const { user } = useAuthStore();
   const [mode, setMode] = useState<'single' | 'bulk' | 'generate'>('single');
+  const [genMode, setGenMode] = useState<'smart' | 'manual'>('smart');
   const [genConfig, setGenConfig] = useState({
     startFloor: '1',
     endFloor: '10',
@@ -1696,6 +1707,13 @@ function CreateRoomModal({
     deluxe: '1',
     suite: '1',
   });
+  const [smartConfig, setSmartConfig] = useState({
+    totalRooms: '40',
+    floors: '4',
+    startFloor: '1',
+  });
+  // Manual edits to the suggested mix, keyed by smart-row key.
+  const [smartOverrides, setSmartOverrides] = useState<Record<string, number>>({});
   const [formData, setFormData] = useState({
     roomNumber: '',
     roomNumberRange: '',
@@ -1774,13 +1792,170 @@ function CreateRoomModal({
     return null;
   };
 
-  // Build generation plan: for each floor, positions are assigned in
-  // single -> double -> twin -> deluxe -> suite order, numbered floor*100+pos.
+  // ---- Smart generation helpers ----
+
+  // Largest-remainder apportionment: split `total` across `weights` so the
+  // parts are as proportional as possible while summing exactly to `total`.
+  const apportion = (total: number, weights: number[]): number[] => {
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum <= 0 || total <= 0) return weights.map(() => 0);
+    const raw = weights.map((w) => (total * w) / sum);
+    const base = raw.map(Math.floor);
+    const out = [...base];
+    let rem = total - base.reduce((a, b) => a + b, 0);
+    const order = raw
+      .map((r, i) => ({ frac: r - base[i], idx: i }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < rem; k++) out[order[k % order.length].idx]++;
+    return out;
+  };
+
+  const TYPE_OCCUPANCY: Record<string, number> = {
+    single: 1,
+    double: 2,
+    twin: 2,
+    deluxe: 3,
+    suite: 4,
+  };
+
+  const guessRoomType = (name: string): string => {
+    const n = name.toLowerCase();
+    if (/suite|penthouse|presidential/.test(n)) return 'suite';
+    if (/deluxe|premium|executive|luxury|vip/.test(n)) return 'deluxe';
+    if (/twin/.test(n)) return 'twin';
+    if (/double|queen|king|family|matrimonial/.test(n)) return 'double';
+    return 'single';
+  };
+
+  // Standard-ish categories should carry the bulk of inventory; premium
+  // tiers get progressively fewer rooms.
+  const categoryWeight = (name: string): number => {
+    const n = name.toLowerCase();
+    if (/suite|penthouse|presidential/.test(n)) return 1;
+    if (/deluxe|premium|executive|luxury|vip/.test(n)) return 2;
+    return 5;
+  };
+
+  // One row per tenant category (each with its linked active rate plan).
+  // Falls back to generic room types when no categories exist yet.
+  const smartRows = useMemo(() => {
+    if (categories.length > 0) {
+      return categories.map((cat) => {
+        const plan = ratePlans.find((p) => p.categoryId === cat.id && p.isActive !== false);
+        return {
+          key: cat.id,
+          label: cat.name,
+          categoryId: cat.id as string | null,
+          ratePlanId: plan?.id ?? null,
+          ratePlanName: plan?.name ?? null,
+          roomType: guessRoomType(cat.name),
+          weight: categoryWeight(cat.name),
+        };
+      });
+    }
+    const fallbackWeights: Record<string, number> = {
+      single: 4,
+      double: 3,
+      twin: 1,
+      deluxe: 1,
+      suite: 1,
+    };
+    return (['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => ({
+      key: `type:${t}`,
+      label: t.charAt(0).toUpperCase() + t.slice(1),
+      categoryId: null,
+      ratePlanId: null,
+      ratePlanName: null,
+      roomType: t as string,
+      weight: fallbackWeights[t],
+    }));
+  }, [categories, ratePlans]);
+
+  const smartSuggested = useMemo(() => {
+    const total = parseInt(smartConfig.totalRooms, 10) || 0;
+    const counts = apportion(total, smartRows.map((r) => r.weight));
+    const map: Record<string, number> = {};
+    smartRows.forEach((r, i) => {
+      map[r.key] = counts[i];
+    });
+    return map;
+  }, [smartRows, smartConfig.totalRooms]);
+
+  const smartMix = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const row of smartRows) {
+      map[row.key] = smartOverrides[row.key] ?? smartSuggested[row.key] ?? 0;
+    }
+    return map;
+  }, [smartRows, smartSuggested, smartOverrides]);
+
+  type GenGroup = {
+    roomType: string;
+    maxOccupancy: number;
+    numbers: string[];
+    categoryId: string | null;
+    ratePlanId: string | null;
+    label?: string;
+  };
+
+  // Build generation plan. Manual mode: per-floor type counts between a
+  // floor range. Smart mode: category totals spread evenly across N floors.
+  // Rooms are numbered floor * 100 + position.
   const genPlan = useMemo(() => {
+    const empty = {
+      groups: [] as GenGroup[],
+      total: 0,
+      floors: 0,
+      overflow: false,
+      perFloor: [] as number[],
+    };
+
+    if (genMode === 'smart') {
+      const floors = parseInt(smartConfig.floors, 10);
+      const startFloor = parseInt(smartConfig.startFloor, 10);
+      if (isNaN(floors) || isNaN(startFloor) || floors < 1 || startFloor < 1) {
+        return empty;
+      }
+      const groups = smartRows
+        .filter((row) => (smartMix[row.key] ?? 0) > 0)
+        .map((row) => ({
+          roomType: row.roomType,
+          maxOccupancy: TYPE_OCCUPANCY[row.roomType] ?? 1,
+          numbers: [] as string[],
+          categoryId: row.categoryId,
+          ratePlanId: row.ratePlanId,
+          label: row.label,
+          // Spread this row's total evenly across floors (temp field).
+          _perFloor: apportion(smartMix[row.key] ?? 0, new Array(floors).fill(1)),
+        }));
+
+      const perFloor: number[] = [];
+      let overflow = false;
+      for (let f = 0; f < floors; f++) {
+        let pos = 1;
+        for (const g of groups) {
+          for (let i = 0; i < (g._perFloor[f] || 0); i++) {
+            if (pos > 99) overflow = true;
+            else g.numbers.push(String((startFloor + f) * 100 + pos));
+            pos++;
+          }
+        }
+        perFloor.push(pos - 1);
+      }
+      const total = groups.reduce((s, g) => s + g.numbers.length, 0);
+      return {
+        groups: groups.map(({ _perFloor, ...g }) => g),
+        total,
+        floors,
+        overflow,
+        perFloor,
+      };
+    }
+
     const startFloor = parseInt(genConfig.startFloor, 10);
     const endFloor = parseInt(genConfig.endFloor, 10);
     if (isNaN(startFloor) || isNaN(endFloor) || startFloor < 1 || endFloor < startFloor) {
-      return { groups: [] as Array<{ roomType: string; maxOccupancy: number; numbers: string[] }>, total: 0, floors: 0 };
+      return empty;
     }
     const counts: Array<[string, number, number]> = [
       ['single', parseInt(genConfig.single, 10) || 0, 1],
@@ -1789,23 +1964,29 @@ function CreateRoomModal({
       ['deluxe', parseInt(genConfig.deluxe, 10) || 0, 3],
       ['suite', parseInt(genConfig.suite, 10) || 0, 4],
     ];
-    const groups = counts
+    const groups: GenGroup[] = counts
       .filter(([, count]) => count > 0)
-      .map(([roomType, count, maxOccupancy]) => {
+      .map(([roomType, count, maxOccupancy]): GenGroup => {
         const numbers: string[] = [];
         for (let f = startFloor; f <= endFloor; f++) {
-          // position on the floor = offset of this type within the ordered mix
           const offset = counts.slice(0, counts.findIndex(([t]) => t === roomType)).reduce((s, [, c]) => s + c, 0);
           for (let pos = offset + 1; pos <= offset + count; pos++) {
             numbers.push(String(f * 100 + pos));
           }
         }
-        return { roomType, maxOccupancy, numbers };
+        return {
+          roomType,
+          maxOccupancy,
+          numbers,
+          categoryId: formData.categoryId || null,
+          ratePlanId: formData.ratePlanId || null,
+        };
       });
     const floors = endFloor - startFloor + 1;
     const total = floors * counts.reduce((s, [, c]) => s + c, 0);
-    return { groups, total, floors };
-  }, [genConfig]);
+    const perFloor = new Array(floors).fill(counts.reduce((s, [, c]) => s + c, 0));
+    return { groups, total, floors, overflow: false, perFloor };
+  }, [genMode, genConfig, smartConfig, smartRows, smartMix, formData.categoryId, formData.ratePlanId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1835,10 +2016,11 @@ function CreateRoomModal({
               roomType: group.roomType,
               floor: null,
               maxOccupancy: group.maxOccupancy,
-              ratePlanId: formData.ratePlanId || null,
-              categoryId: formData.categoryId || null,
-              description: formData.overrideDescription ? formData.description : null,
-              customRate: formData.customRate ? Number(formData.customRate) : null,
+              ratePlanId: group.ratePlanId,
+              categoryId: group.categoryId,
+              description: formData.description || null,
+              customRate:
+                genMode === 'smart' ? null : formData.customRate ? Number(formData.customRate) : null,
             });
             created += response.data.data?.created || 0;
             skipped += response.data.data?.skipped || 0;
@@ -2005,61 +2187,211 @@ function CreateRoomModal({
             {/* Room Number Input - Different for each mode */}
             {mode === 'generate' ? (
               <>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                      Start floor *
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={genConfig.startFloor}
-                      onChange={(e) => setGenConfig({ ...genConfig, startFloor: e.target.value })}
-                      required
-                      style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                      End floor *
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={genConfig.endFloor}
-                      onChange={(e) => setGenConfig({ ...genConfig, endFloor: e.target.value })}
-                      required
-                      style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
-                    />
-                  </div>
+                {/* Smart vs manual sub-toggle */}
+                <div style={{ display: 'flex', gap: '0.5rem', background: '#f8fafc', padding: '0.25rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                  {(['smart', 'manual'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setGenMode(m)}
+                      style={{
+                        flex: 1,
+                        padding: '0.4rem 0.75rem',
+                        background: genMode === m ? '#e0e7ff' : 'transparent',
+                        color: genMode === m ? '#3730a3' : '#64748b',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontWeight: '500',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      {m === 'smart' ? '✨ Smart (recommended)' : 'Manual per floor'}
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
-                    Rooms per floor by type
-                  </label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem' }}>
-                    {(['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => (
-                      <div key={t}>
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b', marginBottom: '0.25rem', textTransform: 'capitalize' }}>
-                          {t}
-                        </span>
+
+                {genMode === 'smart' ? (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500', fontSize: '0.85rem' }}>
+                          Total rooms *
+                        </label>
                         <input
                           type="number"
-                          min={0}
-                          max={99}
-                          value={genConfig[t]}
-                          onChange={(e) => setGenConfig({ ...genConfig, [t]: e.target.value })}
-                          style={{ width: '100%', padding: '0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                          min={1}
+                          max={500}
+                          value={smartConfig.totalRooms}
+                          onChange={(e) => {
+                            setSmartConfig({ ...smartConfig, totalRooms: e.target.value });
+                            setSmartOverrides({});
+                          }}
+                          required
+                          style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
                         />
                       </div>
-                    ))}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500', fontSize: '0.85rem' }}>
+                          Floors *
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={99}
+                          value={smartConfig.floors}
+                          onChange={(e) => setSmartConfig({ ...smartConfig, floors: e.target.value })}
+                          required
+                          style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500', fontSize: '0.85rem' }}>
+                          Starting floor *
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={98}
+                          value={smartConfig.startFloor}
+                          onChange={(e) => setSmartConfig({ ...smartConfig, startFloor: e.target.value })}
+                          required
+                          style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <label style={{ color: '#475569', fontWeight: '500' }}>
+                          Recommended mix {categories.length > 0 ? '(by category)' : '(by type)'}
+                        </label>
+                        {Object.keys(smartOverrides).length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setSmartOverrides({})}
+                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
+                          >
+                            Reset suggestion
+                          </button>
+                        )}
+                      </div>
+                      {categories.length === 0 && (
+                        <div style={{ marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: '#fffbeb', borderRadius: '6px', fontSize: '0.8rem', color: '#92400e' }}>
+                          No room categories yet — rooms will be created uncategorized. Run the Setup Wizard first to attach categories and rate plans.
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gap: '0.4rem' }}>
+                        {smartRows.map((row) => (
+                          <div
+                            key={row.key}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr auto auto',
+                              alignItems: 'center',
+                              gap: '0.75rem',
+                              padding: '0.5rem 0.75rem',
+                              background: '#f8fafc',
+                              borderRadius: '6px',
+                              border: '1px solid #e2e8f0',
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: '500', color: '#1e293b', fontSize: '0.875rem' }}>{row.label}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                {row.roomType} · sleeps {TYPE_OCCUPANCY[row.roomType] ?? 1}
+                                {row.ratePlanName
+                                  ? ` · ${row.ratePlanName}`
+                                  : categories.length > 0
+                                  ? ' · no rate plan'
+                                  : ''}
+                              </div>
+                            </div>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>rooms</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={500}
+                              value={smartMix[row.key] ?? 0}
+                              onChange={(e) =>
+                                setSmartOverrides({
+                                  ...smartOverrides,
+                                  [row.key]: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                })
+                              }
+                              style={{ width: '72px', padding: '0.4rem', border: '1px solid #cbd5e1', borderRadius: '6px', textAlign: 'center' }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                          Start floor *
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={genConfig.startFloor}
+                          onChange={(e) => setGenConfig({ ...genConfig, startFloor: e.target.value })}
+                          required
+                          style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                          End floor *
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={genConfig.endFloor}
+                          onChange={(e) => setGenConfig({ ...genConfig, endFloor: e.target.value })}
+                          required
+                          style={{ width: '100%', padding: '0.75rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
+                        Rooms per floor by type
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem' }}>
+                        {(['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => (
+                          <div key={t}>
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b', marginBottom: '0.25rem', textTransform: 'capitalize' }}>
+                              {t}
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={99}
+                              value={genConfig[t]}
+                              onChange={(e) => setGenConfig({ ...genConfig, [t]: e.target.value })}
+                              style={{ width: '100%', padding: '0.5rem', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {genPlan.overflow && (
+                  <div style={{ padding: '0.75rem', background: '#fef2f2', borderRadius: '6px', fontSize: '0.875rem', color: '#b91c1c' }}>
+                    More than 99 rooms on a floor — increase the number of floors or reduce the totals.
                   </div>
-                </div>
+                )}
                 {genPlan.total > 0 && (
                   <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '6px', fontSize: '0.875rem', color: '#0369a1' }}>
                     <strong>{genPlan.total}</strong> rooms across <strong>{genPlan.floors}</strong> floor{genPlan.floors !== 1 ? 's' : ''}
+                    {genPlan.perFloor.length > 1 && ` — ~${Math.round(genPlan.total / genPlan.floors)} per floor`}
                     <div style={{ marginTop: '0.25rem', color: '#64748b' }}>
-                      {genPlan.groups.map((g) => `${g.numbers.length} ${g.roomType}`).join(' · ')} — numbered floor × 100 + position
+                      {genPlan.groups.map((g) => `${g.numbers.length} ${g.label || g.roomType}`).join(' · ')} — numbered floor × 100 + position
                     </div>
                   </div>
                 )}
@@ -2197,6 +2529,8 @@ function CreateRoomModal({
             </>
             )}
 
+            {!(mode === 'generate' && genMode === 'smart') && (
+            <>
             <div>
               <label style={{ display: 'block', marginBottom: '0.5rem', color: '#475569', fontWeight: '500' }}>
                 Category
@@ -2279,6 +2613,8 @@ function CreateRoomModal({
                 </div>
               )}
             </div>
+            </>
+            )}
 
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
@@ -2364,15 +2700,15 @@ function CreateRoomModal({
               </button>
               <button
                 type="submit"
-                disabled={loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0)}
+                disabled={loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && (genPlan.total === 0 || genPlan.overflow))}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#3b82f6',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
-                  cursor: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0) ? 'not-allowed' : 'pointer',
-                  opacity: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && genPlan.total === 0) ? 0.6 : 1,
+                  cursor: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && (genPlan.total === 0 || genPlan.overflow)) ? 'not-allowed' : 'pointer',
+                  opacity: loading || (mode === 'bulk' && parsedRoomNumbers.length === 0) || (mode === 'generate' && (genPlan.total === 0 || genPlan.overflow)) ? 0.6 : 1,
                 }}
               >
                 {loading
