@@ -31,6 +31,10 @@ export const createAuditLog = async (params: AuditLogParams) => {
     if (params.userId && error?.code === 'P2003') {
       try {
         await prisma.audit.create({ data: buildData(null) });
+        console.warn(
+          `Audit log stored unattributed: userId ${params.userId} no longer exists ` +
+            `(action=${params.action} ${params.entityType}/${params.entityId})`
+        );
         return;
       } catch (retryError) {
         console.error('Failed to create audit log (unattributed retry):', retryError);

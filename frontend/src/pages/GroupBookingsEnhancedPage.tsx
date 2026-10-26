@@ -229,7 +229,7 @@ export default function GroupBookingsEnhancedPage() {
       if (action === 'cancel') setSelectedBooking(null);
     } catch (e: any) {
       toast.error(
-        e?.response?.data?.error?.message || e?.response?.data?.error?.message || 'Action failed'
+        e?.response?.data?.error?.message || e?.response?.data?.message || 'Action failed'
       );
     } finally {
       setLifecycleAction(null);
