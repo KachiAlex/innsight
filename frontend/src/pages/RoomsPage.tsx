@@ -1586,6 +1586,7 @@ export default function RoomsPage() {
         {showCreateModal && (
           <CreateRoomModal
             categories={categories}
+            rooms={rooms}
             onClose={() => setShowCreateModal(false)}
             onSuccess={() => {
               setShowCreateModal(false);
@@ -1686,11 +1687,13 @@ interface EditRoomModalProps {
 
 function CreateRoomModal({
   categories,
+  rooms,
   ratePlans,
   onClose,
   onSuccess,
 }: {
   categories: RoomCategory[];
+  rooms: Room[];
   ratePlans: RatePlanLite[];
   onClose: () => void;
   onSuccess: () => void;
@@ -1712,8 +1715,11 @@ function CreateRoomModal({
     floors: '4',
     startFloor: '1',
   });
-  // Manual edits to the suggested mix, keyed by smart-row key.
+  const [clusterPremium, setClusterPremium] = useState(true);
+  // Manual edits to the suggested mix / type / plan, keyed by smart-row key.
   const [smartOverrides, setSmartOverrides] = useState<Record<string, number>>({});
+  const [smartTypeOverrides, setSmartTypeOverrides] = useState<Record<string, string>>({});
+  const [smartPlanOverrides, setSmartPlanOverrides] = useState<Record<string, string | null>>({});
   const [formData, setFormData] = useState({
     roomNumber: '',
     roomNumberRange: '',
@@ -1828,47 +1834,86 @@ function CreateRoomModal({
   };
 
   // Standard-ish categories should carry the bulk of inventory; premium
-  // tiers get progressively fewer rooms.
-  const categoryWeight = (name: string): number => {
+  // tiers get progressively fewer rooms. Used only when no price data exists.
+  const nameTierWeight = (name: string): number => {
     const n = name.toLowerCase();
     if (/suite|penthouse|presidential/.test(n)) return 1;
     if (/deluxe|premium|executive|luxury|vip/.test(n)) return 2;
     return 5;
   };
 
-  // One row per tenant category (each with its linked active rate plan).
+  // One row per tenant category, each carrying its linked active rate plans.
   // Falls back to generic room types when no categories exist yet.
   const smartRows = useMemo(() => {
+    type Row = {
+      key: string;
+      label: string;
+      categoryId: string | null;
+      planOptions: RatePlanLite[];
+      defaultPlanId: string | null;
+      defaultRoomType: string;
+      price: number | null;
+      weight: number;
+    };
+
+    let rows: Row[];
     if (categories.length > 0) {
-      return categories.map((cat) => {
-        const plan = ratePlans.find((p) => p.categoryId === cat.id && p.isActive !== false);
+      rows = categories.map((cat) => {
+        const planOptions = ratePlans.filter((p) => p.categoryId === cat.id && p.isActive !== false);
+        const plan = planOptions[0];
+        const price =
+          plan?.baseRate ??
+          (cat.minPrice != null && cat.maxPrice != null
+            ? (Number(cat.minPrice) + Number(cat.maxPrice)) / 2
+            : cat.minPrice ?? cat.maxPrice ?? null);
         return {
           key: cat.id,
           label: cat.name,
           categoryId: cat.id as string | null,
-          ratePlanId: plan?.id ?? null,
-          ratePlanName: plan?.name ?? null,
-          roomType: guessRoomType(cat.name),
-          weight: categoryWeight(cat.name),
+          planOptions,
+          defaultPlanId: plan?.id ?? null,
+          defaultRoomType: guessRoomType(cat.name),
+          price: price != null ? Number(price) : null,
+          weight: nameTierWeight(cat.name),
         };
       });
+    } else {
+      const fallbackWeights: Record<string, number> = {
+        single: 4,
+        double: 3,
+        twin: 1,
+        deluxe: 1,
+        suite: 1,
+      };
+      rows = (['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => ({
+        key: `type:${t}`,
+        label: t.charAt(0).toUpperCase() + t.slice(1),
+        categoryId: null,
+        planOptions: [],
+        defaultPlanId: null,
+        defaultRoomType: t as string,
+        price: null,
+        weight: fallbackWeights[t],
+      }));
     }
-    const fallbackWeights: Record<string, number> = {
-      single: 4,
-      double: 3,
-      twin: 1,
-      deluxe: 1,
-      suite: 1,
-    };
-    return (['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => ({
-      key: `type:${t}`,
-      label: t.charAt(0).toUpperCase() + t.slice(1),
-      categoryId: null,
-      ratePlanId: null,
-      ratePlanName: null,
-      roomType: t as string,
-      weight: fallbackWeights[t],
-    }));
+
+    // Price-driven weighting: when most rows have a price, the cheapest
+    // category gets weight 5 and the most expensive gets ~1, scaled linearly.
+    // Rows without a price keep their name-derived weight.
+    const priced = rows.filter((r) => r.price != null);
+    if (priced.length > 1) {
+      const prices = priced.map((r) => r.price as number);
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      if (max > min) {
+        rows = rows.map((r) =>
+          r.price != null
+            ? { ...r, weight: Math.max(1, Math.round(5 - (4 * (r.price - min)) / (max - min))) }
+            : r
+        );
+      }
+    }
+    return rows;
   }, [categories, ratePlans]);
 
   const smartSuggested = useMemo(() => {
@@ -1889,6 +1934,32 @@ function CreateRoomModal({
     return map;
   }, [smartRows, smartSuggested, smartOverrides]);
 
+  // Per-row effective room type / rate plan (user overrides win).
+  const smartEffective = useMemo(() => {
+    const map: Record<string, { roomType: string; ratePlanId: string | null }> = {};
+    for (const row of smartRows) {
+      map[row.key] = {
+        roomType: smartTypeOverrides[row.key] ?? row.defaultRoomType,
+        ratePlanId:
+          row.key in smartPlanOverrides ? smartPlanOverrides[row.key] : row.defaultPlanId,
+      };
+    }
+    return map;
+  }, [smartRows, smartTypeOverrides, smartPlanOverrides]);
+
+  // Room numbers already in use — generated collisions are skipped server-side,
+  // so surface the count up front.
+  const existingNumbers = useMemo(
+    () => new Set(rooms.map((r) => String(r.roomNumber))),
+    [rooms]
+  );
+
+  // Highest floor currently in use — used to hint the starting floor.
+  const maxExistingFloor = useMemo(
+    () => rooms.reduce((max, r) => Math.max(max, r.floor || 0), 0),
+    [rooms]
+  );
+
   type GenGroup = {
     roomType: string;
     maxOccupancy: number;
@@ -1899,7 +1970,8 @@ function CreateRoomModal({
   };
 
   // Build generation plan. Manual mode: per-floor type counts between a
-  // floor range. Smart mode: category totals spread evenly across N floors.
+  // floor range. Smart mode: category totals either spread evenly across
+  // floors, or clustered so premium categories land on the top floors.
   // Rooms are numbered floor * 100 + position.
   const genPlan = useMemo(() => {
     const empty = {
@@ -1908,6 +1980,7 @@ function CreateRoomModal({
       floors: 0,
       overflow: false,
       perFloor: [] as number[],
+      collisions: 0,
     };
 
     if (genMode === 'smart') {
@@ -1916,40 +1989,86 @@ function CreateRoomModal({
       if (isNaN(floors) || isNaN(startFloor) || floors < 1 || startFloor < 1) {
         return empty;
       }
-      const groups = smartRows
+
+      const activeRows = smartRows
         .filter((row) => (smartMix[row.key] ?? 0) > 0)
         .map((row) => ({
-          roomType: row.roomType,
-          maxOccupancy: TYPE_OCCUPANCY[row.roomType] ?? 1,
-          numbers: [] as string[],
-          categoryId: row.categoryId,
-          ratePlanId: row.ratePlanId,
-          label: row.label,
-          // Spread this row's total evenly across floors (temp field).
-          _perFloor: apportion(smartMix[row.key] ?? 0, new Array(floors).fill(1)),
+          row,
+          count: smartMix[row.key] ?? 0,
+          eff: smartEffective[row.key],
         }));
 
-      const perFloor: number[] = [];
+      const groups: GenGroup[] = activeRows.map(({ row, eff }) => ({
+        roomType: eff.roomType,
+        maxOccupancy: TYPE_OCCUPANCY[eff.roomType] ?? 1,
+        numbers: [],
+        categoryId: row.categoryId,
+        ratePlanId: eff.ratePlanId,
+        label: row.label,
+      }));
+
+      const perFloor: number[] = new Array(floors).fill(0);
       let overflow = false;
-      for (let f = 0; f < floors; f++) {
+
+      if (clusterPremium) {
+        // Fill floors bottom-up: bulk/standard categories first so premium
+        // categories land on the top floors. Each floor holds up to
+        // ceil(total/floors) rooms; the top floor gets the remainder.
+        const totalRooms = activeRows.reduce((s, a) => s + a.count, 0);
+        const cap = Math.max(1, Math.ceil(totalRooms / floors));
+        const ordered = activeRows
+          .map((a, i) => ({ ...a, groupIdx: i }))
+          .sort((a, b) => b.row.weight - a.row.weight);
+        let floorIdx = 0;
         let pos = 1;
-        for (const g of groups) {
-          for (let i = 0; i < (g._perFloor[f] || 0); i++) {
-            if (pos > 99) overflow = true;
-            else g.numbers.push(String((startFloor + f) * 100 + pos));
+        for (const { groupIdx, count } of ordered) {
+          for (let i = 0; i < count; i++) {
+            if (floorIdx >= floors) {
+              overflow = true;
+              break;
+            }
+            if (pos > 99) {
+              overflow = true;
+              break;
+            }
+            groups[groupIdx].numbers.push(String((startFloor + floorIdx) * 100 + pos));
+            perFloor[floorIdx]++;
             pos++;
+            if (pos > cap) {
+              pos = 1;
+              floorIdx++;
+            }
           }
+          if (overflow) break;
         }
-        perFloor.push(pos - 1);
+      } else {
+        // Even spread: each category distributes across all floors so every
+        // floor has the same mini-mix.
+        const perRowPerFloor = activeRows.map(({ count }) =>
+          apportion(count, new Array(floors).fill(1))
+        );
+        for (let f = 0; f < floors; f++) {
+          let pos = 1;
+          activeRows.forEach((_, i) => {
+            for (let k = 0; k < (perRowPerFloor[i][f] || 0); k++) {
+              if (pos > 99) {
+                overflow = true;
+              } else {
+                groups[i].numbers.push(String((startFloor + f) * 100 + pos));
+                perFloor[f]++;
+              }
+              pos++;
+            }
+          });
+        }
       }
+
       const total = groups.reduce((s, g) => s + g.numbers.length, 0);
-      return {
-        groups: groups.map(({ _perFloor, ...g }) => g),
-        total,
-        floors,
-        overflow,
-        perFloor,
-      };
+      const collisions = groups.reduce(
+        (s, g) => s + g.numbers.filter((n) => existingNumbers.has(n)).length,
+        0
+      );
+      return { groups, total, floors, overflow, perFloor, collisions };
     }
 
     const startFloor = parseInt(genConfig.startFloor, 10);
@@ -1985,8 +2104,12 @@ function CreateRoomModal({
     const floors = endFloor - startFloor + 1;
     const total = floors * counts.reduce((s, [, c]) => s + c, 0);
     const perFloor = new Array(floors).fill(counts.reduce((s, [, c]) => s + c, 0));
-    return { groups, total, floors, overflow: false, perFloor };
-  }, [genMode, genConfig, smartConfig, smartRows, smartMix, formData.categoryId, formData.ratePlanId]);
+    const collisions = groups.reduce(
+      (s, g) => s + g.numbers.filter((n) => existingNumbers.has(n)).length,
+      0
+    );
+    return { groups, total, floors, overflow: false, perFloor, collisions };
+  }, [genMode, genConfig, smartConfig, smartRows, smartMix, smartEffective, clusterPremium, existingNumbers, formData.categoryId, formData.ratePlanId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2111,7 +2234,7 @@ function CreateRoomModal({
     >
       <div
         className={styles.modalPanel}
-        style={{ maxWidth: '500px' }}
+        style={{ maxWidth: mode === 'generate' && genMode === 'smart' ? '560px' : '500px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ marginBottom: '1.5rem', color: '#1e293b' }}>
@@ -2261,20 +2384,50 @@ function CreateRoomModal({
                       </div>
                     </div>
 
+                    {maxExistingFloor > 0 && maxExistingFloor >= (parseInt(smartConfig.startFloor, 10) || 0) && (
+                      <div style={{ padding: '0.5rem 0.75rem', background: '#fffbeb', borderRadius: '6px', fontSize: '0.8rem', color: '#92400e' }}>
+                        Existing rooms already occupy floors up to {maxExistingFloor}.{' '}
+                        <button
+                          type="button"
+                          onClick={() => setSmartConfig({ ...smartConfig, startFloor: String(maxExistingFloor + 1) })}
+                          style={{ background: 'none', border: 'none', color: '#b45309', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600', padding: 0, textDecoration: 'underline' }}
+                        >
+                          Start at floor {maxExistingFloor + 1} instead
+                        </button>
+                      </div>
+                    )}
+
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                         <label style={{ color: '#475569', fontWeight: '500' }}>
                           Recommended mix {categories.length > 0 ? '(by category)' : '(by type)'}
                         </label>
-                        {Object.keys(smartOverrides).length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setSmartOverrides({})}
-                            style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
-                          >
-                            Reset suggestion
-                          </button>
-                        )}
+                        <span style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                          {(() => {
+                            const mixTotal = Object.values(smartMix).reduce((a, b) => a + b, 0);
+                            const target = parseInt(smartConfig.totalRooms, 10) || 0;
+                            return mixTotal !== target ? (
+                              <span style={{ fontSize: '0.75rem', color: '#b45309' }}>
+                                {mixTotal} of {target} rooms
+                              </span>
+                            ) : null;
+                          })()}
+                          {(Object.keys(smartOverrides).length > 0 ||
+                            Object.keys(smartTypeOverrides).length > 0 ||
+                            Object.keys(smartPlanOverrides).length > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSmartOverrides({});
+                                setSmartTypeOverrides({});
+                                setSmartPlanOverrides({});
+                              }}
+                              style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
+                            >
+                              Reset suggestion
+                            </button>
+                          )}
+                        </span>
                       </div>
                       {categories.length === 0 && (
                         <div style={{ marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: '#fffbeb', borderRadius: '6px', fontSize: '0.8rem', color: '#92400e' }}>
@@ -2282,49 +2435,98 @@ function CreateRoomModal({
                         </div>
                       )}
                       <div style={{ display: 'grid', gap: '0.4rem' }}>
-                        {smartRows.map((row) => (
-                          <div
-                            key={row.key}
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '1fr auto auto',
-                              alignItems: 'center',
-                              gap: '0.75rem',
-                              padding: '0.5rem 0.75rem',
-                              background: '#f8fafc',
-                              borderRadius: '6px',
-                              border: '1px solid #e2e8f0',
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontWeight: '500', color: '#1e293b', fontSize: '0.875rem' }}>{row.label}</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                {row.roomType} · sleeps {TYPE_OCCUPANCY[row.roomType] ?? 1}
-                                {row.ratePlanName
-                                  ? ` · ${row.ratePlanName}`
-                                  : categories.length > 0
-                                  ? ' · no rate plan'
-                                  : ''}
+                        {smartRows.map((row) => {
+                          const eff = smartEffective[row.key];
+                          return (
+                            <div
+                              key={row.key}
+                              style={{
+                                padding: '0.5rem 0.75rem',
+                                background: '#f8fafc',
+                                borderRadius: '6px',
+                                border: '1px solid #e2e8f0',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <div style={{ flex: 1, fontWeight: '500', color: '#1e293b', fontSize: '0.875rem' }}>
+                                  {row.label}
+                                </div>
+                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>rooms</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={500}
+                                  value={smartMix[row.key] ?? 0}
+                                  onChange={(e) =>
+                                    setSmartOverrides({
+                                      ...smartOverrides,
+                                      [row.key]: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                    })
+                                  }
+                                  style={{ width: '64px', padding: '0.4rem', border: '1px solid #cbd5e1', borderRadius: '6px', textAlign: 'center' }}
+                                />
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
+                                <select
+                                  value={eff.roomType}
+                                  onChange={(e) =>
+                                    setSmartTypeOverrides({ ...smartTypeOverrides, [row.key]: e.target.value })
+                                  }
+                                  style={{ padding: '0.25rem 0.4rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.75rem', color: '#475569', background: 'white' }}
+                                >
+                                  {(['single', 'double', 'twin', 'deluxe', 'suite'] as const).map((t) => (
+                                    <option key={t} value={t}>
+                                      {t} · sleeps {TYPE_OCCUPANCY[t]}
+                                    </option>
+                                  ))}
+                                </select>
+                                {row.planOptions.length > 1 ? (
+                                  <select
+                                    value={eff.ratePlanId ?? ''}
+                                    onChange={(e) =>
+                                      setSmartPlanOverrides({
+                                        ...smartPlanOverrides,
+                                        [row.key]: e.target.value || null,
+                                      })
+                                    }
+                                    style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.75rem', color: '#475569', background: 'white' }}
+                                  >
+                                    <option value="">No rate plan</option>
+                                    {row.planOptions.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name}
+                                        {p.baseRate != null ? ` · ₦${Number(p.baseRate).toLocaleString()}` : ''}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                    {row.planOptions[0]
+                                      ? `${row.planOptions[0].name}${row.planOptions[0].baseRate != null ? ` · ₦${Number(row.planOptions[0].baseRate).toLocaleString()}` : ''}`
+                                      : categories.length > 0
+                                      ? 'no rate plan linked'
+                                      : ''}
+                                  </span>
+                                )}
                               </div>
                             </div>
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>rooms</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={500}
-                              value={smartMix[row.key] ?? 0}
-                              onChange={(e) =>
-                                setSmartOverrides({
-                                  ...smartOverrides,
-                                  [row.key]: Math.max(0, parseInt(e.target.value, 10) || 0),
-                                })
-                              }
-                              style={{ width: '72px', padding: '0.4rem', border: '1px solid #cbd5e1', borderRadius: '6px', textAlign: 'center' }}
-                            />
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: '#475569', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={clusterPremium}
+                        onChange={(e) => setClusterPremium(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      Cluster premium rooms on the top floors
+                      <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                        {clusterPremium ? '(standard fill lower floors)' : '(even mix on every floor)'}
+                      </span>
+                    </label>
                   </>
                 ) : (
                   <>
@@ -2389,10 +2591,21 @@ function CreateRoomModal({
                 {genPlan.total > 0 && (
                   <div style={{ padding: '0.75rem', background: '#f0f9ff', borderRadius: '6px', fontSize: '0.875rem', color: '#0369a1' }}>
                     <strong>{genPlan.total}</strong> rooms across <strong>{genPlan.floors}</strong> floor{genPlan.floors !== 1 ? 's' : ''}
-                    {genPlan.perFloor.length > 1 && ` — ~${Math.round(genPlan.total / genPlan.floors)} per floor`}
                     <div style={{ marginTop: '0.25rem', color: '#64748b' }}>
                       {genPlan.groups.map((g) => `${g.numbers.length} ${g.label || g.roomType}`).join(' · ')} — numbered floor × 100 + position
                     </div>
+                    {genPlan.perFloor.length > 1 && genPlan.perFloor.length <= 20 && (
+                      <div style={{ marginTop: '0.25rem', color: '#64748b', fontSize: '0.8rem' }}>
+                        {genPlan.perFloor
+                          .map((n, i) => `F${(parseInt(genMode === 'smart' ? smartConfig.startFloor : genConfig.startFloor, 10) || 0) + i}:${n}`)
+                          .join(' · ')}
+                      </div>
+                    )}
+                    {genPlan.collisions > 0 && (
+                      <div style={{ marginTop: '0.4rem', padding: '0.4rem 0.5rem', background: '#fef9c3', borderRadius: '4px', color: '#854d0e', fontSize: '0.8rem' }}>
+                        {genPlan.collisions} room number{genPlan.collisions !== 1 ? 's' : ''} already exist and will be skipped — {genPlan.total - genPlan.collisions} new rooms will be created.
+                      </div>
+                    )}
                   </div>
                 )}
               </>
