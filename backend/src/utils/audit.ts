@@ -12,20 +12,31 @@ export interface AuditLogParams {
 }
 
 export const createAuditLog = async (params: AuditLogParams) => {
+  const buildData = (userId: string | null | undefined) => ({
+    tenantId: params.tenantId,
+    userId,
+    action: params.action,
+    entityType: params.entityType,
+    entityId: params.entityId,
+    beforeState: params.beforeState ? JSON.parse(JSON.stringify(params.beforeState)) : null,
+    afterState: params.afterState ? JSON.parse(JSON.stringify(params.afterState)) : null,
+    metadata: params.metadata || null,
+  });
+
   try {
-    await prisma.audit.create({
-      data: {
-        tenantId: params.tenantId,
-        userId: params.userId,
-        action: params.action,
-        entityType: params.entityType,
-        entityId: params.entityId,
-        beforeState: params.beforeState ? JSON.parse(JSON.stringify(params.beforeState)) : null,
-        afterState: params.afterState ? JSON.parse(JSON.stringify(params.afterState)) : null,
-        metadata: params.metadata || null,
-      },
-    });
-  } catch (error) {
+    await prisma.audit.create({ data: buildData(params.userId) });
+  } catch (error: any) {
+    // If the JWT references a user that no longer exists, retry unattributed
+    // rather than losing the audit record entirely.
+    if (params.userId && error?.code === 'P2003') {
+      try {
+        await prisma.audit.create({ data: buildData(null) });
+        return;
+      } catch (retryError) {
+        console.error('Failed to create audit log (unattributed retry):', retryError);
+        return;
+      }
+    }
     // Don't fail the main operation if audit logging fails
     console.error('Failed to create audit log:', error);
   }

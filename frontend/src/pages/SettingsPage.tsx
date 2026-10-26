@@ -5,7 +5,9 @@ import Layout from '../components/Layout';
 import toast from 'react-hot-toast';
 import {
   Button,
+  ConfirmDialog,
   Field,
+  Modal,
   PageHeader,
   Panel,
   Select,
@@ -13,6 +15,7 @@ import {
   StatusBadge,
   TextInput,
 } from '../components/ui';
+import { Plus, Trash2, X } from 'lucide-react';
 
 interface TenantSettings {
   currency: string;
@@ -70,6 +73,48 @@ interface GatewaySettingsForm {
   stripeSecretKey: string;
   stripeSecretConfigured: boolean;
 }
+
+interface OverbookingSetting {
+  id: string;
+  roomCategoryId?: string | null;
+  roomType?: string | null;
+  maxOverbookingPercent: number;
+  maxOverbookingCount?: number | null;
+  alertThresholdPercent: number;
+  criticalThresholdPercent: number;
+  allowOverbooking: boolean;
+  requireManagerApproval: boolean;
+  blackoutDates: string[];
+}
+
+interface OverbookingAlert {
+  id: string;
+  date: string;
+  roomType?: string | null;
+  overbookingPercent?: number | null;
+  status: string;
+}
+
+interface RoomCategory {
+  id: string;
+  name: string;
+}
+
+const ROOM_TYPES = ['single', 'double', 'twin', 'suite', 'deluxe'];
+
+const EMPTY_OVERBOOKING_FORM = {
+  target: 'all' as 'all' | 'category' | 'roomType',
+  roomCategoryId: '',
+  roomType: 'single',
+  allowOverbooking: false,
+  maxOverbookingPercent: '10',
+  maxOverbookingCount: '',
+  alertThresholdPercent: '5',
+  criticalThresholdPercent: '8',
+  requireManagerApproval: true,
+  blackoutDates: [] as string[],
+  newBlackout: '',
+};
 
 const MANAGED_GATEWAYS: PaymentGatewayOption[] = ['paystack', 'flutterwave', 'stripe'];
 
@@ -180,6 +225,15 @@ export default function SettingsPage() {
   const [paymentLoading, setPaymentLoading] = useState(true);
   const [paymentSaving, setPaymentSaving] = useState(false);
 
+  const [obSettings, setObSettings] = useState<OverbookingSetting[]>([]);
+  const [obAlerts, setObAlerts] = useState<OverbookingAlert[]>([]);
+  const [roomCategories, setRoomCategories] = useState<RoomCategory[]>([]);
+  const [obLoading, setObLoading] = useState(true);
+  const [obSaving, setObSaving] = useState(false);
+  const [obModal, setObModal] = useState(false);
+  const [obForm, setObForm] = useState(EMPTY_OVERBOOKING_FORM);
+  const [obDeleteTarget, setObDeleteTarget] = useState<OverbookingSetting | null>(null);
+
   const fetchSettings = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
@@ -240,6 +294,104 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchGatewaySettings();
   }, [fetchGatewaySettings]);
+
+  const fetchOverbooking = useCallback(async () => {
+    if (!user?.tenantId) return;
+    setObLoading(true);
+    try {
+      const [settingsRes, alertsRes, categoriesRes] = await Promise.all([
+        api.get(`/tenants/${user.tenantId}/overbooking/settings`),
+        api.get(`/tenants/${user.tenantId}/overbooking/alerts`, { params: { status: 'open' } }),
+        api.get(`/tenants/${user.tenantId}/room-categories`),
+      ]);
+      setObSettings(settingsRes.data.data || []);
+      setObAlerts(alertsRes.data.data || []);
+      setRoomCategories(categoriesRes.data.data || []);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to load overbooking settings');
+    } finally {
+      setObLoading(false);
+    }
+  }, [user?.tenantId]);
+
+  useEffect(() => {
+    fetchOverbooking();
+  }, [fetchOverbooking]);
+
+  const openObModal = (existing?: OverbookingSetting) => {
+    if (existing) {
+      setObForm({
+        target: existing.roomCategoryId ? 'category' : existing.roomType ? 'roomType' : 'all',
+        roomCategoryId: existing.roomCategoryId ?? '',
+        roomType: existing.roomType ?? 'single',
+        allowOverbooking: existing.allowOverbooking,
+        maxOverbookingPercent: String(existing.maxOverbookingPercent),
+        maxOverbookingCount: existing.maxOverbookingCount != null ? String(existing.maxOverbookingCount) : '',
+        alertThresholdPercent: String(existing.alertThresholdPercent),
+        criticalThresholdPercent: String(existing.criticalThresholdPercent),
+        requireManagerApproval: existing.requireManagerApproval,
+        blackoutDates: (existing.blackoutDates ?? []).map((d) => new Date(d).toISOString().slice(0, 10)),
+        newBlackout: '',
+      });
+    } else {
+      setObForm(EMPTY_OVERBOOKING_FORM);
+    }
+    setObModal(true);
+  };
+
+  const handleObSave = async () => {
+    if (!user?.tenantId) return;
+    setObSaving(true);
+    try {
+      await api.post(`/tenants/${user.tenantId}/overbooking/settings`, {
+        roomCategoryId: obForm.target === 'category' && obForm.roomCategoryId ? obForm.roomCategoryId : null,
+        roomType: obForm.target === 'roomType' ? obForm.roomType : null,
+        allowOverbooking: obForm.allowOverbooking,
+        maxOverbookingPercent: Number(obForm.maxOverbookingPercent) || 0,
+        maxOverbookingCount: obForm.maxOverbookingCount ? Number(obForm.maxOverbookingCount) : null,
+        alertThresholdPercent: Number(obForm.alertThresholdPercent) || 0,
+        criticalThresholdPercent: Number(obForm.criticalThresholdPercent) || 0,
+        requireManagerApproval: obForm.requireManagerApproval,
+        blackoutDates: obForm.blackoutDates,
+      });
+      toast.success('Overbooking rule saved');
+      setObModal(false);
+      fetchOverbooking();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to save overbooking rule');
+    } finally {
+      setObSaving(false);
+    }
+  };
+
+  const handleObDelete = async () => {
+    if (!obDeleteTarget || !user?.tenantId) return;
+    try {
+      await api.delete(`/tenants/${user.tenantId}/overbooking/settings/${obDeleteTarget.id}`);
+      toast.success('Overbooking rule deleted');
+      setObDeleteTarget(null);
+      fetchOverbooking();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to delete rule');
+    }
+  };
+
+  const handleObResolve = async (alertId: string) => {
+    if (!user?.tenantId) return;
+    try {
+      await api.post(`/tenants/${user.tenantId}/overbooking/alerts/${alertId}/resolve`, {});
+      toast.success('Alert resolved');
+      fetchOverbooking();
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || 'Failed to resolve alert');
+    }
+  };
+
+  const obTargetLabel = (s: OverbookingSetting) => {
+    if (s.roomCategoryId) return roomCategories.find((c) => c.id === s.roomCategoryId)?.name ?? 'Category';
+    if (s.roomType) return s.roomType.charAt(0).toUpperCase() + s.roomType.slice(1);
+    return 'All rooms';
+  };
 
   const toggleAllowedGateway = (gateway: PaymentGatewayOption) => {
     setGatewaySettings((prev) => {
@@ -600,8 +752,259 @@ export default function SettingsPage() {
               )}
             </div>
           </Panel>
+
+          <Panel
+            title="Overbooking"
+            subtitle="Control how far each room type can be booked past capacity"
+            actions={
+              <Button variant="secondary" size="sm" icon={<Plus size={14} />} onClick={() => openObModal()}>
+                Add rule
+              </Button>
+            }
+          >
+            {obLoading ? (
+              <Skeleton height="120px" />
+            ) : (
+              <div className="stack">
+                {obAlerts.length > 0 && (
+                  <div>
+                    <p className="text-sm" style={{ fontWeight: 500, marginBottom: 'var(--space-2)' }}>
+                      Open alerts ({obAlerts.length})
+                    </p>
+                    <div className="stack" style={{ gap: 'var(--space-2)' }}>
+                      {obAlerts.map((a) => (
+                        <div key={a.id} className="row-between" style={{ padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md, 8px)' }}>
+                          <div className="row" style={{ gap: 'var(--space-2)' }}>
+                            <StatusBadge tone="danger" dot={false}>
+                              {a.overbookingPercent != null ? `${Number(a.overbookingPercent).toFixed(0)}% over` : 'Overbooked'}
+                            </StatusBadge>
+                            <span className="text-sm">
+                              {a.roomType ?? 'All types'} — {new Date(a.date).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <Button variant="ghost" size="sm" onClick={() => handleObResolve(a.id)}>
+                            Resolve
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {obSettings.length === 0 ? (
+                  <p className="text-sm muted" style={{ margin: 0 }}>
+                    No overbooking rules — bookings stop at capacity for every room type.
+                  </p>
+                ) : (
+                  <div className="stack" style={{ gap: 'var(--space-2)' }}>
+                    {obSettings.map((s) => (
+                      <div key={s.id} className="row-between" style={{ padding: 'var(--space-2) var(--space-3)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md, 8px)' }}>
+                        <div className="row" style={{ gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                          <strong className="text-sm">{obTargetLabel(s)}</strong>
+                          <StatusBadge tone={s.allowOverbooking ? 'success' : 'neutral'} dot={false}>
+                            {s.allowOverbooking ? `${Number(s.maxOverbookingPercent)}% allowed` : 'Not allowed'}
+                          </StatusBadge>
+                          {s.maxOverbookingCount != null && (
+                            <span className="text-sm muted">max {s.maxOverbookingCount} rooms</span>
+                          )}
+                          <span className="text-sm muted">
+                            warn at {Number(s.alertThresholdPercent)}% · critical at {Number(s.criticalThresholdPercent)}%
+                          </span>
+                          {s.requireManagerApproval && (
+                            <span className="text-sm muted">requires manager approval</span>
+                          )}
+                          {s.blackoutDates?.length > 0 && (
+                            <span className="text-sm muted">{s.blackoutDates.length} blackout date{s.blackoutDates.length === 1 ? '' : 's'}</span>
+                          )}
+                        </div>
+                        <div className="row" style={{ gap: 'var(--space-2)' }}>
+                          <Button variant="ghost" size="sm" onClick={() => openObModal(s)}>
+                            Edit
+                          </Button>
+                          <Button variant="ghost" size="sm" icon={<Trash2 size={14} />} onClick={() => setObDeleteTarget(s)}>
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Panel>
         </div>
       )}
+
+      <Modal
+        open={obModal}
+        onClose={() => setObModal(false)}
+        title="Overbooking rule"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setObModal(false)}>Cancel</Button>
+            <Button variant="primary" loading={obSaving} onClick={handleObSave}>
+              Save rule
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <Field label="Applies to" required>
+            <Select
+              style={inputStyle}
+              value={obForm.target}
+              onChange={(e) => setObForm({ ...obForm, target: e.target.value as typeof obForm.target })}
+            >
+              <option value="all">All rooms (default rule)</option>
+              <option value="category">Specific room category</option>
+              <option value="roomType">Specific room type</option>
+            </Select>
+          </Field>
+          {obForm.target === 'category' && (
+            <Field label="Room category" required>
+              <Select
+                style={inputStyle}
+                value={obForm.roomCategoryId}
+                onChange={(e) => setObForm({ ...obForm, roomCategoryId: e.target.value })}
+              >
+                <option value="">Select category…</option>
+                {roomCategories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {obForm.target === 'roomType' && (
+            <Field label="Room type" required>
+              <Select
+                style={inputStyle}
+                value={obForm.roomType}
+                onChange={(e) => setObForm({ ...obForm, roomType: e.target.value })}
+              >
+                {ROOM_TYPES.map((t) => (
+                  <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
+
+          <label className="row text-sm" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={obForm.allowOverbooking}
+              onChange={(e) => setObForm({ ...obForm, allowOverbooking: e.target.checked })}
+            />
+            Allow overbooking for this target
+          </label>
+
+          {obForm.allowOverbooking && (
+            <>
+              <div className="grid2">
+                <Field label="Max overbooking (%)" hint="Percentage above capacity">
+                  <TextInput
+                    style={inputStyle}
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={obForm.maxOverbookingPercent}
+                    onChange={(e) => setObForm({ ...obForm, maxOverbookingPercent: e.target.value })}
+                  />
+                </Field>
+                <Field label="Max extra rooms" hint="Optional hard cap">
+                  <TextInput
+                    style={inputStyle}
+                    type="number"
+                    min="0"
+                    value={obForm.maxOverbookingCount}
+                    onChange={(e) => setObForm({ ...obForm, maxOverbookingCount: e.target.value })}
+                    placeholder="No cap"
+                  />
+                </Field>
+              </div>
+              <div className="grid2">
+                <Field label="Warning threshold (%)">
+                  <TextInput
+                    style={inputStyle}
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={obForm.alertThresholdPercent}
+                    onChange={(e) => setObForm({ ...obForm, alertThresholdPercent: e.target.value })}
+                  />
+                </Field>
+                <Field label="Critical threshold (%)">
+                  <TextInput
+                    style={inputStyle}
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={obForm.criticalThresholdPercent}
+                    onChange={(e) => setObForm({ ...obForm, criticalThresholdPercent: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <label className="row text-sm" style={{ cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={obForm.requireManagerApproval}
+                  onChange={(e) => setObForm({ ...obForm, requireManagerApproval: e.target.checked })}
+                />
+                Require manager approval for overbooked reservations
+              </label>
+
+              <Field label="Blackout dates" hint="Overbooking is never allowed on these dates">
+                <div className="stack" style={{ gap: 'var(--space-2)' }}>
+                  <div className="row" style={{ gap: 'var(--space-2)' }}>
+                    <TextInput
+                      style={inputStyle}
+                      type="date"
+                      value={obForm.newBlackout}
+                      onChange={(e) => setObForm({ ...obForm, newBlackout: e.target.value })}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        if (obForm.newBlackout && !obForm.blackoutDates.includes(obForm.newBlackout)) {
+                          setObForm({ ...obForm, blackoutDates: [...obForm.blackoutDates, obForm.newBlackout], newBlackout: '' });
+                        }
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  {obForm.blackoutDates.length > 0 && (
+                    <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                      {obForm.blackoutDates.map((d) => (
+                        <StatusBadge key={d} tone="neutral" dot={false}>
+                          {new Date(d).toLocaleDateString()}{' '}
+                          <X
+                            size={12}
+                            style={{ cursor: 'pointer', verticalAlign: 'middle' }}
+                            onClick={() => setObForm({ ...obForm, blackoutDates: obForm.blackoutDates.filter((x) => x !== d) })}
+                          />
+                        </StatusBadge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Field>
+            </>
+          )}
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!obDeleteTarget}
+        onClose={() => setObDeleteTarget(null)}
+        onConfirm={handleObDelete}
+        title="Delete overbooking rule"
+        confirmLabel="Delete"
+        destructive
+      >
+        Delete the overbooking rule for <strong>{obDeleteTarget ? obTargetLabel(obDeleteTarget) : ''}</strong>?
+        Bookings for that target will stop at capacity.
+      </ConfirmDialog>
     </Layout>
   );
 }

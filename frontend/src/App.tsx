@@ -94,6 +94,8 @@ const DataRetentionPage = lazy(() => import('./pages/DataRetentionPage'));
 const IntegrationManagementPage = lazy(() => import('./pages/IntegrationManagementPage'));
 const SLADashboardPage = lazy(() => import('./pages/SLADashboardPage'));
 const OnboardingPage = lazy(() => import('./pages/OnboardingPage'));
+const AutomationPage = lazy(() => import('./pages/AutomationPage'));
+const ActivityLogPage = lazy(() => import('./pages/ActivityLogPage'));
 
 function App() {
   const PageLoader = () => (
@@ -557,6 +559,26 @@ function App() {
                 <ProtectedRoute>
                   <Suspense fallback={<PageLoader />}>
                     <OnboardingPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/automation"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <AutomationPage />
+                  </Suspense>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/activity"
+              element={
+                <ProtectedRoute>
+                  <Suspense fallback={<PageLoader />}>
+                    <ActivityLogPage />
                   </Suspense>
                 </ProtectedRoute>
               }

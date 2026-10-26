@@ -32,6 +32,8 @@ import {
   SlidersHorizontal,
   TrendingUp,
   Wand2,
+  Zap,
+  History,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -99,6 +101,8 @@ export const STAFF_NAV: NavGroup[] = [
     items: [
       { path: '/staff', label: 'Staff & Shifts', icon: UserCog, roles: MANAGERS },
       { path: '/wage-plans', label: 'Wage Plans', icon: Wallet, roles: MANAGERS },
+      { path: '/automation', label: 'Automation', icon: Zap, roles: MANAGERS },
+      { path: '/activity', label: 'Activity Log', icon: History, roles: MANAGERS },
       { path: '/integrations', label: 'Integrations', icon: Globe, roles: MANAGERS },
       { path: '/alerts', label: 'Alerts', icon: AlertCircle },
       { path: '/settings', label: 'Hotel Settings', icon: Settings, roles: MANAGERS },

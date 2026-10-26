@@ -529,6 +529,7 @@ export default function RoomsPage() {
   const currency = settings.currencySymbol;
   const [rooms, setRooms] = useState<Room[]>([]);
   const [categories, setCategories] = useState<RoomCategory[]>([]);
+  const [iotAlerts, setIotAlerts] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [ratePlans, setRatePlans] = useState<Array<{ id: string; name: string; baseRate: number | null }>>([]);
@@ -729,6 +730,22 @@ export default function RoomsPage() {
     }
   };
 
+  const fetchIotAlerts = async () => {
+    if (!user?.tenantId) return;
+    try {
+      const response = await api.get(`/tenants/${user.tenantId}/iot/alerts`);
+      const map = new Map<string, string>();
+      (response.data.data || []).forEach((alert: any) => {
+        const roomId = alert.metadata?.roomId;
+        if (roomId && !map.has(roomId)) map.set(roomId, alert.message || 'Occupancy mismatch');
+      });
+      setIotAlerts(map);
+    } catch {
+      // IoT is optional — silently skip if no gateway is configured
+      setIotAlerts(new Map());
+    }
+  };
+
   // Initial data fetch - load rooms and categories in parallel
   useEffect(() => {
     if (!user?.tenantId) return;
@@ -741,6 +758,7 @@ export default function RoomsPage() {
           fetchCategories(),
           fetchLatestReport(),
           fetchRatePlans(),
+          fetchIotAlerts(),
         ]);
       } catch (error) {
         console.error('Failed to load initial data:', error);
@@ -1449,7 +1467,30 @@ export default function RoomsPage() {
                   </p>
                   {room.description && <p className={styles.roomDesc}>{room.description}</p>}
                 </div>
-                <StatusBadge status={room.status} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-end' }}>
+                  <StatusBadge status={room.status} />
+                  {iotAlerts.has(room.id) && (
+                    <span
+                      role="status"
+                      title={iotAlerts.get(room.id)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        color: 'var(--warning, #b45309)',
+                        background: 'var(--warning-bg, rgba(234, 179, 8, 0.12))',
+                        border: '1px solid var(--warning-border, rgba(234, 179, 8, 0.35))',
+                        borderRadius: '999px',
+                        padding: '0.1rem 0.5rem',
+                        cursor: 'help',
+                      }}
+                    >
+                      ⚠ IoT mismatch
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className={styles.roomFacts}>
