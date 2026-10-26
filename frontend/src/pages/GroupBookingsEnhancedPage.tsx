@@ -11,6 +11,9 @@ import {
   Mail,
   Phone,
   DollarSign,
+  LogIn,
+  LogOut,
+  Ban,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -176,6 +179,7 @@ export default function GroupBookingsEnhancedPage() {
   const [roomTypes, setRoomTypes] = useState<string[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [lifecycleAction, setLifecycleAction] = useState<'checkin' | 'checkout' | 'cancel' | null>(null);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [formData, setFormData] = useState<FormState>(EMPTY_FORM());
 
@@ -209,6 +213,26 @@ export default function GroupBookingsEnhancedPage() {
       setStats(response.data.data);
     } catch {
       /* stats are non-critical */
+    }
+  };
+
+  const runLifecycle = async (action: 'checkin' | 'checkout' | 'cancel') => {
+    if (!selectedBooking || !user?.tenantId) return;
+    setLifecycleAction(action);
+    try {
+      const res = await api.post(
+        `/tenants/${user.tenantId}/group-bookings/${selectedBooking.id}/${action}`
+      );
+      toast.success(res.data?.message || 'Done');
+      if (res.data?.data) setSelectedBooking(res.data.data);
+      await Promise.all([loadBookings(), loadStats()]);
+      if (action === 'cancel') setSelectedBooking(null);
+    } catch (e: any) {
+      toast.error(
+        e?.response?.data?.error?.message || e?.response?.data?.message || 'Action failed'
+      );
+    } finally {
+      setLifecycleAction(null);
     }
   };
 
@@ -547,6 +571,55 @@ export default function GroupBookingsEnhancedPage() {
                 </div>
               </div>
             </div>
+
+            {/* Lifecycle actions */}
+            {!['cancelled', 'checked_out'].includes(selectedBooking.status) && (
+              <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                {['pending', 'tentative', 'confirmed', 'partially_checked_in'].includes(
+                  selectedBooking.status
+                ) && (
+                  <Button
+                    variant="primary"
+                    icon={<LogIn size={14} />}
+                    loading={lifecycleAction === 'checkin'}
+                    disabled={lifecycleAction !== null}
+                    onClick={() => runLifecycle('checkin')}
+                  >
+                    Check in group
+                  </Button>
+                )}
+                {['checked_in', 'partially_checked_in', 'partially_checked_out'].includes(
+                  selectedBooking.status
+                ) && (
+                  <Button
+                    variant="secondary"
+                    icon={<LogOut size={14} />}
+                    loading={lifecycleAction === 'checkout'}
+                    disabled={lifecycleAction !== null}
+                    onClick={() => runLifecycle('checkout')}
+                  >
+                    Check out group
+                  </Button>
+                )}
+                <Button
+                  variant="danger"
+                  icon={<Ban size={14} />}
+                  loading={lifecycleAction === 'cancel'}
+                  disabled={lifecycleAction !== null}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Cancel this group booking? All pending reservations in the group will be cancelled.'
+                      )
+                    ) {
+                      runLifecycle('cancel');
+                    }
+                  }}
+                >
+                  Cancel booking
+                </Button>
+              </div>
+            )}
 
             <div className={styles.detailSection}>
               <h4 className={styles.detailSectionTitle}>Contact</h4>

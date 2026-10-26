@@ -333,3 +333,122 @@ roomCategoryRouter.post(
   }
 );
 
+// PATCH /api/tenants/:tenantId/room-categories/:id
+roomCategoryRouter.patch(
+  '/:id',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const categoryId = req.params.id;
+      const data = updateRoomCategorySchema.parse(req.body);
+
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
+      const existing = await prisma.roomCategory.findUnique({ where: { id: categoryId } });
+      if (!existing || existing.tenantId !== tenantId) {
+        throw new AppError('Room category not found', 404);
+      }
+
+      if (data.name && data.name !== existing.name) {
+        const nameTaken = await prisma.roomCategory.findFirst({
+          where: { tenantId, name: data.name, id: { not: categoryId } },
+        });
+        if (nameTaken) {
+          throw new AppError('Room category name already exists', 400);
+        }
+      }
+
+      const category = await prisma.roomCategory.update({
+        where: { id: categoryId },
+        data: {
+          ...(data.name !== undefined && { name: data.name }),
+          ...(data.description !== undefined && { description: data.description }),
+          ...(data.totalRooms !== undefined && { totalRooms: data.totalRooms }),
+          ...(data.color !== undefined && { color: data.color }),
+          ...(data.inventoryTemplate !== undefined && {
+            inventoryTemplate: normalizeInventoryItems(data.inventoryTemplate),
+          }),
+        },
+      });
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'update_room_category',
+        entityType: 'room_category',
+        entityId: category.id,
+        beforeState: existing,
+        afterState: category,
+      });
+
+      res.json({ success: true, data: category });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error updating room category:', error);
+      throw new AppError(
+        `Failed to update room category: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+
+// DELETE /api/tenants/:tenantId/room-categories/:id
+roomCategoryRouter.delete(
+  '/:id',
+  authenticate,
+  requireTenantAccess,
+  async (req: AuthRequest, res) => {
+    try {
+      const tenantId = req.params.tenantId;
+      const categoryId = req.params.id;
+
+      if (!prisma) {
+        throw new AppError('Database connection not initialized', 500);
+      }
+
+      const existing = await prisma.roomCategory.findUnique({
+        where: { id: categoryId },
+        include: { rooms: { select: { id: true }, take: 1 } },
+      });
+      if (!existing || existing.tenantId !== tenantId) {
+        throw new AppError('Room category not found', 404);
+      }
+      if (existing.rooms.length > 0) {
+        throw new AppError(
+          'Cannot delete a category that still has rooms — reassign or remove them first',
+          409
+        );
+      }
+
+      await prisma.roomCategory.delete({ where: { id: categoryId } });
+
+      await createAuditLog({
+        tenantId,
+        userId: req.user!.id,
+        action: 'delete_room_category',
+        entityType: 'room_category',
+        entityId: categoryId,
+        beforeState: existing,
+      });
+
+      res.json({ success: true, message: 'Room category deleted' });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      console.error('Error deleting room category:', error);
+      throw new AppError(
+        `Failed to delete room category: ${error.message || 'Database connection error'}`,
+        500
+      );
+    }
+  }
+);
+

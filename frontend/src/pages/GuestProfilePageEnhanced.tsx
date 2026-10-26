@@ -79,7 +79,7 @@ export default function GuestProfilePageEnhanced() {
   const fetchGuestProfile = async () => {
     try {
       setLoading(true);
-      const response = await api.get(`/tenants/${user?.tenantId}/guests/${identifier}`);
+      const response = await api.get(`/tenants/${user?.tenantId}/guests-enhanced/${identifier}`);
       setProfile(response.data.data);
     } catch (error: any) {
       console.error('Failed to fetch guest profile:', error);
@@ -121,7 +121,7 @@ export default function GuestProfilePageEnhanced() {
 
   const handleAddNote = async (noteData: any) => {
     try {
-      await api.post(`/tenants/${user?.tenantId}/guests/${identifier}/notes`, noteData);
+      await api.post(`/tenants/${user?.tenantId}/guests-enhanced/${identifier}/notes`, noteData);
       fetchGuestProfile();
     } catch (error: any) {
       toast.error('Failed to add note');
@@ -131,7 +131,7 @@ export default function GuestProfilePageEnhanced() {
 
   const handleUpdateNote = async (noteId: string, noteData: any) => {
     try {
-      await api.put(`/tenants/${user?.tenantId}/guests/${identifier}/notes/${noteId}`, noteData);
+      await api.put(`/tenants/${user?.tenantId}/guests-enhanced/${identifier}/notes/${noteId}`, noteData);
       fetchGuestProfile();
     } catch (error: any) {
       toast.error('Failed to update note');
@@ -141,7 +141,7 @@ export default function GuestProfilePageEnhanced() {
 
   const handleDeleteNote = async (noteId: string) => {
     try {
-      await api.delete(`/tenants/${user?.tenantId}/guests/${identifier}/notes/${noteId}`);
+      await api.delete(`/tenants/${user?.tenantId}/guests-enhanced/${identifier}/notes/${noteId}`);
       fetchGuestProfile();
     } catch (error: any) {
       toast.error('Failed to delete note');
@@ -151,7 +151,7 @@ export default function GuestProfilePageEnhanced() {
 
   const handleAwardPoints = async (points: number, description: string) => {
     try {
-      await api.post(`/tenants/${user?.tenantId}/guests/${identifier}/loyalty`, {
+      await api.post(`/tenants/${user?.tenantId}/guests-enhanced/${identifier}/loyalty`, {
         points,
         description,
       });

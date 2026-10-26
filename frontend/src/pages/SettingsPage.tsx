@@ -286,7 +286,7 @@ export default function SettingsPage() {
 
     setPaymentSaving(true);
     try {
-      await api.patch(`/tenants/${user.tenantId}/payments/gateway-settings`, payload);
+      await api.put(`/tenants/${user.tenantId}/payments/gateway-settings`, payload);
       toast.success('Payment gateway settings saved');
       await fetchGatewaySettings();
     } catch (error: any) {

@@ -271,7 +271,7 @@ export const useGuestSearch = (tenantId: string, query: string, options?: AnyQue
     queryKeys.guests.search(tenantId, query),
     async () => {
       if (!query) return [];
-      const response = await api.get(`/tenants/${tenantId}/guests?search=${query}`);
+      const response = await api.get(`/tenants/${tenantId}/guests/search?q=${encodeURIComponent(query)}`);
       return response.data?.data;
     },
     {

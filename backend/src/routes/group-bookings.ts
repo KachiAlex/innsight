@@ -560,6 +560,215 @@ groupBookingRouter.delete('/:bookingId', authenticate, requireTenantAccess, asyn
 });
 
 // ============================================
+// LIFECYCLE: check-in / check-out / cancel
+// ============================================
+
+const fetchBookingWithReservations = (client: PrismaClientType, tenantId: string, bookingId: string) =>
+  client.groupBooking.findFirst({
+    where: { id: bookingId, tenantId },
+    include: {
+      reservations: {
+        include: { room: { select: { id: true, roomNumber: true } } },
+      },
+    },
+  });
+
+const summarizeBookingStatus = (statuses: string[], current: string) => {
+  const checkedIn = statuses.filter((s) => s === 'checked_in' || s === 'checked_out').length;
+  const checkedOut = statuses.filter((s) => s === 'checked_out').length;
+  if (statuses.length > 0 && checkedOut === statuses.length) return 'checked_out';
+  if (checkedOut > 0) return 'partially_checked_out';
+  if (statuses.length > 0 && checkedIn === statuses.length) return 'checked_in';
+  if (checkedIn > 0) return 'partially_checked_in';
+  return current === 'pending' || current === 'tentative' ? 'confirmed' : current;
+};
+
+// POST /api/tenants/:tenantId/group-bookings/:bookingId/checkin
+groupBookingRouter.post('/:bookingId/checkin', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+
+  try {
+    const booking = await fetchBookingWithReservations(client, tenantId, bookingId);
+    if (!booking) throw new AppError('Group booking not found', 404);
+    if (booking.status === 'cancelled') throw new AppError('Cannot check in a cancelled group booking', 400);
+    if (booking.status === 'checked_out') throw new AppError('Group booking is already checked out', 400);
+
+    const confirmable = booking.reservations.filter((r) => r.status === 'confirmed');
+    if (confirmable.length === 0 && booking.reservations.length === 0) {
+      throw new AppError('This group booking has no reservations to check in', 400);
+    }
+    if (confirmable.length === 0 && !booking.reservations.some((r) => r.status === 'checked_in')) {
+      throw new AppError('No confirmed reservations to check in', 400);
+    }
+
+    const now = new Date();
+    await client.$transaction(async (tx) => {
+      for (const reservation of confirmable) {
+        await tx.reservation.update({
+          where: { id: reservation.id },
+          data: { status: 'checked_in', checkedInAt: now, checkedInBy: req.user!.id },
+        });
+        if (reservation.roomId) {
+          await tx.room.update({ where: { id: reservation.roomId }, data: { status: 'occupied' } });
+        }
+        const folio = await tx.folio.findFirst({ where: { reservationId: reservation.id } });
+        if (!folio) {
+          const rate = toPlainNumber(reservation.rate) ?? 0;
+          const created = await tx.folio.create({
+            data: {
+              tenantId,
+              reservationId: reservation.id,
+              roomId: reservation.roomId,
+              guestName: reservation.guestName,
+              createdBy: req.user!.id,
+              status: 'open',
+              totalCharges: new Prisma.Decimal(rate),
+              totalPayments: new Prisma.Decimal(0),
+              balance: new Prisma.Decimal(rate),
+            },
+          });
+          if (rate > 0) {
+            await tx.folioCharge.create({
+              data: {
+                folioId: created.id,
+                description: `Room rate - ${reservation.room?.roomNumber || 'N/A'}`,
+                category: 'room_rate',
+                amount: new Prisma.Decimal(rate),
+                quantity: 1,
+                total: new Prisma.Decimal(rate),
+              },
+            });
+          }
+        }
+      }
+    });
+
+    const refreshed = await fetchBookingWithReservations(client, tenantId, bookingId);
+    const nextStatus = summarizeBookingStatus(
+      refreshed!.reservations.map((r) => r.status),
+      booking.status
+    );
+    const updated = await client.groupBooking.update({
+      where: { id: bookingId },
+      data: { status: nextStatus },
+      include: includeConfig,
+    });
+
+    res.json({
+      success: true,
+      message: `Checked in ${confirmable.length} reservation${confirmable.length === 1 ? '' : 's'}`,
+      data: serializeGroupBooking(updated),
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) throw error;
+    console.error('Error checking in group booking:', error);
+    throw new AppError(`Failed to check in group booking: ${error.message || 'Unknown error'}`, 500);
+  }
+});
+
+// POST /api/tenants/:tenantId/group-bookings/:bookingId/checkout
+groupBookingRouter.post('/:bookingId/checkout', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+
+  try {
+    const booking = await fetchBookingWithReservations(client, tenantId, bookingId);
+    if (!booking) throw new AppError('Group booking not found', 404);
+    if (booking.status === 'cancelled') throw new AppError('Cannot check out a cancelled group booking', 400);
+
+    const occupied = booking.reservations.filter((r) => r.status === 'checked_in');
+    if (occupied.length === 0) {
+      throw new AppError('No checked-in reservations to check out', 400);
+    }
+
+    const now = new Date();
+    await client.$transaction(async (tx) => {
+      for (const reservation of occupied) {
+        await tx.reservation.update({
+          where: { id: reservation.id },
+          data: { status: 'checked_out', checkedOutAt: now, checkedOutBy: req.user!.id },
+        });
+        if (reservation.roomId) {
+          await tx.room.update({ where: { id: reservation.roomId }, data: { status: 'dirty' } });
+        }
+        await tx.folio.updateMany({
+          where: { reservationId: reservation.id, status: 'open' },
+          data: { status: 'closed' },
+        });
+      }
+    });
+
+    const refreshed = await fetchBookingWithReservations(client, tenantId, bookingId);
+    const nextStatus = summarizeBookingStatus(
+      refreshed!.reservations.map((r) => r.status),
+      booking.status
+    );
+    const updated = await client.groupBooking.update({
+      where: { id: bookingId },
+      data: { status: nextStatus },
+      include: includeConfig,
+    });
+
+    res.json({
+      success: true,
+      message: `Checked out ${occupied.length} reservation${occupied.length === 1 ? '' : 's'}`,
+      data: serializeGroupBooking(updated),
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) throw error;
+    console.error('Error checking out group booking:', error);
+    throw new AppError(`Failed to check out group booking: ${error.message || 'Unknown error'}`, 500);
+  }
+});
+
+// POST /api/tenants/:tenantId/group-bookings/:bookingId/cancel
+groupBookingRouter.post('/:bookingId/cancel', authenticate, requireTenantAccess, async (req: AuthRequest, res) => {
+  const client = ensurePrismaClient();
+  const tenantId = req.params.tenantId;
+  const bookingId = req.params.bookingId;
+
+  try {
+    const booking = await fetchBookingWithReservations(client, tenantId, bookingId);
+    if (!booking) throw new AppError('Group booking not found', 404);
+    if (booking.status === 'cancelled') throw new AppError('Group booking is already cancelled', 400);
+    if (booking.reservations.some((r) => r.status === 'checked_in')) {
+      throw new AppError('Check out checked-in reservations before cancelling the group booking', 400);
+    }
+
+    const cancellable = booking.reservations.filter((r) =>
+      ['pending', 'tentative', 'confirmed'].includes(r.status)
+    );
+
+    await client.$transaction([
+      client.reservation.updateMany({
+        where: { id: { in: cancellable.map((r) => r.id) } },
+        data: { status: 'cancelled' },
+      }),
+      client.groupBookingHallReservation.updateMany({
+        where: { tenantId, groupBookingId: bookingId },
+        data: { status: 'cancelled' },
+      }),
+      client.groupBooking.update({
+        where: { id: bookingId },
+        data: { status: 'cancelled' },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      message: `Group booking cancelled${cancellable.length ? ` — ${cancellable.length} reservation${cancellable.length === 1 ? '' : 's'} cancelled` : ''}`,
+    });
+  } catch (error: any) {
+    if (error instanceof AppError) throw error;
+    console.error('Error cancelling group booking:', error);
+    throw new AppError(`Failed to cancel group booking: ${error.message || 'Unknown error'}`, 500);
+  }
+});
+
+// ============================================
 // ROOM BLOCKS MANAGEMENT
 // ============================================
 
