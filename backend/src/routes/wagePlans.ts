@@ -119,7 +119,7 @@ wagePlanRouter.post(
 
       res.status(201).json({ success: true, data: serializePlan(plan) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create wage plan: ${error.message}`, 500);
     }
   }
@@ -158,7 +158,7 @@ wagePlanRouter.patch(
 
       res.json({ success: true, data: serializePlan(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update wage plan: ${error.message}`, 500);
     }
   }
@@ -207,7 +207,7 @@ wagePlanRouter.delete(
 
       res.json({ success: true, message: 'Wage plan deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete wage plan: ${error.message}`, 500);
     }
   }
@@ -258,7 +258,7 @@ wagePlanRouter.post(
 
       res.json({ success: true, data: { user: updated, wagePlan: serializePlan(plan) } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to assign wage plan: ${error.message}`, 500);
     }
   }

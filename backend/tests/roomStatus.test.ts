@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { prisma } from '@/prisma';
+import { prisma } from '../src/utils/prisma';
 import {
   updateRoomStatus,
   bulkUpdateRoomStatus,
@@ -11,8 +10,8 @@ import {
   toggleRoomBlock,
   getRoomStatusChanges,
   RoomStatus,
-} from '@/utils/roomStatus';
-import { realtimeEmitter } from '@/utils/realtimeEmitter';
+} from '../src/utils/roomStatus';
+import { realtimeEmitter } from '../src/utils/realtimeEmitter';
 
 describe('Room Status Management', () => {
   const testTenantId = 'test-tenant-1';
@@ -20,9 +19,16 @@ describe('Room Status Management', () => {
   let createdRoomIds: string[] = [];
 
   beforeEach(async () => {
-    // Clean up test data
-    await prisma.room.deleteMany({
-      where: { tenantId: testTenantId },
+    createdRoomIds = [];
+    // The global beforeEach truncates all tables, so the tenant fixture
+    // must be recreated for every test.
+    await prisma.tenant.create({
+      data: {
+        id: testTenantId,
+        name: 'Room Status Test Tenant',
+        slug: 'room-status-test-tenant',
+        email: 'roomstatus@test.local',
+      },
     });
 
     // Create test room
@@ -38,9 +44,9 @@ describe('Room Status Management', () => {
     createdRoomIds.push(room.id);
 
     // Spy on emitter
-    vi.spyOn(realtimeEmitter, 'emitRoomStatusChanged');
-    vi.spyOn(realtimeEmitter, 'emitReservationCheckIn');
-    vi.spyOn(realtimeEmitter, 'emitReservationCheckOut');
+    jest.spyOn(realtimeEmitter, 'emitRoomStatusChanged');
+    jest.spyOn(realtimeEmitter, 'emitReservationCheckIn');
+    jest.spyOn(realtimeEmitter, 'emitReservationCheckOut');
   });
 
   afterEach(async () => {
@@ -48,7 +54,7 @@ describe('Room Status Management', () => {
     await prisma.room.deleteMany({
       where: { id: { in: createdRoomIds } },
     });
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
 
   describe('updateRoomStatus', () => {
@@ -137,7 +143,11 @@ describe('Room Status Management', () => {
 
       expect(results.length).toBe(3);
       expect(results.every(r => r.success)).toBe(true);
-      expect(results.every(r => r.room.status === RoomStatus.CLEANING)).toBe(true);
+      expect(
+        results.every(
+          (r) => r.success && (r.room as { status: string }).status === RoomStatus.CLEANING
+        )
+      ).toBe(true);
     });
 
     it('should report partial failures', async () => {
@@ -378,11 +388,17 @@ describe('Room Status Management', () => {
         updateRoomStatus(testTenantId, createdRoomIds[0], RoomStatus.AVAILABLE),
       ];
 
-      // The second one should fail due to invalid transition
+      // Both transitions (available→occupied, occupied→available) are legal,
+      // so every call must settle without deadlock — the final state is
+      // whichever update committed last.
       const results = await Promise.allSettled(updates);
 
-      expect(results[0].status).toBe('fulfilled');
-      expect(results[1].status).toBe('rejected');
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+
+      const room = await prisma.room.findUnique({
+        where: { id: createdRoomIds[0] },
+      });
+      expect([RoomStatus.OCCUPIED, RoomStatus.AVAILABLE]).toContain(room?.status);
     });
   });
 });

@@ -196,7 +196,7 @@ guestRequestsRouter.post(
 
       res.status(201).json({ success: true, data: request });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create guest request: ${error.message}`, 500);
     }
   }
@@ -220,7 +220,7 @@ guestRequestsRouter.get(
       if (!request) throw new AppError('Guest request not found', 404);
       res.json({ success: true, data: request });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch guest request: ${error.message}`, 500);
     }
   }
@@ -288,7 +288,7 @@ guestRequestsRouter.patch(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update guest request: ${error.message}`, 500);
     }
   }
@@ -329,7 +329,7 @@ guestRequestsRouter.post(
 
       res.status(201).json({ success: true, data: message });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to add message: ${error.message}`, 500);
     }
   }

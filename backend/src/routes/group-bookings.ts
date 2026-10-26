@@ -662,7 +662,7 @@ groupBookingRouter.post('/:bookingId/checkin', authenticate, requireTenantAccess
       data: serializeGroupBooking(updated),
     });
   } catch (error: any) {
-    if (error instanceof AppError) throw error;
+    if (error instanceof AppError || error.name === 'ZodError') throw error;
     console.error('Error checking in group booking:', error);
     throw new AppError(`Failed to check in group booking: ${error.message || 'Unknown error'}`, 500);
   }
@@ -718,7 +718,7 @@ groupBookingRouter.post('/:bookingId/checkout', authenticate, requireTenantAcces
       data: serializeGroupBooking(updated),
     });
   } catch (error: any) {
-    if (error instanceof AppError) throw error;
+    if (error instanceof AppError || error.name === 'ZodError') throw error;
     console.error('Error checking out group booking:', error);
     throw new AppError(`Failed to check out group booking: ${error.message || 'Unknown error'}`, 500);
   }
@@ -762,7 +762,7 @@ groupBookingRouter.post('/:bookingId/cancel', authenticate, requireTenantAccess,
       message: `Group booking cancelled${cancellable.length ? ` — ${cancellable.length} reservation${cancellable.length === 1 ? '' : 's'} cancelled` : ''}`,
     });
   } catch (error: any) {
-    if (error instanceof AppError) throw error;
+    if (error instanceof AppError || error.name === 'ZodError') throw error;
     console.error('Error cancelling group booking:', error);
     throw new AppError(`Failed to cancel group booking: ${error.message || 'Unknown error'}`, 500);
   }

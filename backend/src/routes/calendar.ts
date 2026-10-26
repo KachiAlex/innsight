@@ -170,7 +170,7 @@ calendarRouter.get(
         data: { startDate: dayKey(start), endDate: dayKey(end), categories, rooms: roomEntries },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch calendar: ${error.message}`, 500);
     }
   }
@@ -265,7 +265,7 @@ calendarRouter.post(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to move reservation: ${error.message}`, 500);
     }
   }

@@ -152,7 +152,7 @@ export default function CalendarPage() {
       setCalendarData(response.data.data);
     } catch (error: any) {
       console.error('Failed to fetch calendar:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch calendar');
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch calendar');
     } finally {
       setLoading(false);
     }
@@ -202,7 +202,7 @@ export default function CalendarPage() {
       toast.success('Reservation moved successfully');
       fetchCalendar();
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to move reservation');
+      toast.error(error.response?.data?.error?.message || 'Failed to move reservation');
     } finally {
       setDraggedReservation(null);
     }
@@ -634,7 +634,7 @@ function QuickCreateReservationModal({
       toast.success('Reservation created successfully');
       onSuccess();
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to create reservation');
+      toast.error(error.response?.data?.error?.message || 'Failed to create reservation');
     } finally {
       setSaving(false);
     }

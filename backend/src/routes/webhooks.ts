@@ -102,7 +102,7 @@ webhooksRouter.post(
 
       res.status(201).json({ success: true, data: { ...webhook, secret: '••••••••' } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create webhook: ${error.message}`, 500);
     }
   }
@@ -145,7 +145,7 @@ webhooksRouter.patch(
 
       res.json({ success: true, data: { ...updated, secret: '••••••••' } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update webhook: ${error.message}`, 500);
     }
   }
@@ -177,7 +177,7 @@ webhooksRouter.delete(
 
       res.json({ success: true, message: 'Webhook deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete webhook: ${error.message}`, 500);
     }
   }
@@ -232,7 +232,7 @@ webhooksRouter.post(
         data: { delivered: !status.startsWith('failed'), status },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to test webhook: ${error.message}`, 500);
     }
   }

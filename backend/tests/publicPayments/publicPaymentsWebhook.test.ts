@@ -101,6 +101,7 @@ describe('public payments webhook router', () => {
       monnifyContractCode: undefined,
       monnifyCollectionAccount: undefined,
       monnifyBaseUrl: undefined,
+      allowedGateways: ['paystack', 'flutterwave', 'stripe'],
     });
 
     mockFindIntent.mockResolvedValue(intent);
@@ -146,7 +147,7 @@ describe('public payments webhook router', () => {
       reservationId: 'res_1',
       folioId: 'folio_1',
     });
-    expect(mockVerifyGatewayPayment).toHaveBeenCalledWith('paystack', intent.reference);
+    expect(mockVerifyGatewayPayment).toHaveBeenCalledWith('paystack', intent.reference, undefined);
     expect(mockCompleteCheckoutIntent).toHaveBeenCalledWith({
       tenantId,
       intent,
@@ -171,6 +172,7 @@ describe('public payments webhook router', () => {
       monnifyContractCode: undefined,
       monnifyCollectionAccount: undefined,
       monnifyBaseUrl: undefined,
+      allowedGateways: ['paystack', 'flutterwave', 'stripe'],
     });
 
     const payload = {
@@ -214,11 +216,13 @@ describe('public payments webhook router', () => {
       paystackSecretKey: undefined,
       flutterwavePublicKey: 'public',
       flutterwaveSecretKey: 'flutterwave-secret',
+      flutterwaveSecretHash: 'flw-webhook-secret',
       monnifyApiKey: undefined,
       monnifySecretKey: undefined,
       monnifyContractCode: undefined,
       monnifyCollectionAccount: undefined,
       monnifyBaseUrl: undefined,
+      allowedGateways: ['paystack', 'flutterwave', 'stripe'],
     });
 
     mockFindIntent.mockResolvedValue(intent);
@@ -241,15 +245,11 @@ describe('public payments webhook router', () => {
     };
 
     const rawBody = JSON.stringify(payload);
-    const signature = crypto
-      .createHmac('sha256', 'flutterwave-secret')
-      .update(rawBody)
-      .digest('hex');
 
     const response = await request(buildTestApp())
       .post('/api/public/payments/webhook/flutterwave')
       .set('Content-Type', 'application/json')
-      .set('verif-hash', signature)
+      .set('verif-hash', 'flw-webhook-secret')
       .send(rawBody)
       .expect(200);
 

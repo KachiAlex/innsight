@@ -125,7 +125,7 @@ settingsRouter.patch(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating email config:', error);
       throw new AppError('Failed to update email configuration', 500);
     }
@@ -168,7 +168,7 @@ settingsRouter.patch(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating branding:', error);
       throw new AppError('Failed to update branding', 500);
     }
@@ -209,7 +209,7 @@ settingsRouter.patch(
         data: flags,
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating feature flags:', error);
       throw new AppError('Failed to update feature flags', 500);
     }
@@ -252,7 +252,7 @@ settingsRouter.patch(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating rate limits:', error);
       throw new AppError('Failed to update rate limits', 500);
     }

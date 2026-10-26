@@ -175,13 +175,11 @@ tenantRouter.post('/', authenticate, requireRole('iitech_admin'), async (req: Au
         },
       });
 
-      return { tenant, owner };
-    });
+      // Seed default data in the same transaction — a tenant is never
+      // committed without its categories, rate plans, and settings.
+      await initializeTenant(tenant.id, undefined, tx);
 
-    // Initialize tenant with default data (non-blocking)
-    initializeTenant(result.tenant.id).catch((error) => {
-      console.error('Tenant initialization warning:', error);
-      // Don't fail the request - initialization is optional
+      return { tenant, owner };
     });
 
     // Invalidate tenant slug cache

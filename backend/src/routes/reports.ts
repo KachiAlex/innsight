@@ -78,7 +78,7 @@ reportsRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to generate occupancy report: ${error.message}`, 500);
     }
   }
@@ -124,7 +124,7 @@ reportsRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to generate revenue report: ${error.message}`, 500);
     }
   }
@@ -171,7 +171,7 @@ reportsRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to generate financial report: ${error.message}`, 500);
     }
   }
@@ -218,7 +218,7 @@ reportsRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to generate performance metrics: ${error.message}`, 500);
     }
   }
@@ -261,7 +261,7 @@ reportsRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to generate guest feedback report: ${error.message}`, 500);
     }
   }
@@ -326,7 +326,7 @@ reportsRouter.post(
 
       res.json({ success: true, data: { entity: data.entity, from, to, rows: result } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to run custom report: ${error.message}`, 500);
     }
   }
@@ -395,7 +395,7 @@ reportsRouter.get(
       if (!audit) throw new AppError('Night audit not found', 404);
       res.json({ success: true, data: audit });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch night audit: ${error.message}`, 500);
     }
   }
@@ -504,7 +504,7 @@ reportsRouter.post(
 
       res.status(201).json({ success: true, data: audit });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to run night audit: ${error.message}`, 500);
     }
   }

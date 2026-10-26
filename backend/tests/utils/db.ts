@@ -37,9 +37,20 @@ export const truncateAllTables = async () => {
     .map((table) => `"${table.tablename}"`)
     .join(', ');
 
-  await prismaTestClient.$executeRawUnsafe(
-    `TRUNCATE TABLE ${tableNames} RESTART IDENTITY CASCADE;`
-  );
+  // Fire-and-forget writes (e.g. tenant initialization) can still be in flight
+  // when a suite ends — retry the truncate on transient deadlocks.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await prismaTestClient.$executeRawUnsafe(
+        `TRUNCATE TABLE ${tableNames} RESTART IDENTITY CASCADE;`
+      );
+      return;
+    } catch (error: any) {
+      const isDeadlock = error?.code === '40P01' || `${error?.message ?? ''}`.includes('deadlock detected');
+      if (!isDeadlock || attempt >= 5) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    }
+  }
 };
 
 export const disconnectPrisma = async () => {

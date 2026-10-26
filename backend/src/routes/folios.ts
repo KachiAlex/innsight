@@ -117,7 +117,7 @@ foliosRouter.get(
       res.json({ success: true, data: serializeFolio(folio) });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch folio: ${error.message}`, 500);
     }
   }
@@ -169,7 +169,7 @@ foliosRouter.post(
       res.status(201).json({ success: true, data: serializeFolio(folio) });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create folio: ${error.message}`, 500);
     }
   }
@@ -242,7 +242,7 @@ foliosRouter.post(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to add charge: ${error.message}`, 500);
     }
   }
@@ -282,7 +282,7 @@ foliosRouter.delete(
       res.json({ success: true, data: serializeFolio(updatedFolio) });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to remove charge: ${error.message}`, 500);
     }
   }
@@ -324,7 +324,7 @@ foliosRouter.post(
       res.json({ success: true, data: serializeFolio(updated) });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to close folio: ${error.message}`, 500);
     }
   }

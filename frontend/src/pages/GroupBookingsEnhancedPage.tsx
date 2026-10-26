@@ -229,7 +229,7 @@ export default function GroupBookingsEnhancedPage() {
       if (action === 'cancel') setSelectedBooking(null);
     } catch (e: any) {
       toast.error(
-        e?.response?.data?.error?.message || e?.response?.data?.message || 'Action failed'
+        e?.response?.data?.error?.message || e?.response?.data?.error?.message || 'Action failed'
       );
     } finally {
       setLifecycleAction(null);
@@ -393,7 +393,7 @@ export default function GroupBookingsEnhancedPage() {
       loadBookings();
       loadStats();
     } catch (error: any) {
-      toast.error(error?.response?.data?.message || 'Failed to create group booking');
+      toast.error(error?.response?.data?.error?.message || 'Failed to create group booking');
     } finally {
       setSaving(false);
     }

@@ -196,7 +196,7 @@ const STEP_LABELS = [
 
 const getErrorMessage = (error: any, fallback: string) =>
   error?.response?.data?.error?.message ||
-  error?.response?.data?.message ||
+  error?.response?.data?.error?.message ||
   error?.message ||
   fallback;
 

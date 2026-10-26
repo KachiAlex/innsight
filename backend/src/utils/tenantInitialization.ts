@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from './prisma';
 import { AppError } from '../middleware/errorHandler';
 
@@ -8,8 +8,7 @@ import { AppError } from '../middleware/errorHandler';
 interface TenantTemplate {
   name: string;
   roomCategories: Array<{ name: string; description: string }>;
-  ratePlans: Array<{ name: string; description: string; baseRate: number; type: string }>;
-  shifts: Array<{ name: string; startTime: string; endTime: string }>;
+  ratePlans: Array<{ name: string; description: string; baseRate: number }>;
 }
 
 const DEFAULT_TEMPLATE: TenantTemplate = {
@@ -33,36 +32,16 @@ const DEFAULT_TEMPLATE: TenantTemplate = {
       name: 'Weekday',
       description: 'Monday - Thursday rates',
       baseRate: 100,
-      type: 'standard',
     },
     {
       name: 'Weekend',
       description: 'Friday - Sunday rates',
       baseRate: 150,
-      type: 'standard',
     },
     {
       name: 'Corporate',
       description: 'Special rates for corporate bookings',
       baseRate: 120,
-      type: 'negotiated',
-    },
-  ],
-  shifts: [
-    {
-      name: 'Morning',
-      startTime: '06:00',
-      endTime: '14:00',
-    },
-    {
-      name: 'Afternoon',
-      startTime: '14:00',
-      endTime: '22:00',
-    },
-    {
-      name: 'Night',
-      startTime: '22:00',
-      endTime: '06:00',
     },
   ],
 };
@@ -73,75 +52,68 @@ const DEFAULT_TEMPLATE: TenantTemplate = {
  */
 export const initializeTenant = async (
   tenantId: string,
-  template: TenantTemplate = DEFAULT_TEMPLATE
+  template: TenantTemplate = DEFAULT_TEMPLATE,
+  client?: Prisma.TransactionClient | PrismaClient
 ): Promise<void> => {
-  if (!prisma) {
+  const db = client ?? prisma;
+  if (!db) {
     throw new AppError('Database connection not initialized', 500);
   }
 
   try {
     // Create room categories
+    const createdCategories: { id: string }[] = [];
     for (const category of template.roomCategories) {
-      await prisma.roomCategory.create({
+      const created = await db.roomCategory.create({
         data: {
           tenantId,
           name: category.name,
           description: category.description,
         },
       });
+      createdCategories.push(created);
     }
 
-    // Create rate plans
-    for (const plan of template.ratePlans) {
-      await prisma.ratePlan.create({
+    // Create rate plans, each linked to the category at the same index
+    for (let i = 0; i < template.ratePlans.length; i++) {
+      const plan = template.ratePlans[i];
+      await db.ratePlan.create({
         data: {
           tenantId,
           name: plan.name,
           description: plan.description,
           baseRate: plan.baseRate,
-          type: plan.type as any,
+          categoryId: createdCategories[i % createdCategories.length]?.id ?? null,
         },
       });
     }
 
-    // Create shifts
-    for (const shift of template.shifts) {
-      await prisma.shift.create({
-        data: {
-          tenantId,
-          name: shift.name,
-          startTime: shift.startTime,
-          endTime: shift.endTime,
-        },
-      });
-    }
+    // Shift instances are per-staff records created via Staff & Shifts —
+    // there are no user accounts to attach them to at provisioning time.
 
-    // Create default overbooking settings
-    await prisma.overbookingSetting.create({
+    // Create default overbooking settings (disabled until configured)
+    await db.overbookingSetting.create({
       data: {
         tenantId,
-        enableOverbooking: false,
-        overbookingThreshold: 0,
-        maxOverbookingPercentage: 5,
-        notifyStaffAt: 80,
+        allowOverbooking: false,
+        maxOverbookingPercent: 5,
+        alertThresholdPercent: 80,
+        criticalThresholdPercent: 90,
       },
     });
 
     // Create default loyalty program
-    await prisma.loyaltyProgram.create({
+    await db.loyaltyProgram.create({
       data: {
         tenantId,
-        pointsPerDollar: 1,
-        baseRewardTier: 'Silver',
-        isDynamic: false,
+        pointsPerCurrency: 1,
       },
     });
 
     console.log(`✓ Initialized tenant ${tenantId} with default data`);
   } catch (error: any) {
     console.error(`Failed to initialize tenant ${tenantId}:`, error);
-    // Don't throw - initialization is optional and shouldn't block tenant creation
-    // Log to monitoring system instead
+    throw error;
   }
 };
 

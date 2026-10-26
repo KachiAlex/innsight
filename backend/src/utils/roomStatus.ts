@@ -18,7 +18,7 @@ export enum RoomStatus {
  */
 const VALID_TRANSITIONS: Record<RoomStatus, RoomStatus[]> = {
   [RoomStatus.AVAILABLE]: [RoomStatus.OCCUPIED, RoomStatus.CLEANING, RoomStatus.BLOCKED, RoomStatus.MAINTENANCE],
-  [RoomStatus.OCCUPIED]: [RoomStatus.AVAILABLE, RoomStatus.MAINTENANCE, RoomStatus.BLOCKED],
+  [RoomStatus.OCCUPIED]: [RoomStatus.AVAILABLE, RoomStatus.CLEANING, RoomStatus.MAINTENANCE, RoomStatus.BLOCKED],
   [RoomStatus.CLEANING]: [RoomStatus.AVAILABLE, RoomStatus.BLOCKED, RoomStatus.MAINTENANCE],
   [RoomStatus.MAINTENANCE]: [RoomStatus.AVAILABLE, RoomStatus.CLEANING],
   [RoomStatus.BLOCKED]: [RoomStatus.AVAILABLE, RoomStatus.MAINTENANCE, RoomStatus.CLEANING],
@@ -47,6 +47,12 @@ export const updateRoomStatus = async (
     }
 
     const oldStatus = (room.status || RoomStatus.AVAILABLE) as RoomStatus;
+
+    // Same-status updates are idempotent no-ops so bulk operations don't
+    // fail on rooms already in the target state.
+    if (oldStatus === newStatus) {
+      return room;
+    }
 
     // Validate status transition
     if (!VALID_TRANSITIONS[oldStatus]?.includes(newStatus)) {

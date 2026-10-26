@@ -104,7 +104,7 @@ housekeepingRouter.post(
       res.status(201).json({ success: true, data: task });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create housekeeping task: ${error.message}`, 500);
     }
   }
@@ -150,7 +150,7 @@ housekeepingRouter.patch(
       res.json({ success: true, data: updated });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update housekeeping task: ${error.message}`, 500);
     }
   }
@@ -214,7 +214,7 @@ housekeepingRouter.post(
       res.json({ success: true, data: updated });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to complete housekeeping task: ${error.message}`, 500);
     }
   }
@@ -247,7 +247,7 @@ housekeepingRouter.delete(
       res.json({ success: true, message: 'Task deleted' });
       return;
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete housekeeping task: ${error.message}`, 500);
     }
   }

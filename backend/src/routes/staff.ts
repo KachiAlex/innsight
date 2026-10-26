@@ -128,7 +128,7 @@ staffRouter.get(
       if (!user) throw new AppError('Staff member not found', 404);
       res.json({ success: true, data: user });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch staff member: ${error.message}`, 500);
     }
   }
@@ -177,7 +177,7 @@ staffRouter.post(
 
       res.status(201).json({ success: true, data: user });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create staff member: ${error.message}`, 500);
     }
   }
@@ -247,7 +247,7 @@ staffRouter.patch(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update staff member: ${error.message}`, 500);
     }
   }
@@ -303,7 +303,7 @@ staffRouter.delete(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to deactivate staff member: ${error.message}`, 500);
     }
   }

@@ -84,8 +84,8 @@ export default function PaymentsPage() {
       try {
         let response;
         if (activeTab === 'reconcile') {
-          response = await api.get(`/tenants/${user.tenantId}/payments/reconcile`, {
-            params: { page, limit: pagination.limit },
+          response = await api.get(`/tenants/${user.tenantId}/payments`, {
+            params: { page, limit: pagination.limit, reconciled: 'false' },
           });
         } else {
           const params: any = { page, limit: pagination.limit };

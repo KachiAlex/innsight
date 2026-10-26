@@ -256,7 +256,7 @@ export const useGuestsList = (tenantId: string, page?: number, options?: AnyQuer
   return useQuery(
     queryKeys.guests.list(tenantId, page),
     async () => {
-      const response = await api.get(`/tenants/${tenantId}/guests`, { params: { page } });
+      const response = await api.get(`/tenants/${tenantId}/guests-enhanced`, { params: { page } });
       return response.data?.data;
     },
     {

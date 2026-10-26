@@ -123,7 +123,7 @@ overbookingRouter.post(
 
       res.status(201).json({ success: true, data: serializeSetting(setting) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to save overbooking setting: ${error.message}`, 500);
     }
   }
@@ -155,7 +155,7 @@ overbookingRouter.delete(
 
       res.json({ success: true, message: 'Setting deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete overbooking setting: ${error.message}`, 500);
     }
   }
@@ -227,7 +227,7 @@ overbookingRouter.post(
 
       res.json({ success: true, data: serializeAlert(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to resolve overbooking alert: ${error.message}`, 500);
     }
   }
@@ -306,7 +306,7 @@ overbookingRouter.get(
 
       res.json({ success: true, data });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to check overbooking: ${error.message}`, 500);
     }
   }

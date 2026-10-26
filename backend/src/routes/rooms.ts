@@ -129,7 +129,7 @@ roomRouter.get(
       if (!room) throw new AppError('Room not found', 404);
       res.json({ success: true, data: serializeRoom(room) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch room: ${error.message}`, 500);
     }
   }
@@ -178,7 +178,7 @@ roomRouter.post(
 
       res.status(201).json({ success: true, data: serializeRoom(room) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create room: ${error.message}`, 500);
     }
   }
@@ -252,7 +252,7 @@ roomRouter.post(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create rooms: ${error.message}`, 500);
     }
   }
@@ -366,7 +366,7 @@ roomRouter.delete(
 
       res.json({ success: true, message: 'Room deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete room: ${error.message}`, 500);
     }
   }
@@ -396,7 +396,7 @@ roomRouter.get(
 
       res.json({ success: true, ...createPaginationResult(logs, total, page, limit) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch room logs: ${error.message}`, 500);
     }
   }
@@ -429,7 +429,7 @@ roomRouter.get(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch room inventory: ${error.message}`, 500);
     }
   }
@@ -479,7 +479,7 @@ roomRouter.post(
 
       res.json({ success: true, data: { roomId: room.id, ...nextInventory } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update room inventory: ${error.message}`, 500);
     }
   }
@@ -535,7 +535,7 @@ roomRouter.post(
 
       res.json({ success: true, data: { requested: data.roomIds.length, updated } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to bulk update inventory: ${error.message}`, 500);
     }
   }

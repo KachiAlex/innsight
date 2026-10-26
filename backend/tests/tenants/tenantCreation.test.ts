@@ -77,6 +77,6 @@ describe('Tenant creation flow (POST /api/tenants)', () => {
       .expect(400);
 
     expect(duplicateResponse.body.success).toBe(false);
-    expect(duplicateResponse.body.error?.message).toMatch(/slug already exists/i);
+    expect(duplicateResponse.body.error?.message).toMatch(/slug.*already in use/i);
   });
 });

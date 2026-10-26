@@ -112,7 +112,7 @@ depositPoliciesRouter.post(
 
       res.status(201).json({ success: true, data: serializePolicy(policy) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create deposit policy: ${error.message}`, 500);
     }
   }
@@ -149,7 +149,7 @@ depositPoliciesRouter.patch(
 
       res.json({ success: true, data: serializePolicy(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update deposit policy: ${error.message}`, 500);
     }
   }
@@ -181,7 +181,7 @@ depositPoliciesRouter.delete(
 
       res.json({ success: true, message: 'Policy deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete deposit policy: ${error.message}`, 500);
     }
   }
@@ -268,7 +268,7 @@ depositsRouter.post(
         },
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to calculate deposit: ${error.message}`, 500);
     }
   }

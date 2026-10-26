@@ -163,7 +163,7 @@ lostFoundRouter.post(
 
       res.status(201).json({ success: true, data: serializeItem(item) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to register lost item: ${error.message}`, 500);
     }
   }
@@ -234,7 +234,7 @@ lostFoundRouter.patch(
 
       res.json({ success: true, data: serializeItem(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update lost item: ${error.message}`, 500);
     }
   }

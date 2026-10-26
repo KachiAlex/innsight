@@ -136,7 +136,7 @@ publicApi.interceptors.response.use(
     if (!suppressToast) {
       const message =
         error.response?.data?.error?.message ||
-        error.response?.data?.message ||
+        error.response?.data?.error?.message ||
         error.message ||
         'Something went wrong';
       toast.error(message);

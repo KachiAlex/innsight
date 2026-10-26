@@ -161,7 +161,7 @@ roomServiceRouter.get(
       if (!order) throw new AppError('Order not found', 404);
       res.json({ success: true, data: serializeOrder(order) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch order: ${error.message}`, 500);
     }
   }
@@ -244,7 +244,7 @@ roomServiceRouter.post(
       });
       res.status(201).json({ success: true, data: serializeOrder(full) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create order: ${error.message}`, 500);
     }
   }
@@ -323,7 +323,7 @@ roomServiceRouter.patch(
 
       res.json({ success: true, data: serializeOrder(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update order: ${error.message}`, 500);
     }
   }
@@ -388,7 +388,7 @@ menuRouter.post(
 
       res.status(201).json({ success: true, data: category });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create menu category: ${error.message}`, 500);
     }
   }
@@ -482,7 +482,7 @@ menuRouter.post(
 
       res.status(201).json({ success: true, data: serializeMenuItem(item) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create menu item: ${error.message}`, 500);
     }
   }
@@ -537,7 +537,7 @@ menuRouter.patch(
 
       res.json({ success: true, data: serializeMenuItem(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update menu item: ${error.message}`, 500);
     }
   }

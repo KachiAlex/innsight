@@ -101,7 +101,7 @@ automationRouter.post(
 
       res.status(201).json({ success: true, data: rule });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create automation rule: ${error.message}`, 500);
     }
   }
@@ -138,7 +138,7 @@ automationRouter.patch(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update automation rule: ${error.message}`, 500);
     }
   }
@@ -170,7 +170,7 @@ automationRouter.delete(
 
       res.json({ success: true, message: 'Rule deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete automation rule: ${error.message}`, 500);
     }
   }

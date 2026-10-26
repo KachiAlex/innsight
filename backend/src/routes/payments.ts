@@ -174,7 +174,7 @@ paymentsRouter.put(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update gateway settings: ${error.message}`, 500);
     }
   }
@@ -233,7 +233,7 @@ paymentsRouter.post(
 
       res.status(201).json({ success: true, data: serializePayment(payment) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to record payment: ${error.message}`, 500);
     }
   }
@@ -267,7 +267,7 @@ paymentsRouter.post(
 
       res.json({ success: true, data: { reconciled: result.count } });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to reconcile payments: ${error.message}`, 500);
     }
   }
@@ -308,7 +308,7 @@ paymentsRouter.post(
 
       res.json({ success: true, data: serializePayment(updated) });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to reconcile payment: ${error.message}`, 500);
     }
   }

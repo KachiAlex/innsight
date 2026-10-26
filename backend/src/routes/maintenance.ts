@@ -80,7 +80,7 @@ maintenanceRouter.get(
       if (!ticket) throw new AppError('Ticket not found', 404);
       res.json({ success: true, data: ticket });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to fetch ticket: ${error.message}`, 500);
     }
   }
@@ -140,7 +140,7 @@ maintenanceRouter.post(
 
       res.status(201).json({ success: true, data: ticket });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to create maintenance ticket: ${error.message}`, 500);
     }
   }
@@ -204,7 +204,7 @@ maintenanceRouter.patch(
 
       res.json({ success: true, data: updated });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to update maintenance ticket: ${error.message}`, 500);
     }
   }
@@ -236,7 +236,7 @@ maintenanceRouter.delete(
 
       res.json({ success: true, message: 'Ticket deleted' });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       throw new AppError(`Failed to delete maintenance ticket: ${error.message}`, 500);
     }
   }

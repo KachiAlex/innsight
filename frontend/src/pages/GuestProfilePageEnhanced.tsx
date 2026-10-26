@@ -83,7 +83,7 @@ export default function GuestProfilePageEnhanced() {
       setProfile(response.data.data);
     } catch (error: any) {
       console.error('Failed to fetch guest profile:', error);
-      toast.error(error.response?.data?.message || 'Failed to fetch guest profile');
+      toast.error(error.response?.data?.error?.message || 'Failed to fetch guest profile');
       if (error.response?.status === 404) {
         navigate('/guests');
       }
@@ -94,12 +94,12 @@ export default function GuestProfilePageEnhanced() {
 
   const handleUpdateGuest = async (data: any) => {
     try {
-      await api.post(`/tenants/${user?.tenantId}/guests`, data);
+      await api.post(`/tenants/${user?.tenantId}/guests-enhanced`, data);
       toast.success('Guest updated successfully');
       setShowEditModal(false);
       fetchGuestProfile();
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to update guest');
+      toast.error(error.response?.data?.error?.message || 'Failed to update guest');
       throw error;
     }
   };
@@ -108,7 +108,7 @@ export default function GuestProfilePageEnhanced() {
     if (!profile) return;
     
     try {
-      await api.post(`/tenants/${user?.tenantId}/guests`, {
+      await api.post(`/tenants/${user?.tenantId}/guests-enhanced`, {
         ...profile,
         isVIP: !profile.isVIP,
       });

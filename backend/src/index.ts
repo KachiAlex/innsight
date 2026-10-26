@@ -11,8 +11,10 @@ const PORT = process.env.PORT || 3001;
 const isContainerEnvironment = process.env.NODE_ENV === 'production';
 const shouldStartServer = process.env.RUN_LOCAL_SERVER === 'true' || isContainerEnvironment;
 
+// Exported for tests (supertest) — the listener only starts under shouldStartServer.
+export const app = createApp();
+
 if (shouldStartServer) {
-  const app = createApp();
   const httpServer = createServer(app);
   const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
 

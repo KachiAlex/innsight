@@ -75,7 +75,7 @@ superadminUsersRouter.get(
         data: user,
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error fetching user:', error);
       throw new AppError('Failed to fetch user', 500);
     }
@@ -126,7 +126,7 @@ superadminUsersRouter.post(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error creating user:', error);
       throw new AppError(error.message || 'Failed to create user', 400);
     }
@@ -170,7 +170,7 @@ superadminUsersRouter.patch(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating user:', error);
       throw new AppError(error.message || 'Failed to update user', 400);
     }
@@ -209,7 +209,7 @@ superadminUsersRouter.post(
         message: 'User deactivated successfully',
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error deactivating user:', error);
       throw new AppError('Failed to deactivate user', 500);
     }
@@ -244,7 +244,7 @@ superadminUsersRouter.post(
         message: 'User reactivated successfully',
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error reactivating user:', error);
       throw new AppError('Failed to reactivate user', 500);
     }

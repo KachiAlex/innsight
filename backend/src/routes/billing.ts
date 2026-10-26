@@ -85,7 +85,7 @@ billingRouter.get(
         data: subscription,
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error fetching subscription:', error);
       throw new AppError('Failed to fetch subscription', 500);
     }
@@ -130,7 +130,7 @@ billingRouter.patch(
       if (error instanceof z.ZodError) {
         throw new AppError(`Validation error: ${error.errors[0].message}`, 400);
       }
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error updating subscription:', error);
       throw new AppError(error.message || 'Failed to update subscription', 400);
     }
@@ -165,7 +165,7 @@ billingRouter.post(
         message: 'Subscription suspended successfully',
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error suspending subscription:', error);
       throw new AppError('Failed to suspend subscription', 500);
     }
@@ -200,7 +200,7 @@ billingRouter.post(
         message: 'Subscription resumed successfully',
       });
     } catch (error: any) {
-      if (error instanceof AppError) throw error;
+      if (error instanceof AppError || error.name === 'ZodError') throw error;
       console.error('Error resuming subscription:', error);
       throw new AppError('Failed to resume subscription', 500);
     }

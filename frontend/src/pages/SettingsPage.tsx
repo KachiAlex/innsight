@@ -442,7 +442,7 @@ export default function SettingsPage() {
       toast.success('Payment gateway settings saved');
       await fetchGatewaySettings();
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to save gateway settings');
+      toast.error(error.response?.data?.error?.message || 'Failed to save gateway settings');
     } finally {
       setPaymentSaving(false);
     }
@@ -454,7 +454,7 @@ export default function SettingsPage() {
       await api.patch(`/tenants/${user?.tenantId}/settings`, settings);
       toast.success('Settings saved successfully');
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Failed to save settings');
+      toast.error(error.response?.data?.error?.message || 'Failed to save settings');
     } finally {
       setSaving(false);
     }
