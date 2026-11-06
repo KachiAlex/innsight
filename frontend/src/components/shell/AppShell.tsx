@@ -20,6 +20,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { CommandPalette, Command } from '../CommandPalette';
 import { navForRole, visibleNav, flattenNav, type NavGroup } from './navConfig';
 import { api } from '../../lib/api';
+import { prefetchRoute, prefetchAllRoutes } from '../../lib/prefetch';
 import styles from './AppShell.module.css';
 
 const MOBILE_BREAKPOINT = 900;
@@ -95,6 +96,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
     logout();
     navigate('/login');
   }, [logout, navigate]);
+
+  // Prefetch page chunks so nav clicks render instantly. Hover/focus covers
+  // intentional navigation; the idle pass warms the rest in the background.
+  useEffect(() => {
+    const hasIdle = 'requestIdleCallback' in window;
+    const id = hasIdle
+      ? (window as any).requestIdleCallback(() => prefetchAllRoutes(), { timeout: 10_000 })
+      : setTimeout(() => prefetchAllRoutes(), 3_000);
+    return () => {
+      if (hasIdle) (window as any).cancelIdleCallback(id);
+      else clearTimeout(id);
+    };
+  }, []);
 
   // Close the mobile drawer whenever the route changes
   useEffect(() => {
@@ -197,6 +211,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 key={item.path}
                 to={item.path}
                 title={item.label}
+                onMouseEnter={() => prefetchRoute(item.path)}
+                onFocus={() => prefetchRoute(item.path)}
                 className={({ isActive }) =>
                   `${styles.navItem} ${isActive ? styles.active : ''}`
                 }
