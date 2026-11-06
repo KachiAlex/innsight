@@ -28,6 +28,23 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
+
+    // Stale-deploy recovery: after a redeploy, a cached bundle lazy-imports
+    // chunk filenames that no longer exist and the import() rejects. Reload
+    // once (rate-limited to avoid loops) so the fresh index.html + matching
+    // chunks are fetched.
+    const message = String(error?.message || '');
+    const isChunkLoadError =
+      /dynamically imported module|Failed to fetch|ChunkLoadError|error loading chunk|expected the result of a dynamic import/i.test(
+        message
+      );
+    if (isChunkLoadError) {
+      const lastReload = Number(sessionStorage.getItem('chunk_reload_at') || 0);
+      if (Date.now() - lastReload > 10_000) {
+        sessionStorage.setItem('chunk_reload_at', String(Date.now()));
+        window.location.reload();
+      }
+    }
   }
 
   handleReset = () => {
