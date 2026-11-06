@@ -52,10 +52,16 @@ interface GatewaySettingsResponse {
   defaultGateway: PaymentGatewayOption;
   currency: string;
   callbackUrl: string | null;
-  allowedGateways: PaymentGatewayOption[];
-  paystack: { publicKey: string | null; secretConfigured: boolean };
-  flutterwave: { publicKey: string | null; secretConfigured: boolean };
-  stripe: { publicKey: string | null; secretConfigured: boolean };
+  allowedGateways: string[];
+  // Secret keys come back masked ('••••••••') when configured, absent otherwise.
+  paystackPublicKey?: string;
+  paystackSecretKey?: string;
+  flutterwavePublicKey?: string;
+  flutterwaveSecretKey?: string;
+  monnifyApiKey?: string;
+  monnifySecretKey?: string;
+  stripePublicKey?: string;
+  stripeSecretKey?: string;
 }
 
 interface GatewayOptionStatus {
@@ -262,35 +268,42 @@ export default function SettingsPage() {
     if (!user?.tenantId) return;
     setPaymentLoading(true);
     try {
-      const [settingsResponse, gatewaysResponse] = await Promise.all([
-        api.get(`/tenants/${user.tenantId}/payments/gateway-settings`),
-        api.get(`/tenants/${user.tenantId}/payments/gateways`),
-      ]);
+      const response = await api.get(`/tenants/${user.tenantId}/payments/gateway-settings`);
+      const data: GatewaySettingsResponse = response.data.data;
 
-      const data: GatewaySettingsResponse = settingsResponse.data.data;
       const normalizedAllowedGateways = (data.allowedGateways?.length ? data.allowedGateways : [data.defaultGateway])
         .filter((gateway): gateway is PaymentGatewayOption =>
           (MANAGED_GATEWAYS as readonly string[]).includes(gateway)
         );
+      const allowed =
+        normalizedAllowedGateways.length > 0 ? normalizedAllowedGateways : [data.defaultGateway];
 
       setGatewaySettings({
         defaultGateway: data.defaultGateway,
         currency: data.currency || 'NGN',
         callbackUrl: data.callbackUrl || '',
-        allowedGateways:
-          normalizedAllowedGateways.length > 0 ? normalizedAllowedGateways : [data.defaultGateway],
-        paystackPublicKey: data.paystack.publicKey || '',
+        allowedGateways: allowed,
+        paystackPublicKey: data.paystackPublicKey || '',
         paystackSecretKey: '',
-        paystackSecretConfigured: data.paystack.secretConfigured,
-        flutterwavePublicKey: data.flutterwave.publicKey || '',
+        paystackSecretConfigured: Boolean(data.paystackSecretKey),
+        flutterwavePublicKey: data.flutterwavePublicKey || '',
         flutterwaveSecretKey: '',
-        flutterwaveSecretConfigured: data.flutterwave.secretConfigured,
-        stripePublicKey: data.stripe.publicKey || '',
+        flutterwaveSecretConfigured: Boolean(data.flutterwaveSecretKey),
+        stripePublicKey: data.stripePublicKey || '',
         stripeSecretKey: '',
-        stripeSecretConfigured: data.stripe.secretConfigured,
+        stripeSecretConfigured: Boolean(data.stripeSecretKey),
       });
 
-      setGatewayOptions(gatewaysResponse.data.data?.gateways || []);
+      const statuses: GatewayOptionStatus[] = MANAGED_GATEWAYS.map((name) => ({
+        name,
+        configured: Boolean(data[`${name}PublicKey`]) && Boolean(data[`${name}SecretKey`]),
+        allowedForPublicCheckout: allowed.includes(name),
+      }));
+      statuses.push({
+        name: 'monnify',
+        configured: Boolean(data.monnifyApiKey) && Boolean(data.monnifySecretKey),
+      });
+      setGatewayOptions(statuses);
     } catch (error: any) {
       toast.error(error.response?.data?.error?.message || 'Failed to fetch payment gateway settings');
     } finally {
@@ -623,8 +636,19 @@ export default function SettingsPage() {
             title="Payment gateways"
             subtitle="Configure Paystack, Flutterwave, and Stripe for public checkout"
           >
-            {paymentLoading || !gatewaySettings ? (
-              <Skeleton height="160px" />
+            {paymentLoading ? (
+              <Skeleton height="160px" width="100%" />
+            ) : !gatewaySettings ? (
+              <div className="stack" style={{ gap: 'var(--space-3)' }}>
+                <p className="text-sm muted" style={{ margin: 0 }}>
+                  Couldn't load gateway settings.
+                </p>
+                <div>
+                  <Button variant="secondary" size="sm" onClick={fetchGatewaySettings}>
+                    Retry
+                  </Button>
+                </div>
+              </div>
             ) : (
               <div className="stack">
                 <div className="grid3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-4)' }}>
